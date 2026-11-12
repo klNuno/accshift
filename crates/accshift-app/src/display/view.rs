@@ -1,14 +1,14 @@
 //! The flat list of display items a grid draws, built from the pipeline's
-//! [`DisplayLists`] and the props `AppWorkspace.svelte` hands each card.
+//! [`DisplayLists`] and the workspace state each card reads.
 //!
 //! Every item carries what its card needs, so the egui grid reads nothing
 //! else: names, avatar key, colours, notes, warnings, the active and armed
-//! states. The order is the Tauri grid's: the back card, then folders, then
-//! accounts; in sections mode, a header before each section's cards.
+//! states. The order: the back card, then folders, then accounts; in
+//! sections mode, a header before each section's cards.
 
 use super::{section_collapse_key, DisplayLists, FolderNavigation, ROOT_SECTION_KEY};
 use crate::accounts::loader::AccountLoader;
-use crate::folders::{FolderInfo, ItemKind, ItemRef};
+use crate::folders::{FolderInfo, FolderSection, ItemKind, ItemRef};
 use crate::platforms::warnings::WarningPresentation;
 use crate::platforms::{PlatformAccount, PlatformAdapter, PlatformDef};
 use crate::stores::ClientStores;
@@ -44,14 +44,14 @@ impl CardContext<'_> {
             .map_or_else(|| self.active_tab.to_string(), |def| def.name.clone())
     }
 
-    /// `showUsernamesForActiveTab`.
+    /// Whether the active tab shows usernames.
     pub fn show_usernames(&self) -> bool {
         self.platform
             .is_some_and(|def| def.capabilities.account_usernames)
             && self.stores.settings().account_display.show_usernames
     }
 
-    /// `showLastLoginForActiveTab`.
+    /// Whether the active tab shows the last login.
     pub fn show_last_login(&self) -> bool {
         self.stores
             .settings()
@@ -62,7 +62,7 @@ impl CardContext<'_> {
             .unwrap_or(false)
     }
 
-    /// `lastLoginUnknownKey`.
+    /// The i18n key for an unknown last login.
     pub fn last_login_unknown_key(&self) -> &'static str {
         self.platform
             .and_then(|def| def.capabilities.last_login_unknown_key)
@@ -88,15 +88,15 @@ pub struct AvatarView {
     pub url: Option<String>,
     pub loading: bool,
     pub refreshing: bool,
-    /// No avatar state yet (`avatarPending`).
+    /// No avatar state yet.
     pub pending: bool,
 }
 
-/// An account card (`AccountCard` props).
+/// An account card.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AccountCardItem {
     pub account: PlatformAccount,
-    /// `displayName`, or the username when it is empty.
+    /// The display name, or the username when it is empty.
     pub name: String,
     /// Shown under the name when `show_username` is set.
     pub username: String,
@@ -104,8 +104,8 @@ pub struct AccountCardItem {
     pub card_color: String,
     pub note: String,
     pub show_note_inline: bool,
-    /// `showUsernames` and `showLastLogin` as the list and the preview take
-    /// them; the grid card drops both on the pending setup card.
+    /// Whether to show the username and the last login, as the list and the
+    /// preview take them; the grid card drops both on the pending setup card.
     pub show_username: bool,
     pub show_last_login: bool,
     pub last_login_at_sec: Option<f64>,
@@ -122,7 +122,7 @@ pub struct AccountCardItem {
     pub bulk_selected: bool,
 }
 
-/// A folder card (`FolderCard` props).
+/// A folder card.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FolderCardItem {
     pub folder: FolderInfo,
@@ -133,7 +133,7 @@ pub struct FolderCardItem {
 /// The label of a section header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SectionLabel {
-    /// `list.rootSection`.
+    /// The platform root.
     Root,
     Folder(FolderInfo),
 }
@@ -194,7 +194,7 @@ pub enum DisplayBody {
 /// The workspace content: the error banner and the body.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DisplayView {
-    /// `loaderErrorDisplay`.
+    /// The loader's error banner.
     pub error: Option<Text>,
     pub body: DisplayBody,
 }
@@ -300,7 +300,7 @@ fn push_items(
     }
 }
 
-/// `renderedAccountMap`: the loaded accounts plus the pending setup card.
+/// The loaded accounts plus the pending setup card.
 fn rendered_accounts<'a>(ctx: &CardContext<'a>) -> HashMap<&'a str, &'a PlatformAccount> {
     let mut map: HashMap<&str, &PlatformAccount> = ctx
         .loader
@@ -314,19 +314,29 @@ fn rendered_accounts<'a>(ctx: &CardContext<'a>) -> HashMap<&'a str, &'a Platform
     map
 }
 
-/// The onboarding tour's grid (`onboarding.mockActive` in `App.svelte`):
-/// `mockItems` over `mockMap`, no folder and no section, the rest of
-/// `AppWorkspace.svelte`'s branches unchanged (the back card inside a
-/// folder, the loader's error banner).
-pub fn build_mock_view(ctx: &CardContext<'_>, accounts: &[PlatformAccount]) -> DisplayView {
-    let error = ctx.loader.error().map(|message| {
+/// The loader's error banner: the platform's own wording, else the generic
+/// one.
+fn error_banner(ctx: &CardContext<'_>) -> Option<Text> {
+    ctx.loader.error().map(|message| {
         ctx.adapter
             .and_then(|adapter| adapter.load_error_toast(message))
             .unwrap_or_else(|| Text::key("app.loadErrorGeneric"))
-    });
+    })
+}
+
+/// Inside a folder, outside a search, the grid starts with the back card.
+fn shows_back_card(ctx: &CardContext<'_>) -> bool {
+    ctx.navigation.current_folder_id().is_some() && !ctx.navigation.is_searching()
+}
+
+/// The onboarding tour's grid: the mock accounts, no folder and no section,
+/// the rest unchanged (the back card inside a folder, the loader's error
+/// banner).
+pub fn build_mock_view(ctx: &CardContext<'_>, accounts: &[PlatformAccount]) -> DisplayView {
+    let error = error_banner(ctx);
     let mut items = Vec::new();
     let mut folder_empty = false;
-    if ctx.navigation.current_folder_id().is_some() && !ctx.navigation.is_searching() {
+    if shows_back_card(ctx) {
         items.push(DisplayItem::Back);
         folder_empty = accounts.is_empty();
     }
@@ -342,16 +352,11 @@ pub fn build_mock_view(ctx: &CardContext<'_>, accounts: &[PlatformAccount]) -> D
     }
 }
 
-/// Builds the workspace content from the pipeline output, following the
-/// branches of `AppWorkspace.svelte` (loading, empty, no search results,
-/// sections or flat grid).
+/// Builds the workspace content from the pipeline output: loading, empty, no
+/// search results, sections or flat grid.
 pub fn build_display_view(ctx: &CardContext<'_>, lists: &DisplayLists) -> DisplayView {
     let platform_name = ctx.platform_name();
-    let error = ctx.loader.error().map(|message| {
-        ctx.adapter
-            .and_then(|adapter| adapter.load_error_toast(message))
-            .unwrap_or_else(|| Text::key("app.loadErrorGeneric"))
-    });
+    let error = error_banner(ctx);
     let body = if ctx.loader.loading()
         && lists.rendered_account_count == 0
         && ctx.pending_setup_account.is_none()
@@ -373,63 +378,82 @@ pub fn build_display_view(ctx: &CardContext<'_>, lists: &DisplayLists) -> Displa
             [("query", ctx.navigation.search_query().trim().to_string())],
         ))
     } else {
-        let accounts = rendered_accounts(ctx);
-        let mut items = Vec::new();
-        let mut folder_empty = false;
-        if let Some(sections) = &lists.sections {
-            for section in sections {
-                let count = section.folder_items.len() + section.account_items.len();
-                let collapse_key = section_collapse_key(section).to_string();
-                let collapsed = ctx.collapsed_sections.contains(&collapse_key);
-                let header = match &section.folder {
-                    Some(folder) => Some(SectionHeaderItem {
-                        label: SectionLabel::Folder(folder.clone()),
-                        collapse_key,
-                        count,
-                        card_color: ctx.stores.folder_card_color(&folder.id).to_string(),
-                        collapsed,
-                        dragged: ctx.is_dragged(ItemKind::Folder, &folder.id),
-                    }),
-                    None if count > 0 => Some(SectionHeaderItem {
-                        label: SectionLabel::Root,
-                        collapse_key,
-                        count,
-                        card_color: String::new(),
-                        collapsed,
-                        dragged: false,
-                    }),
-                    None => None,
-                };
-                if let Some(header) = header {
-                    items.push(DisplayItem::SectionHeader(header));
-                }
-                if count > 0 && !collapsed {
-                    push_items(
-                        &mut items,
-                        ctx,
-                        &accounts,
-                        &section.folder_items,
-                        &section.account_items,
-                    );
-                }
-            }
-        } else {
-            if ctx.navigation.current_folder_id().is_some() && !ctx.navigation.is_searching() {
-                items.push(DisplayItem::Back);
-                folder_empty = lists.rendered_item_count() == 0;
-            }
-            push_items(
-                &mut items,
-                ctx,
-                &accounts,
-                &lists.folder_items,
-                &lists.account_items,
-            );
-        }
-        DisplayBody::Items {
-            items,
-            folder_empty,
-        }
+        grid_items(ctx, lists)
     };
     DisplayView { error, body }
+}
+
+/// The cards: every section in turn, or the flat grid behind the back card.
+fn grid_items(ctx: &CardContext<'_>, lists: &DisplayLists) -> DisplayBody {
+    let accounts = rendered_accounts(ctx);
+    let mut items = Vec::new();
+    if let Some(sections) = &lists.sections {
+        for section in sections {
+            push_section(&mut items, ctx, &accounts, section);
+        }
+        return DisplayBody::Items {
+            items,
+            folder_empty: false,
+        };
+    }
+    let mut folder_empty = false;
+    if shows_back_card(ctx) {
+        items.push(DisplayItem::Back);
+        folder_empty = lists.rendered_item_count() == 0;
+    }
+    push_items(
+        &mut items,
+        ctx,
+        &accounts,
+        &lists.folder_items,
+        &lists.account_items,
+    );
+    DisplayBody::Items {
+        items,
+        folder_empty,
+    }
+}
+
+/// A section's header, then its cards unless it is collapsed or empty. The
+/// root section has a header only when it holds something.
+fn push_section(
+    out: &mut Vec<DisplayItem>,
+    ctx: &CardContext<'_>,
+    accounts: &HashMap<&str, &PlatformAccount>,
+    section: &FolderSection,
+) {
+    let count = section.folder_items.len() + section.account_items.len();
+    let collapse_key = section_collapse_key(section).to_string();
+    let collapsed = ctx.collapsed_sections.contains(&collapse_key);
+    let header = match &section.folder {
+        Some(folder) => Some(SectionHeaderItem {
+            label: SectionLabel::Folder(folder.clone()),
+            collapse_key,
+            count,
+            card_color: ctx.stores.folder_card_color(&folder.id).to_string(),
+            collapsed,
+            dragged: ctx.is_dragged(ItemKind::Folder, &folder.id),
+        }),
+        None if count > 0 => Some(SectionHeaderItem {
+            label: SectionLabel::Root,
+            collapse_key,
+            count,
+            card_color: String::new(),
+            collapsed,
+            dragged: false,
+        }),
+        None => None,
+    };
+    if let Some(header) = header {
+        out.push(DisplayItem::SectionHeader(header));
+    }
+    if count > 0 && !collapsed {
+        push_items(
+            out,
+            ctx,
+            accounts,
+            &section.folder_items,
+            &section.account_items,
+        );
+    }
 }

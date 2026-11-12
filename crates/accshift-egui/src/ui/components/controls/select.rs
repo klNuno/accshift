@@ -1,17 +1,19 @@
-//! `.text-input.select-input`: a native `<select>` with `appearance: none`,
-//! the field's box and a 9 px down triangle drawn by two 5 px
-//! `linear-gradient` squares at `calc(100% - 18px)` and `calc(100% - 13px)`.
+//! A drop-down select: the settings field's box with a 9 px down triangle
+//! drawn as two 5 px half-filled squares 18 px and 13 px from its right
+//! edge, or, with a [`NativeLook`], the page's box with Chromium's chevron.
 //!
 //! Closed, ArrowUp and ArrowDown change the value in place (Chromium on
 //! Windows); Space, Enter, Alt+ArrowDown or a click open the list. The list
 //! is WebView2's popup as measured at 100 %: 4 px under the field and as
-//! wide, a 1 px `#616161` border, 24 px rows on `--bg-solid`, the text 10 px
-//! in, the highlighted row (hovered or picked) in the scheme's own grey. No
-//! shadow, no rounding; a second click on the field or the window losing
-//! focus closes it.
+//! wide, a 1 px #616161 border, 24 px rows on the solid background, the
+//! text 10 px in, the highlighted row (hovered or picked) in the scheme's
+//! own grey. No shadow, no rounding; a second click on the field or the
+//! window losing focus closes it.
 
 use egui::accesskit::Role;
-use egui::{pos2, vec2, Area, Color32, Id, Key, Order, Pos2, Rect, Sense, Ui, Vec2, WidgetInfo};
+use egui::{
+    pos2, vec2, Area, Color32, Context, Id, Key, Order, Pos2, Rect, Sense, Ui, Vec2, WidgetInfo,
+};
 
 use super::{take_focus, T120};
 use crate::app::vars::Vars;
@@ -32,29 +34,29 @@ pub struct SelectProps<'a> {
     /// The option labels, in order.
     pub options: &'a [String],
     pub selected: usize,
-    /// `<option disabled>` per option; shorter (or empty) means enabled.
+    /// Whether each option is disabled; shorter (or empty) means enabled.
     /// The arrows skip a disabled option and the list will not pick it.
     pub disabled: &'a [bool],
     /// The accessible name.
     pub label: &'a str,
     pub vars: &'a Vars,
-    /// A `<select>` that keeps Chromium's own menulist arrow
-    /// (`appearance: auto`) inside the page's box; `None` is the settings
-    /// field (`.select-input`).
+    /// A select that keeps Chromium's own drop-down arrow inside the page's
+    /// box; `None` is the settings field.
     pub look: Option<&'a NativeLook>,
 }
 
-/// The box of an `appearance: auto` select; the arrow is the theme's.
+/// The box of a select that keeps Chromium's arrow; the arrow's colour is
+/// the theme's.
 #[derive(Clone, Debug)]
 pub struct NativeLook {
     /// The text, its colour (also the arrow's) included.
     pub font: TextStyle,
-    /// `padding` left and right, top and bottom.
+    /// The padding, left and right, top and bottom.
     pub padding: Vec2,
     pub radius: f32,
     pub background: Rgba,
     pub border: Rgba,
-    /// `color`, which the arrow takes.
+    /// The text colour, which the arrow takes.
     pub arrow: Rgba,
 }
 
@@ -160,7 +162,7 @@ fn coverage_color(color: Rgba, k: f32) -> Color32 {
 /// What happened this frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SelectEvents {
-    /// `change`: the new index.
+    /// The newly picked index.
     pub changed: Option<usize>,
     pub open: bool,
     pub focused: bool,
@@ -173,16 +175,9 @@ fn style(v: &Vars) -> TextStyle {
         .color(v.fg.to_color32())
 }
 
-/// Whether the list of `id` is open.
-pub fn is_open(ui: &Ui, id: Id) -> bool {
-    ui.ctx()
-        .data(|d| d.get_temp::<usize>(id.with("open")).is_some())
-}
-
-/// The two gradient squares, filled per device pixel like Chromium's hard
-/// stops: the first keeps its top-right half (`45deg, transparent 50%,
-/// C 50%`), the second its top-left half (`135deg, C 50%, transparent 50%`).
-/// A pixel centre on the diagonal takes the second stop.
+/// The two half-filled squares, filled per device pixel like Chromium's
+/// hard gradient stops: the first keeps its top-right half, the second its
+/// top-left half. A pixel centre on the diagonal takes the second square.
 fn paint_arrow(ui: &Ui, rect: Rect, color: egui::Color32) {
     let ppp = ui.ctx().pixels_per_point();
     let side = 5.0 * ppp;
@@ -237,8 +232,6 @@ fn paint_arrow(ui: &Ui, rect: Rect, color: egui::Color32) {
 /// Draws the select into `rect` (38 px high) and its list when open.
 pub fn select(ui: &mut Ui, rect: Rect, id: Id, props: &SelectProps) -> SelectEvents {
     let ctx = ui.ctx().clone();
-    let ppp = ctx.pixels_per_point();
-    let v = props.vars;
     let response = ui.interact(rect, id, Sense::click());
     let current = props
         .options
@@ -253,212 +246,46 @@ pub fn select(ui: &mut Ui, rect: Rect, id: Id, props: &SelectProps) -> SelectEve
     });
     let focused = take_focus(ui, &response);
     let open_key = id.with("open");
+    // The highlighted option while the list is open.
     let mut open: Option<usize> = ctx.data(|d| d.get_temp(open_key));
     let mut events = SelectEvents {
         focused,
         ..SelectEvents::default()
     };
-    let n = props.options.len();
-    let off = |i: usize| props.disabled.get(i).copied().unwrap_or(false);
-    let next = |from: usize| (from + 1..n).find(|&i| !off(i));
-    let prev = |from: usize| (0..from).rev().find(|&i| !off(i));
     if response.clicked() {
         open = if open.is_some() {
             None
         } else {
             Some(props.selected)
         };
-    } else if focused && n > 0 {
-        ui.memory_mut(|m| {
-            m.set_focus_lock_filter(
-                id,
-                egui::EventFilter {
-                    tab: false,
-                    horizontal_arrows: false,
-                    vertical_arrows: true,
-                    escape: open.is_some(),
-                },
-            )
-        });
-        let (up, down, alt_down, enter, space, esc) = ui.input(|i| {
-            (
-                i.key_pressed(Key::ArrowUp),
-                i.key_pressed(Key::ArrowDown) && !i.modifiers.alt,
-                i.key_pressed(Key::ArrowDown) && i.modifiers.alt,
-                i.key_pressed(Key::Enter),
-                i.key_pressed(Key::Space),
-                i.key_pressed(Key::Escape),
-            )
-        });
-        match open {
-            Some(hi) => {
-                if up {
-                    open = Some(prev(hi).unwrap_or(hi));
-                } else if down {
-                    open = Some(next(hi).unwrap_or(hi));
-                } else if enter || space {
-                    if hi != props.selected && !off(hi) {
-                        events.changed = Some(hi);
-                    }
-                    open = None;
-                } else if esc {
-                    open = None;
-                    // Escape closes the list, not the panel behind it.
-                    ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
-                }
-            }
-            None => {
-                if alt_down || enter || space {
-                    open = Some(props.selected);
-                } else if up {
-                    events.changed = prev(props.selected);
-                } else if down {
-                    events.changed = next(props.selected);
-                }
-            }
-        }
+    } else if focused && !props.options.is_empty() {
+        hold_keys(ui, id, open.is_some());
+        (open, events.changed) = handle_keys(ui, open, &Choices::new(props), props.selected);
     }
-    if !focused && !response.clicked() {
-        // Focus moved away: Chromium closes the popup.
-        if open.is_some() && ui.input(|i| i.pointer.any_pressed()) && !is_over_popup(ui, id) {
-            open = None;
-        }
+    // A press away from a select that lost focus closes its list, as
+    // Chromium does.
+    if !focused
+        && !response.clicked()
+        && open.is_some()
+        && ui.input(|i| i.pointer.any_pressed())
+        && !is_over_popup(ui, id)
+    {
+        open = None;
     }
-    // The popup closes with the window's activation.
+    // The list closes with the window's activation.
     if !ctx.input(|i| i.viewport().focused.unwrap_or(true)) {
         open = None;
     }
+    store_open(&ctx, open_key, open);
 
-    match open {
-        Some(hi) => {
-            ctx.data_mut(|d| d.insert_temp(open_key, hi));
-        }
-        None => {
-            ctx.data_mut(|d| d.remove::<usize>(open_key));
-        }
-    }
-
-    let boxed = snap::rect(rect, ppp);
-    let edge = snap::border_width(1.0, ppp);
-    if let Some(look) = props.look {
-        BoxStyle {
-            background: look.background,
-            radius: Corners::all(look.radius),
-            border: Border::all(edge, look.border),
-            ..BoxStyle::default()
-        }
-        .paint(ui.painter(), boxed);
-        // The inner element: `PopupInternalPaddingStart` (4 px) and 1 px
-        // top and bottom, whole device pixels of the zoom, centred in the
-        // content box (`margin: auto`); its right edge stops at the arrow box.
-        let line = look.font.line_box(&ctx).map_or(16.5, |l| l.height);
-        let pad_y = ppp.trunc() / ppp;
-        let content_top = rect.top() + edge + look.padding.y;
-        let content_h = rect.height() - 2.0 * (edge + look.padding.y);
-        let top = content_top + snap::centre(content_h, line + 2.0 * pad_y, ppp) + pad_y;
-        let left = rect.left() + edge + look.padding.x + (4.0 * ppp).trunc() / ppp;
-        let right = rect.right() - edge - look.padding.x - ((ARROW_BOX * ppp).trunc() + 1.0) / ppp;
-        let text_rect = Rect::from_min_max(pos2(left, top), pos2(right.max(left), top + line));
-        text::paint(
-            ui.painter(),
-            text_rect,
-            &current,
-            &look.font.clone().nowrap(true),
-        );
-        paint_native_arrow(ui.painter(), rect, look.arrow, ppp);
-    } else {
-        let border = if focused {
-            v.fg_muted.mix(0.55, v.border)
-        } else {
-            v.border
-        };
-        let border = anim::transition(&ctx, id.with("border"), border, &T120);
-        BoxStyle {
-            background: v.bg_input,
-            radius: Corners::all(8.0),
-            border: Border::all(edge, border),
-            ..BoxStyle::default()
-        }
-        .paint(ui.painter(), boxed);
-        // `padding-right: 34px` leaves the arrow its room.
-        let text_rect = Rect::from_min_max(
-            pos2(rect.left() + 10.0 + edge, rect.top() + 9.0 + edge),
-            pos2(rect.right() - 34.0 - edge, rect.top() + 27.0 + edge),
-        );
-        text::paint(ui.painter(), text_rect, &current, &style(v));
-        paint_arrow(ui, rect, v.fg_muted.to_color32());
+    match props.look {
+        Some(look) => paint_native_field(ui, rect, look, &current),
+        None => paint_field(ui, rect, id, props.vars, focused, &current),
     }
 
     if let Some(hi) = open {
         events.open = true;
-        let list = Rect::from_min_size(
-            pos2(rect.left(), rect.bottom() + GAP),
-            vec2(rect.width(), ROW * n as f32 + 2.0),
-        );
-        // The highlight and its text: Chromium's list colours for the scheme.
-        let (highlight, highlight_fg) = if v.dark {
-            (
-                Color32::from_rgb(0xc3, 0xc3, 0xc3),
-                Color32::from_rgb(0x10, 0x10, 0x10),
-            )
-        } else {
-            (Color32::from_rgb(0x76, 0x76, 0x76), Color32::WHITE)
-        };
-        ctx.data_mut(|d| d.insert_temp(id.with("popup-rect"), list));
-        let mut picked = None;
-        Area::new(id.with("popup"))
-            .order(Order::Foreground)
-            .fixed_pos(list.min)
-            .show(&ctx, |ui| {
-                ui.set_min_size(list.size());
-                let painter = ui.painter();
-                BoxStyle {
-                    background: v.bg_solid,
-                    border: Border::all(snap::border_width(1.0, ppp), LIST_BORDER),
-                    ..BoxStyle::default()
-                }
-                .paint(painter, snap::rect(list, ppp));
-                for (i, label) in props.options.iter().enumerate() {
-                    let row = Rect::from_min_size(
-                        pos2(list.left() + 1.0, list.top() + 1.0 + ROW * i as f32),
-                        vec2(list.width() - 2.0, ROW),
-                    );
-                    let sense = if off(i) {
-                        Sense::hover()
-                    } else {
-                        Sense::click()
-                    };
-                    let r = ui.interact(row, id.with(("option", i)), sense);
-                    if !off(i)
-                        && r.hovered()
-                        && ui.input(|inp| inp.pointer.delta() != egui::Vec2::ZERO)
-                    {
-                        ctx.data_mut(|d| d.insert_temp(open_key, i));
-                    }
-                    if r.clicked() {
-                        picked = Some(i);
-                    }
-                    let highlighted = i == hi;
-                    if highlighted {
-                        ui.painter()
-                            .rect_filled(snap::rect(row, ppp), 0.0, highlight);
-                    }
-                    let text_rect = Rect::from_min_size(
-                        pos2(row.left() + 10.0, row.top() + 3.0),
-                        vec2(row.width() - 20.0, 18.0),
-                    );
-                    // `GrayText` for a disabled option.
-                    let font = if off(i) {
-                        style(v).color(v.fg_subtle.to_color32())
-                    } else if highlighted {
-                        style(v).color(highlight_fg)
-                    } else {
-                        style(v)
-                    };
-                    text::paint(ui.painter(), text_rect, label, &font);
-                }
-            });
-        if let Some(i) = picked {
+        if let Some(i) = show_list(&ctx, rect, id, props, hi) {
             if i != props.selected {
                 events.changed = Some(i);
             }
@@ -470,6 +297,246 @@ pub fn select(ui: &mut Ui, rect: Rect, id: Id, props: &SelectProps) -> SelectEve
         ctx.data_mut(|d| d.remove::<usize>(open_key));
     }
     events
+}
+
+/// Which options can be picked: the arrows skip a disabled option and the
+/// list will not pick it.
+struct Choices<'a> {
+    disabled: &'a [bool],
+    len: usize,
+}
+
+impl<'a> Choices<'a> {
+    fn new(props: &SelectProps<'a>) -> Choices<'a> {
+        Choices {
+            disabled: props.disabled,
+            len: props.options.len(),
+        }
+    }
+
+    fn off(&self, i: usize) -> bool {
+        self.disabled.get(i).copied().unwrap_or(false)
+    }
+
+    /// The first enabled option after `from`.
+    fn next(&self, from: usize) -> Option<usize> {
+        (from + 1..self.len).find(|&i| !self.off(i))
+    }
+
+    /// The last enabled option before `from`.
+    fn prev(&self, from: usize) -> Option<usize> {
+        (0..from).rev().find(|&i| !self.off(i))
+    }
+}
+
+/// Keeps the vertical arrows, and Escape while the list is open, from
+/// moving focus away from the focused select.
+fn hold_keys(ui: &Ui, id: Id, open: bool) {
+    ui.memory_mut(|m| {
+        m.set_focus_lock_filter(
+            id,
+            egui::EventFilter {
+                tab: false,
+                horizontal_arrows: false,
+                vertical_arrows: true,
+                escape: open,
+            },
+        )
+    });
+}
+
+/// The keys of a focused select. Open (`open` is the highlighted option),
+/// the arrows move the highlight, Enter and Space pick it and Escape
+/// closes; closed, the arrows change the value in place and Space, Enter
+/// or Alt+ArrowDown open the list. Returns the highlighted option while
+/// the list stays open, and the new value, if any.
+fn handle_keys(
+    ui: &Ui,
+    open: Option<usize>,
+    choices: &Choices,
+    selected: usize,
+) -> (Option<usize>, Option<usize>) {
+    let (up, down, alt_down, enter, space, esc) = ui.input(|i| {
+        (
+            i.key_pressed(Key::ArrowUp),
+            i.key_pressed(Key::ArrowDown) && !i.modifiers.alt,
+            i.key_pressed(Key::ArrowDown) && i.modifiers.alt,
+            i.key_pressed(Key::Enter),
+            i.key_pressed(Key::Space),
+            i.key_pressed(Key::Escape),
+        )
+    });
+    let Some(hi) = open else {
+        if alt_down || enter || space {
+            return (Some(selected), None);
+        }
+        if up {
+            return (None, choices.prev(selected));
+        }
+        if down {
+            return (None, choices.next(selected));
+        }
+        return (None, None);
+    };
+    if up {
+        return (Some(choices.prev(hi).unwrap_or(hi)), None);
+    }
+    if down {
+        return (Some(choices.next(hi).unwrap_or(hi)), None);
+    }
+    if enter || space {
+        let changed = (hi != selected && !choices.off(hi)).then_some(hi);
+        return (None, changed);
+    }
+    if esc {
+        // Escape closes the list, not the panel behind it.
+        ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
+        return (None, None);
+    }
+    (Some(hi), None)
+}
+
+fn store_open(ctx: &Context, key: Id, open: Option<usize>) {
+    if let Some(hi) = open {
+        ctx.data_mut(|d| d.insert_temp(key, hi));
+    } else {
+        ctx.data_mut(|d| d.remove::<usize>(key));
+    }
+}
+
+/// The settings field: the input's box, its border easing towards the
+/// muted foreground while focused, the value, and the triangle.
+fn paint_field(ui: &Ui, rect: Rect, id: Id, v: &Vars, focused: bool, current: &str) {
+    let ctx = ui.ctx();
+    let ppp = ctx.pixels_per_point();
+    let edge = snap::border_width(1.0, ppp);
+    let border = if focused {
+        v.fg_muted.mix(0.55, v.border)
+    } else {
+        v.border
+    };
+    let border = anim::transition(ctx, id.with("border"), border, &T120);
+    BoxStyle {
+        background: v.bg_input,
+        radius: Corners::all(8.0),
+        border: Border::all(edge, border),
+        ..BoxStyle::default()
+    }
+    .paint(ui.painter(), snap::rect(rect, ppp));
+    // 34 px of right padding leave the triangle its room.
+    let text_rect = Rect::from_min_max(
+        pos2(rect.left() + 10.0 + edge, rect.top() + 9.0 + edge),
+        pos2(rect.right() - 34.0 - edge, rect.top() + 27.0 + edge),
+    );
+    text::paint(ui.painter(), text_rect, current, &style(v));
+    paint_arrow(ui, rect, v.fg_muted.to_color32());
+}
+
+/// A field with Chromium's look: the page's box, the value and the chevron.
+fn paint_native_field(ui: &Ui, rect: Rect, look: &NativeLook, current: &str) {
+    let ctx = ui.ctx();
+    let ppp = ctx.pixels_per_point();
+    let edge = snap::border_width(1.0, ppp);
+    BoxStyle {
+        background: look.background,
+        radius: Corners::all(look.radius),
+        border: Border::all(edge, look.border),
+        ..BoxStyle::default()
+    }
+    .paint(ui.painter(), snap::rect(rect, ppp));
+    // The inner element: 4 px of start padding and 1 px top and bottom,
+    // whole device pixels of the zoom, centred in the content box; its
+    // right edge stops at the arrow box.
+    let line = look.font.line_box(ctx).map_or(16.5, |l| l.height);
+    let pad_y = ppp.trunc() / ppp;
+    let content_top = rect.top() + edge + look.padding.y;
+    let content_h = rect.height() - 2.0 * (edge + look.padding.y);
+    let top = content_top + snap::centre(content_h, line + 2.0 * pad_y, ppp) + pad_y;
+    let left = rect.left() + edge + look.padding.x + (4.0 * ppp).trunc() / ppp;
+    let right = rect.right() - edge - look.padding.x - ((ARROW_BOX * ppp).trunc() + 1.0) / ppp;
+    let text_rect = Rect::from_min_max(pos2(left, top), pos2(right.max(left), top + line));
+    text::paint(
+        ui.painter(),
+        text_rect,
+        current,
+        &look.font.clone().nowrap(true),
+    );
+    paint_native_arrow(ui.painter(), rect, look.arrow, ppp);
+}
+
+/// The highlighted row's background and text: Chromium's list colours for
+/// the scheme.
+fn highlight_colors(dark: bool) -> (Color32, Color32) {
+    if dark {
+        (
+            Color32::from_rgb(0xc3, 0xc3, 0xc3),
+            Color32::from_rgb(0x10, 0x10, 0x10),
+        )
+    } else {
+        (Color32::from_rgb(0x76, 0x76, 0x76), Color32::WHITE)
+    }
+}
+
+/// The open list under `field`, `hi` highlighted; the option clicked, if
+/// any. An enabled option the pointer moves over takes the highlight from
+/// the next frame.
+fn show_list(ctx: &Context, field: Rect, id: Id, props: &SelectProps, hi: usize) -> Option<usize> {
+    let ppp = ctx.pixels_per_point();
+    let v = props.vars;
+    let choices = Choices::new(props);
+    let list = Rect::from_min_size(
+        pos2(field.left(), field.bottom() + GAP),
+        vec2(field.width(), ROW * props.options.len() as f32 + 2.0),
+    );
+    let (highlight, highlight_fg) = highlight_colors(v.dark);
+    ctx.data_mut(|d| d.insert_temp(id.with("popup-rect"), list));
+    let mut picked = None;
+    Area::new(id.with("popup"))
+        .order(Order::Foreground)
+        .fixed_pos(list.min)
+        .show(ctx, |ui| {
+            ui.set_min_size(list.size());
+            BoxStyle {
+                background: v.bg_solid,
+                border: Border::all(snap::border_width(1.0, ppp), LIST_BORDER),
+                ..BoxStyle::default()
+            }
+            .paint(ui.painter(), snap::rect(list, ppp));
+            for (i, label) in props.options.iter().enumerate() {
+                let row = Rect::from_min_size(
+                    pos2(list.left() + 1.0, list.top() + 1.0 + ROW * i as f32),
+                    vec2(list.width() - 2.0, ROW),
+                );
+                let off = choices.off(i);
+                let sense = if off { Sense::hover() } else { Sense::click() };
+                let r = ui.interact(row, id.with(("option", i)), sense);
+                if !off && r.hovered() && ui.input(|inp| inp.pointer.delta() != egui::Vec2::ZERO) {
+                    ctx.data_mut(|d| d.insert_temp(id.with("open"), i));
+                }
+                if r.clicked() {
+                    picked = Some(i);
+                }
+                let highlighted = i == hi;
+                if highlighted {
+                    ui.painter()
+                        .rect_filled(snap::rect(row, ppp), 0.0, highlight);
+                }
+                let text_rect = Rect::from_min_size(
+                    pos2(row.left() + 10.0, row.top() + 3.0),
+                    vec2(row.width() - 20.0, 18.0),
+                );
+                // A disabled option is greyed out.
+                let font = if off {
+                    style(v).color(v.fg_subtle.to_color32())
+                } else if highlighted {
+                    style(v).color(highlight_fg)
+                } else {
+                    style(v)
+                };
+                text::paint(ui.painter(), text_rect, label, &font);
+            }
+        });
+    picked
 }
 
 fn is_over_popup(ui: &Ui, id: Id) -> bool {

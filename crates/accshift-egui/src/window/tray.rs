@@ -30,11 +30,11 @@ mod imp {
         NOTIFYICONDATAW,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-        GetCursorPos, GetWindowLongPtrW, LoadIconW, PostMessageW, RegisterClassW,
-        SetForegroundWindow, SetWindowLongPtrW, TrackPopupMenu, GWLP_USERDATA, IDI_APPLICATION,
-        MF_STRING, TPM_RIGHTBUTTON, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_LBUTTONUP, WM_NULL,
-        WM_RBUTTONUP, WNDCLASSW,
+        AppendMenuW, ChangeWindowMessageFilterEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
+        DestroyMenu, DestroyWindow, GetCursorPos, GetWindowLongPtrW, LoadIconW, PostMessageW,
+        RegisterClassW, RegisterWindowMessageW, SetForegroundWindow, SetWindowLongPtrW,
+        TrackPopupMenu, GWLP_USERDATA, IDI_APPLICATION, MF_STRING, MSGFLT_ALLOW, TPM_RIGHTBUTTON,
+        WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSW,
     };
 
     /// The icon's callback message; the low word of its lParam is the mouse
@@ -50,6 +50,54 @@ mod imp {
         callback: Box<dyn Fn(TrayAction)>,
         open_label: Vec<u16>,
         quit_label: Vec<u16>,
+        /// The icon as first added, added again when Explorer restarts.
+        icon: NOTIFYICONDATAW,
+        /// The `TaskbarCreated` message id, 0 when it could not be registered.
+        taskbar_created: u32,
+    }
+
+    /// The message Explorer broadcasts to top-level windows once its taskbar
+    /// exists again after a restart: every tray icon is gone by then and has
+    /// to be added back. 0 when registration fails.
+    pub(super) fn taskbar_created_message() -> u32 {
+        let name = wide("TaskbarCreated");
+        // SAFETY: a NUL-terminated wide string that outlives the call.
+        unsafe { RegisterWindowMessageW(name.as_ptr()) }
+    }
+
+    /// What the tray window does with one message.
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) enum Reaction {
+        Fire(TrayAction),
+        Menu,
+        /// Explorer restarted: add the icon again.
+        Readd,
+        Default,
+    }
+
+    pub(super) fn react(
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        taskbar_created: u32,
+    ) -> Reaction {
+        // An unregistered id is 0, which is WM_NULL: never read it as a restart.
+        if taskbar_created != 0 && msg == taskbar_created {
+            return Reaction::Readd;
+        }
+        match msg {
+            WM_TRAYICON => match (lparam & 0xFFFF) as u32 {
+                WM_LBUTTONUP => Reaction::Fire(TrayAction::Open),
+                WM_RBUTTONUP | WM_CONTEXTMENU => Reaction::Menu,
+                _ => Reaction::Default,
+            },
+            WM_COMMAND => match wparam & 0xFFFF {
+                ID_OPEN => Reaction::Fire(TrayAction::Open),
+                ID_QUIT => Reaction::Fire(TrayAction::Quit),
+                _ => Reaction::Default,
+            },
+            _ => Reaction::Default,
+        }
     }
 
     pub struct Tray {
@@ -87,6 +135,8 @@ mod imp {
                 // is harmless since `CreateWindowExW` still finds it.
                 RegisterClassW(&class);
                 let window_name = wide("Accshift");
+                // A hidden top-level window, not a message-only one: only
+                // top-level windows get the `TaskbarCreated` broadcast.
                 let hwnd = CreateWindowExW(
                     0,
                     class_name.as_ptr(),
@@ -104,13 +154,6 @@ mod imp {
                 if hwnd.is_null() {
                     return None;
                 }
-                let state = Box::into_raw(Box::new(State {
-                    callback,
-                    open_label: wide(open_label),
-                    quit_label: wide(quit_label),
-                }));
-                SetWindowLongPtrW(hwnd, GWLP_USERDATA, state as isize);
-
                 let mut data: NOTIFYICONDATAW = std::mem::zeroed();
                 data.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
                 data.hWnd = hwnd;
@@ -121,9 +164,29 @@ mod imp {
                 let tip = wide(tooltip);
                 let n = tip.len().min(data.szTip.len());
                 data.szTip[..n].copy_from_slice(&tip[..n]);
+                let taskbar_created = taskbar_created_message();
+                if taskbar_created != 0 {
+                    // UIPI drops Explorer's broadcast to an elevated process
+                    // unless the message is let through.
+                    ChangeWindowMessageFilterEx(
+                        hwnd,
+                        taskbar_created,
+                        MSGFLT_ALLOW,
+                        std::ptr::null_mut(),
+                    );
+                }
+                let state = Box::into_raw(Box::new(State {
+                    callback,
+                    open_label: wide(open_label),
+                    quit_label: wide(quit_label),
+                    icon: data,
+                    taskbar_created,
+                }));
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, state as isize);
                 if Shell_NotifyIconW(NIM_ADD, &data) == 0 {
-                    drop(Box::from_raw(state));
+                    // The wndproc reads the state until the window is gone.
                     DestroyWindow(hwnd);
+                    drop(Box::from_raw(state));
                     return None;
                 }
                 Some(Tray { hwnd, state })
@@ -206,26 +269,20 @@ mod imp {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
-        match msg {
-            WM_TRAYICON => {
-                let mouse = (lparam & 0xFFFF) as u32;
-                match mouse {
-                    WM_LBUTTONUP => fire(hwnd, TrayAction::Open),
-                    WM_RBUTTONUP | WM_CONTEXTMENU => show_menu(hwnd),
-                    _ => {}
+        // Null until `new` stores it, and while the window is created.
+        let state = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const State;
+        let taskbar_created = state.as_ref().map_or(0, |state| state.taskbar_created);
+        match react(msg, wparam, lparam, taskbar_created) {
+            Reaction::Fire(action) => fire(hwnd, action),
+            Reaction::Menu => show_menu(hwnd),
+            Reaction::Readd => {
+                if let Some(state) = state.as_ref() {
+                    Shell_NotifyIconW(NIM_ADD, &state.icon);
                 }
-                0
             }
-            WM_COMMAND => {
-                match wparam & 0xFFFF {
-                    ID_OPEN => fire(hwnd, TrayAction::Open),
-                    ID_QUIT => fire(hwnd, TrayAction::Quit),
-                    _ => {}
-                }
-                0
-            }
-            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+            Reaction::Default => return DefWindowProcW(hwnd, msg, wparam, lparam),
         }
+        0
     }
 }
 
@@ -233,8 +290,8 @@ mod imp {
 mod imp {
     use super::TrayAction;
 
-    /// Other platforms have no tray in this spike; the runner treats a `None`
-    /// as "cannot hide, close normally".
+    /// Other platforms have no tray yet; the runner treats a `None` as
+    /// "cannot hide, close normally".
     pub struct Tray;
 
     impl Tray {
@@ -246,5 +303,37 @@ mod imp {
         ) -> Option<Tray> {
             None
         }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::imp::{react, taskbar_created_message, Reaction};
+    use super::TrayAction;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{WM_APP, WM_COMMAND, WM_LBUTTONUP};
+
+    #[test]
+    fn explorer_restart_adds_the_icon_again() {
+        let id = taskbar_created_message();
+        // Registered messages live in 0xC000..=0xFFFF and keep their id.
+        assert!((0xC000..=0xFFFF).contains(&id), "{id:#x}");
+        assert_eq!(taskbar_created_message(), id);
+        assert_eq!(react(id, 0, 0, id), Reaction::Readd);
+    }
+
+    #[test]
+    fn the_icon_and_menu_messages_keep_their_meaning() {
+        let id = taskbar_created_message();
+        let icon = WM_APP + 1;
+        assert_eq!(
+            react(icon, 0, WM_LBUTTONUP as isize, id),
+            Reaction::Fire(TrayAction::Open)
+        );
+        assert_eq!(
+            react(WM_COMMAND, 2, 0, id),
+            Reaction::Fire(TrayAction::Quit)
+        );
+        // A failed registration (0) never reads WM_NULL as a restart.
+        assert_eq!(react(0, 0, 0, 0), Reaction::Default);
     }
 }

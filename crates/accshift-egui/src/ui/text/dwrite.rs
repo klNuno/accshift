@@ -83,12 +83,6 @@ fn factory() -> Option<&'static Factory> {
         .as_ref()
 }
 
-/// Creates the factory now (call off the UI thread to keep it off the first
-/// frame).
-pub fn warm_up() {
-    let _ = factory();
-}
-
 /// The loader for bundled faces (`IDWriteFactory5`, Windows 10 1703).
 fn memory_loader(f: &Factory) -> Option<&'static (IDWriteFactory5, IDWriteInMemoryFontFileLoader)> {
     static LOADER: OnceLock<Option<(IDWriteFactory5, IDWriteInMemoryFontFileLoader)>> =
@@ -528,11 +522,22 @@ impl FaceRasterizer for Glyphs {
     }
 }
 
-/// Whether faces get a DirectWrite rasterizer (`ACCSHIFT_GLYPHS_EPAINT` set:
-/// epaint's own, for comparisons).
+/// Whether faces get a DirectWrite rasterizer (epaint's own instead when
+/// [`epaint_requested`]).
 pub fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("ACCSHIFT_GLYPHS_EPAINT").is_none())
+    *ON.get_or_init(|| {
+        !epaint_requested(
+            cfg!(debug_assertions),
+            std::env::var_os("ACCSHIFT_GLYPHS_EPAINT").is_some(),
+        )
+    })
+}
+
+/// `ACCSHIFT_GLYPHS_EPAINT` swaps in epaint's rasterizer for comparisons,
+/// in debug builds only: a stray variable must not change a release's text.
+fn epaint_requested(debug_build: bool, variable_set: bool) -> bool {
+    debug_build && variable_set
 }
 
 /// The DirectWrite rasterizer of a face, or `None` when the face cannot be
@@ -560,6 +565,13 @@ pub fn rasterizer(choice: &Choice, data: &[u8]) -> Option<FaceRasterizerRef> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn epaint_switch_is_debug_only() {
+        assert!(epaint_requested(true, true));
+        assert!(!epaint_requested(false, true), "release builds ignore it");
+        assert!(!epaint_requested(true, false));
+    }
 
     fn segoe_ui() -> Tables {
         // segoeui.ttf: gasp v1, (8, 0b1010), (19, 0b0111), (65535, 0b1111).

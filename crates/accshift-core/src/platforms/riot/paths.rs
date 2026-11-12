@@ -34,11 +34,40 @@ pub(super) fn resolve_riot_client_path(app_handle: &dyn AppContext) -> Result<Pa
         return Err("Could not locate Riot Client installation".into());
     };
     let candidate = PathBuf::from(path);
+    // An override saved before it was validated (a folder, another exe) must
+    // not reach the switch, which takes the install dir from its parent.
+    if !override_path.is_empty() {
+        validate_riot_client_path(&candidate)?;
+        return Ok(candidate);
+    }
     if candidate.exists() {
         Ok(candidate)
     } else {
         Err("Could not locate Riot Client installation".into())
     }
+}
+
+/// The executable the Riot Client override must name: the switch derives the
+/// install dir from its parent and launches it.
+const RIOT_CLIENT_EXECUTABLE: &str = "RiotClientServices.exe";
+
+/// Accept only an existing `RiotClientServices.exe` as the path override.
+pub(super) fn validate_riot_client_path(path: &Path) -> Result<(), String> {
+    if !path.is_file() {
+        return Err(format!(
+            "Riot Client path must be an existing {RIOT_CLIENT_EXECUTABLE} file"
+        ));
+    }
+    let named_right = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case(RIOT_CLIENT_EXECUTABLE));
+    if !named_right {
+        return Err(format!(
+            "Riot Client path must point to {RIOT_CLIENT_EXECUTABLE}"
+        ));
+    }
+    Ok(())
 }
 
 /// Directory holding the Riot Client executable, or `None` when the install

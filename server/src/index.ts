@@ -24,7 +24,7 @@
 //   /export need, and it is exactly why the app talks to this Worker instead of
 //   talking to PostHog directly: that key can read and delete the whole
 //   project, so it can never ship inside a desktop binary.
-// - CORS is restricted when browsers send Origin; native Tauri requests may omit it.
+// - CORS is restricted when browsers send Origin; the native clients send none.
 // - The app never uploads log files. Logs stay on the user's machine and are
 //   shared only by hand, so this Worker has no object storage at all.
 

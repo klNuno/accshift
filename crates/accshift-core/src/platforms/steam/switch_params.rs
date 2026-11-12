@@ -1,11 +1,11 @@
-//! The params a Steam switch takes, built in one place for every caller.
+//! The params a Steam switch takes: built here for the CLI (accshift-app's
+//! `SteamLaunchConfig` sends the same keys for the GUI) and read back by
+//! `SteamService` through [`SteamSwitchParams`].
 //!
-//! The GUI builds them from its settings store and the CLI from the same store
-//! plus its flags. Both used to do it by hand and had drifted: the CLI passed
-//! launch options untrimmed, and the GUI fell back to a force kill where the
-//! settings schema and the CLI fall back to a graceful one. The rules here
-//! follow the settings schema (`src/lib/platforms/steam/settingsSchema.ts`).
+//! The rules: launch options trimmed and capped, and any shutdown mode but
+//! `force` graceful.
 
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 /// The most launch options the settings schema keeps, in characters.
@@ -92,6 +92,34 @@ pub struct SteamSwitchOverrides {
     pub launch_options: Option<String>,
 }
 
+/// The `params` value of a Steam switch or setup, as `SteamService` reads it.
+/// A missing key takes its default; a key of the wrong type is an error
+/// rather than a silent default.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SteamSwitchParams {
+    pub run_as_admin: bool,
+    pub launch_options: String,
+    pub shutdown_mode: Option<String>,
+    /// `online` or `invisible`; absent leaves the persona state alone.
+    pub mode: Option<String>,
+    pub steam_id: Option<String>,
+}
+
+impl SteamSwitchParams {
+    pub fn from_value(params: Value) -> Result<Self, String> {
+        // Callers with nothing to say send null.
+        if params.is_null() {
+            return Ok(Self::default());
+        }
+        serde_json::from_value(params).map_err(|e| format!("Invalid Steam switch params: {e}"))
+    }
+
+    pub fn force_kill(&self) -> bool {
+        ShutdownMode::from_setting(self.shutdown_mode.as_deref()) == ShutdownMode::Force
+    }
+}
+
 /// The `params` value `SteamService::switch_account` reads.
 pub fn steam_switch_params(
     defaults: &SteamSwitchDefaults,
@@ -124,6 +152,43 @@ mod tests {
             params,
             json!({"runAsAdmin": true, "launchOptions": "-silent", "shutdownMode": "force"})
         );
+    }
+
+    #[test]
+    fn the_service_reads_back_what_the_builder_writes() {
+        let defaults = SteamSwitchDefaults::from_settings(true, "-silent", Some("force"));
+        let params = steam_switch_params(
+            &defaults,
+            SteamSwitchOverrides {
+                persona: Some(PersonaMode::Invisible),
+                ..SteamSwitchOverrides::default()
+            },
+        );
+        let parsed = SteamSwitchParams::from_value(params).unwrap();
+        assert_eq!(
+            parsed,
+            SteamSwitchParams {
+                run_as_admin: true,
+                launch_options: "-silent".into(),
+                shutdown_mode: Some("force".into()),
+                mode: Some("invisible".into()),
+                steam_id: None,
+            }
+        );
+        assert!(parsed.force_kill());
+    }
+
+    #[test]
+    fn missing_params_take_their_defaults_and_wrong_types_fail() {
+        let parsed = SteamSwitchParams::from_value(json!({})).unwrap();
+        assert_eq!(parsed, SteamSwitchParams::default());
+        assert!(!parsed.force_kill());
+        assert_eq!(
+            SteamSwitchParams::from_value(Value::Null).unwrap(),
+            SteamSwitchParams::default()
+        );
+        // The old by-hand parse read a string "true" as false without a word.
+        assert!(SteamSwitchParams::from_value(json!({"runAsAdmin": "true"})).is_err());
     }
 
     #[test]

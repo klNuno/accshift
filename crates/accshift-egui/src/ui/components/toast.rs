@@ -1,11 +1,10 @@
-//! `src/lib/features/notifications/Toast.svelte` in the `.toast-container`
-//! of `AppDialogs.svelte`: the stack in the bottom right corner.
+//! The toasts: the stack in the bottom right corner.
 //!
 //! The container is `position: fixed; bottom: 16px; right: 16px`, a column
 //! aligned to its end, each toast wrapped in a `div` with `in:fly` and
-//! `out:fly` (`y: 20`, 300 ms) and `animate:flip` (200 ms), all on Svelte's
-//! `cubicOut`. A toast leaving is fixed where it stood (Svelte's `fix()`)
-//! while the others slide to their new places.
+//! `out:fly` (`y: 20`, 300 ms) and `animate:flip` (200 ms), all on a cubic
+//! ease-out. A toast leaving is fixed where it stood while the others slide
+//! to their new places.
 //!
 //! `.toast`: `--bg-overlay` under `--card-bg-image`, `--radius-md`, the
 //! theme border, `--elevation-medium`, `margin-top: 8px`, at most
@@ -29,6 +28,7 @@ use crate::icons;
 use crate::theme::Rgba;
 use crate::ui::anim::{self, Motion, Timing, Transition};
 use crate::ui::components::icon;
+use crate::ui::components::shared::ceil_unit;
 use crate::ui::paint::{Border, BoxStyle, Corners};
 use crate::ui::snap;
 use crate::ui::text::{self, LineHeight, TextStyle};
@@ -66,7 +66,7 @@ const T100: Transition = Transition::new(0.1, Timing::EASE);
 pub struct ToastProps<'a> {
     pub vars: &'a Vars,
     pub locale: Locale,
-    /// Oldest first, like `getToasts()`.
+    /// Oldest first.
     pub toasts: &'a [ToastEntry],
     pub motion: Motion,
     pub now: f64,
@@ -106,7 +106,7 @@ struct Stack {
     items: Vec<Item>,
 }
 
-/// Svelte's `cubicOut`.
+/// The cubic ease-out, `1 - (1 - t)^3`.
 fn cubic_out(t: f64) -> f64 {
     let f = t - 1.0;
     f * f * f + 1.0
@@ -148,11 +148,6 @@ fn action_style(v: &Vars) -> TextStyle {
         .line_height(LineHeight::Normal)
         .nowrap(false)
         .color(v.fg.to_color32())
-}
-
-/// A width rounded up to a LayoutUnit, as inline boxes are.
-fn ceil_unit(w: f32, ppp: f32) -> f32 {
-    (w * ppp * 64.0).ceil() / 64.0 / ppp
 }
 
 fn geometry(ctx: &egui::Context, v: &Vars, item: &Item, max_w: f32) -> Geometry {
@@ -238,7 +233,7 @@ pub fn toast_stack(ui: &mut Ui, viewport: Rect, props: &ToastProps) -> Vec<Toast
     let id = Id::unique("accshift::toast-stack");
     let mut stack: Stack = ctx.data_mut(|d| d.get_temp(id)).unwrap_or_default();
 
-    // `{#each toasts as toast (toast.id)}`.
+    // Each toast, keyed by its id.
     let mut changed = false;
     for entry in props.toasts {
         let message = entry.text.resolve(props.locale);
@@ -514,7 +509,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn svelte_cubic_out() {
+    fn cubic_out_eases_from_zero_to_one() {
         assert_eq!(cubic_out(0.0), 0.0);
         assert_eq!(cubic_out(1.0), 1.0);
         assert!((cubic_out(0.5) - 0.875).abs() < 1e-9);

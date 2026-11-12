@@ -17,8 +17,8 @@
 //! `...\Windows NT\CurrentVersion\Fonts`), so a family the theme names (or
 //! Inter, when the user installed it) resolves like in the webview. The
 //! bundled faces of `public/fonts` (VT323, and the Noto Sans SC subset off
-//! Windows) are compiled in. Other systems try a few well-known files, then
-//! fall back to egui's own fonts.
+//! Windows) are compiled in. Linux asks fontconfig ([`super::fontconfig`]),
+//! macOS tries the files it ships; both then fall back to egui's own fonts.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -191,8 +191,9 @@ pub fn nearest_weight(available: impl IntoIterator<Item = u16>, want: u16) -> Op
     })
 }
 
-/// Families that only matter as per-character fallback for Han. They join a
-/// family's face list once CJK text has been seen (their files are large).
+/// Families that only matter as per-character fallback for Han and kana. They
+/// join a family's face list once such text has been seen (their files are
+/// large).
 pub const CJK_FAMILIES: &[&str] = &[
     "microsoft yahei ui",
     "microsoft yahei",
@@ -228,6 +229,15 @@ pub fn normalize(name: &str) -> Option<String> {
 #[derive(Default)]
 pub struct Catalog {
     families: HashMap<String, Vec<Entry>>,
+    /// Families resolved on first use, by name: an index in `deferred`.
+    lazy: HashMap<String, usize>,
+    deferred: Vec<Deferred>,
+}
+
+/// A family whose faces cost a query to find.
+struct Deferred {
+    resolve: Box<dyn Fn() -> Vec<Entry> + Send + Sync>,
+    entries: OnceLock<Vec<Entry>>,
 }
 
 impl Catalog {
@@ -323,50 +333,35 @@ impl Catalog {
         }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     fn add_system(&mut self) {
-        // No fontconfig or CoreText query: a few well-known files.
-        #[cfg(target_os = "macos")]
+        // No CoreText query: the files every macOS ships. PingFang moved to
+        // the font asset store in 10.15, Hiragino Sans GB stayed (Han and
+        // kana), Apple SD Gothic Neo draws Hangul.
         let known: &[(&str, &str, u32, u16)] = &[
             ("system-ui", "/System/Library/Fonts/SFNS.ttf", 0, 400),
             ("helvetica", "/System/Library/Fonts/Helvetica.ttc", 0, 400),
             ("helvetica", "/System/Library/Fonts/Helvetica.ttc", 1, 700),
             ("pingfang sc", "/System/Library/Fonts/PingFang.ttc", 0, 400),
+            (
+                "hiragino sans gb",
+                "/System/Library/Fonts/Hiragino Sans GB.ttc",
+                0,
+                400,
+            ),
+            (
+                "hiragino sans gb",
+                "/System/Library/Fonts/Hiragino Sans GB.ttc",
+                1,
+                700,
+            ),
+            (
+                "apple sd gothic neo",
+                "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+                0,
+                400,
+            ),
             ("menlo", "/System/Library/Fonts/Menlo.ttc", 0, 400),
-        ];
-        #[cfg(not(target_os = "macos"))]
-        let known: &[(&str, &str, u32, u16)] = &[
-            (
-                "system-ui",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                0,
-                400,
-            ),
-            (
-                "system-ui",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                0,
-                700,
-            ),
-            ("system-ui", "/usr/share/fonts/TTF/DejaVuSans.ttf", 0, 400),
-            (
-                "system-ui",
-                "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-                0,
-                700,
-            ),
-            (
-                "noto sans cjk sc",
-                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-                2,
-                400,
-            ),
-            (
-                "noto sans cjk sc",
-                "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-                2,
-                700,
-            ),
         ];
         for &(family, path, index, weight) in known {
             let path = PathBuf::from(path);
@@ -383,8 +378,44 @@ impl Catalog {
         }
     }
 
+    /// fontconfig's answers, asked for on a family's first use (the CJK and
+    /// Hangul ones only once such text shows up).
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn add_system(&mut self) {
+        for query in super::fontconfig::QUERIES {
+            self.defer(query.names, move || {
+                super::fontconfig::resolve(query, &mut super::fontconfig::fc_match, &|p| p.exists())
+            });
+        }
+    }
+
+    #[cfg(not(any(windows, unix)))]
+    fn add_system(&mut self) {}
+
+    /// Registers families whose faces `resolve` finds on their first use.
+    #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+    fn defer(&mut self, names: &[&str], resolve: impl Fn() -> Vec<Entry> + Send + Sync + 'static) {
+        let i = self.deferred.len();
+        self.deferred.push(Deferred {
+            resolve: Box::new(resolve),
+            entries: OnceLock::new(),
+        });
+        for name in names {
+            self.lazy.insert(name.to_lowercase(), i);
+        }
+    }
+
+    fn entries(&self, family: &str) -> Option<&[Entry]> {
+        if let Some(list) = self.families.get(family) {
+            return Some(list);
+        }
+        let deferred = self.deferred.get(*self.lazy.get(family)?)?;
+        let list = deferred.entries.get_or_init(|| (deferred.resolve)());
+        (!list.is_empty()).then_some(list.as_slice())
+    }
+
     pub fn has(&self, family: &str) -> bool {
-        self.families.contains_key(family)
+        self.entries(family).is_some()
     }
 
     /// The face that draws `family` (normalized) at `weight`.
@@ -394,10 +425,10 @@ impl Catalog {
         weight: u16,
         load: &mut dyn FnMut(&Source) -> Option<&'static [u8]>,
     ) -> Option<Choice> {
-        let entries = self.families.get(family)?;
+        let entries = self.entries(family)?;
         // A family of one file may be a variable font: its named instances
         // are its weights, as DirectWrite lists them.
-        if let [entry] = entries.as_slice() {
+        if let [entry] = entries {
             if let Some(bytes) = load(&entry.source) {
                 let weights = instance_weights(bytes, entry.index);
                 if let Some(w) = nearest_weight(weights.iter().map(|w| *w as u16), weight) {
@@ -628,6 +659,30 @@ mod tests {
             assert_eq!(normalize("system-ui").as_deref(), Some("segoe ui"));
             assert_eq!(normalize("ui-monospace"), None);
         }
+    }
+
+    #[test]
+    fn deferred_families_resolve_on_first_use() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut catalog = Catalog::default();
+        let counted = Arc::clone(&calls);
+        catalog.defer(&["System-UI", "sans-serif"], move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            vec![Entry {
+                source: Source::Bundled("VT323-Regular.ttf", VT323),
+                index: 0,
+                weight: 400,
+            }]
+        });
+        catalog.defer(&["monospace"], Vec::new);
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "nothing asked at build");
+        assert!(catalog.has("system-ui") && catalog.has("sans-serif"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "asked once for both names");
+        assert!(!catalog.has("monospace"), "an empty answer is no family");
+        let choice = catalog.pick("sans-serif", 700, &mut |_| None).unwrap();
+        assert_eq!(choice.entry.weight, 400);
     }
 
     #[test]

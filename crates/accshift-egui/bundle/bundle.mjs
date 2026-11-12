@@ -22,6 +22,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
   statSync,
@@ -140,6 +141,11 @@ function checkAppImage(file) {
 
 if (appimage) await seedAppRun();
 
+// The bundler writes the bundle kind into the executable, which breaks an
+// Authenticode signature made before it. Windows ships one kind (NSIS), so
+// the marker is not needed there: the updater falls back to windows-x86_64.
+const patching = process.platform === "win32" ? ["--no-binary-patching"] : [];
+
 const tauri = createRequire(join(root, "package.json")).resolve("@tauri-apps/cli/tauri.js");
 execFileSync(
   process.execPath,
@@ -150,11 +156,16 @@ execFileSync(
     bundles,
     "--target",
     triple,
+    ...patching,
     ...configs.flatMap((config) => ["--config", config]),
   ],
   // The folder holding tauri.conf.json, found without a walk from the root.
   { cwd: root, stdio: "inherit", env: { ...process.env, TAURI_APP_PATH: crate } },
 );
+
+if (patching.length && !readFileSync(gui).equals(readFileSync(join(built, `accshift-egui${ext}`)))) {
+  throw new Error(`${gui} was rewritten by the bundler: a signed build would lose its signature`);
+}
 
 const out = join(release, "bundle");
 for (const kind of readdirSync(out)) {

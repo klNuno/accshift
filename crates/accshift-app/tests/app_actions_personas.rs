@@ -1,5 +1,5 @@
-//! Personas: `app/usePersonas.test.ts` and `app/usePersonaSwitch.test.ts`,
-//! run on the mock backend through a scripted wrapper.
+//! Personas: the persona actions and the persona switch, run on the mock
+//! backend through a scripted wrapper.
 
 mod support;
 
@@ -51,7 +51,7 @@ fn stores_of(backend: &dyn Backend) -> ClientStores {
     ClientStores::new(storage, StoreContext::shipped())
 }
 
-// usePersonas.test.ts
+// The persona actions.
 
 #[test]
 fn switches_with_the_adapters_resolved_account() {
@@ -182,6 +182,44 @@ fn a_pin_lock_after_a_landed_platform_reports_and_stops() {
 }
 
 #[test]
+fn keeps_the_assignment_of_a_platform_this_launch_did_not_load() {
+    // A user descriptor that failed to load is missing from the context.
+    let backend = support::scripted("demo");
+    let mut stores = stores_of(&backend);
+    let stored = serde_json::json!([{
+        "id": "p1",
+        "name": "Main",
+        "assignments": [
+            { "platformId": "steam", "accountId": "s1" },
+            { "platformId": "my-launcher", "accountId": "m1" },
+        ],
+    }]);
+    let loaded = accshift_app::personas::sanitize_personas(&stored);
+    assert_eq!(loaded[0].assignments.len(), 2);
+
+    // A later write of the list keeps it on disk.
+    let created = stores.create_persona(PersonaInput {
+        name: "Alt".into(),
+        assignments: loaded[0].assignments.clone(),
+        ..PersonaInput::default()
+    });
+    let kept = stores
+        .personas()
+        .iter()
+        .find(|persona| persona.id == created.id)
+        .expect("the persona is stored");
+    assert!(kept
+        .assignments
+        .iter()
+        .any(|assignment| assignment.platform_id == "my-launcher"));
+
+    // The switch leaves the unloaded platform out.
+    let steps = switch_steps(&PlatformRegistry::shipped(), &loaded[0]);
+    let platforms: Vec<&str> = steps.iter().map(|step| step.platform_id.as_str()).collect();
+    assert_eq!(platforms, ["steam"]);
+}
+
+#[test]
 fn refuses_to_start_while_an_account_switch_is_running() {
     let backend = Arc::new(support::scripted("demo"));
     let registry = PlatformRegistry::shipped();
@@ -193,6 +231,110 @@ fn refuses_to_start_while_an_account_switch_is_running() {
     assert!(!controller.start_switch(&jobs, &registry, &settings, persona(&[]), true));
     assert!(!controller.switching());
     assert_eq!(controller.poll_switch(), None);
+}
+
+#[test]
+fn a_persona_without_known_steps_does_not_start_a_job() {
+    let backend = Arc::new(support::scripted("demo"));
+    let registry = PlatformRegistry::shipped();
+    let stores = stores_of(backend.as_ref());
+    let jobs = Jobs::new(backend as Arc<dyn Backend>, 1, || {});
+    let mut controller = PersonaController::new(&stores);
+    assert!(!controller.start_switch(
+        &jobs,
+        &registry,
+        stores.settings(),
+        persona(&[("missing", "m1")]),
+        false
+    ));
+    assert!(!controller.switching());
+    assert_eq!(controller.poll_switch(), None);
+}
+
+#[test]
+fn a_persona_without_known_steps_shows_failure_instead_of_a_confirmation() {
+    let mut switch = PersonaSwitch::new();
+    let mut dialogs = AppDialogs::new();
+    let effects = switch.handle_switch_persona(
+        &mut dialogs,
+        &PlatformRegistry::shipped(),
+        &persona(&[("missing", "m1")]),
+        false,
+        false,
+    );
+    assert_eq!(
+        effects,
+        vec![AppEffect::Toast(Toast::new(
+            Text::with("personas.switchFailed", [("name", "Main")]),
+            ToastKind::Error,
+        ))]
+    );
+    assert!(dialogs.confirm_dialog().is_none());
+}
+
+#[test]
+fn persona_confirmation_counts_only_known_steps() {
+    let mut switch = PersonaSwitch::new();
+    let mut dialogs = AppDialogs::new();
+    switch.handle_switch_persona(
+        &mut dialogs,
+        &PlatformRegistry::shipped(),
+        &persona(&[("steam", "s1"), ("missing", "m1")]),
+        false,
+        false,
+    );
+    assert_eq!(
+        dialogs.confirm_dialog().unwrap().message,
+        Text::with(
+            "personas.switchConfirmMessage",
+            [
+                ("name", accshift_app::i18n::TranslationValue::from("Main")),
+                ("count", accshift_app::i18n::TranslationValue::from(1.0)),
+            ],
+        )
+    );
+}
+
+#[test]
+fn persona_telemetry_counts_only_known_steps_without_erasing_saved_assignments() {
+    let backend = Arc::new(support::scripted("demo"));
+    let registry = PlatformRegistry::shipped();
+    let account = steam_accounts(backend.as_ref(), &registry).remove(0);
+    let mut stores = stores_of(backend.as_ref());
+    let target = stores.create_persona(PersonaInput {
+        name: "Main".into(),
+        assignments: persona(&[("steam", &account.id), ("missing", "m1")]).assignments,
+        ..PersonaInput::default()
+    });
+    let jobs = Jobs::new(backend as Arc<dyn Backend>, 1, || {});
+    let mut controller = PersonaController::new(&stores);
+    assert!(controller.start_switch(&jobs, &registry, stores.settings(), target.clone(), false));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let (done, result) = loop {
+        if let Some(done) = controller.poll_switch() {
+            break done;
+        }
+        assert!(Instant::now() < deadline, "switch never finished");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let effects = PersonaSwitch::finish_switch(&done, result.as_ref(), &[]);
+    assert_eq!(
+        effects[0],
+        AppEffect::TrackPersonaSwitch {
+            platforms: 1,
+            succeeded: 1
+        }
+    );
+    assert_eq!(
+        stores
+            .personas()
+            .iter()
+            .find(|p| p.id == target.id)
+            .unwrap()
+            .assignments
+            .len(),
+        2
+    );
 }
 
 #[test]
@@ -224,7 +366,7 @@ fn controller_keeps_its_list_in_step_with_the_store() {
     assert_eq!(controller.personas().len(), before);
 }
 
-// usePersonaSwitch.test.ts
+// The persona switch.
 
 #[test]
 fn offers_the_implemented_enabled_platforms_of_this_os_as_slots() {
@@ -263,8 +405,7 @@ fn opens_the_panel_after_closing_settings_and_bulk_edit() {
         vec![AppEffect::CloseSettingsPanel, AppEffect::CloseBulkEdit]
     );
     assert!(switch.show_personas);
-    switch.sync_enabled(false);
-    assert!(!switch.show_personas);
+    switch.show_personas = false;
     assert!(switch.open_personas(false, false).is_empty());
     assert!(!switch.show_personas);
 }
@@ -275,7 +416,13 @@ fn does_nothing_without_a_confirmation() {
     let mut dialogs = AppDialogs::new();
     let target = persona(&[("steam", "s1"), ("riot", "r1")]);
     assert!(switch
-        .handle_switch_persona(&mut dialogs, &target, false, false)
+        .handle_switch_persona(
+            &mut dialogs,
+            &PlatformRegistry::shipped(),
+            &target,
+            false,
+            false
+        )
         .is_empty());
     let dialog = dialogs.confirm_dialog().unwrap();
     assert_eq!(
@@ -296,13 +443,31 @@ fn does_nothing_without_a_confirmation() {
 
     // Busy: no dialog at all.
     let mut dialogs = AppDialogs::new();
-    switch.handle_switch_persona(&mut dialogs, &target, true, false);
-    switch.handle_switch_persona(&mut dialogs, &target, false, true);
+    switch.handle_switch_persona(
+        &mut dialogs,
+        &PlatformRegistry::shipped(),
+        &target,
+        true,
+        false,
+    );
+    switch.handle_switch_persona(
+        &mut dialogs,
+        &PlatformRegistry::shipped(),
+        &target,
+        false,
+        true,
+    );
     assert!(dialogs.confirm_dialog().is_none());
 
     // Accepted: the persona comes back for the controller.
     let mut dialogs = AppDialogs::new();
-    switch.handle_switch_persona(&mut dialogs, &target, false, false);
+    switch.handle_switch_persona(
+        &mut dialogs,
+        &PlatformRegistry::shipped(),
+        &target,
+        false,
+        false,
+    );
     let ticket = dialogs.pending_confirm().unwrap();
     assert_eq!(switch.confirm_settled(ticket, true), Some(target));
 }

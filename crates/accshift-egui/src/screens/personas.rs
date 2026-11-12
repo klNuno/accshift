@@ -1,5 +1,4 @@
-//! The personas grid: `PersonasPanel.svelte`'s markup and styles, and
-//! `PersonaCover.svelte`.
+//! The personas grid and the persona covers.
 //!
 //! - `.personas-panel`: padding 18 22 24, `overflow-y: auto`, the page
 //!   entrance (the shell's panel layer plays it).
@@ -71,7 +70,7 @@ pub struct PersonasInput<'a> {
     pub resolved: &'a ResolvedTheme,
     pub locale: Locale,
     pub personas: &'a [Persona],
-    /// `switchingPersonaId`.
+    /// The persona whose switch is running.
     pub switching_id: Option<&'a str>,
     pub panel: &'a mut PersonasPanel,
     pub avatars: &'a mut AvatarTextures,
@@ -175,7 +174,7 @@ impl Layout {
 /// Draws the panel into `rect` (the stage under the title bar).
 pub fn draw(ui: &mut Ui, rect: Rect, mut input: PersonasInput) -> Vec<Action> {
     let mut out = Vec::new();
-    // `{#if editing}`: the wizard in place of the grid.
+    // Editing: the wizard in place of the grid.
     if let Some(mut wizard) = input.panel.editing.take() {
         match persona_wizard::draw(ui, rect, &mut wizard, &mut input) {
             Outcome::Close => {}
@@ -302,7 +301,7 @@ fn persona_card(
     // `opacity: .6` fades the card as one group: a layer that lands at 0.6
     // where the renderer has layers, each shape at 0.6 where it has not.
     let faded = disabled && !busy;
-    let group = faded && !cfg!(feature = "glow");
+    let group = faded;
     if group {
         Mark::Begin {
             sigma: 0.0,
@@ -423,7 +422,7 @@ fn corners(tl: bool, tr: bool, br: bool, bl: bool) -> Corners {
     }
 }
 
-/// `PersonaCover.svelte` in `cover` (layout units), moved by `ty`: the
+/// A persona's cover in `cover` (layout units), moved by `ty`: the
 /// custom `image`, else a mosaic of the first four `assignments`.
 pub(super) fn paint_cover(
     painter: &egui::Painter,

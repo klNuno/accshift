@@ -1,37 +1,33 @@
-//! The secure screen: the AFK cover and the PIN lock, ported from
-//! `src/lib/app/useSecureScreen.svelte.ts` with the logic
-//! `src/lib/app/AppScreenOverlays.svelte` and `src/App.svelte` keep inline.
+//! The secure screen: the AFK cover and the PIN lock.
 //!
-//! The Svelte `$effect`s become [`SecureScreen::update`], run once per frame
-//! after the window and settings inputs are known: it applies finished
-//! unlocks, fires due timers and replays the effects in source order. Timers
+//! [`SecureScreen::update`] runs once per frame after the window and
+//! settings inputs are known: it applies finished unlocks, fires due timers
+//! and runs the reactions in a fixed order. Timers
 //! are deadlines ([`SecureScreen::next_deadline`]); the backend calls run on
 //! [`Jobs`]. What the UI must do in return comes back as [`SecureEvent`]s.
 
 use super::inactivity::InactivityBlur;
 use super::pin::{
-    is_pin_locked_error, is_valid_pin_hash, lock_pin_session, sanitize_pin_digits,
-    unlock_pin_session, PinCheck, PIN_CODE_LENGTH,
+    is_valid_pin_hash, lock_pin_session, sanitize_pin_digits, unlock_pin_session, PinCheck,
+    PIN_CODE_LENGTH,
 };
-use super::window_activity::WindowActivity;
-use crate::error::BackendError;
 use crate::jobs::{Jobs, Pending, Poll};
 use crate::settings::AppSettings;
 use crate::stores::ClientStores;
 use crate::text::Text;
 use std::time::{Duration, Instant};
 
-/// `AFK_TEXT_FADE_MS` (line 57): how long the wave keeps running while the
+/// How long the wave keeps running while the
 /// AFK text fades out.
 pub const AFK_TEXT_FADE: Duration = Duration::from_millis(900);
 
-/// `AFK_TEXT_REVEAL_DELAY_MS` (line 58): the `startDelayMs` of the wave text.
+/// The delay before the wave text starts.
 pub const AFK_TEXT_REVEAL_DELAY_MS: u64 = 2500;
 
-/// The pause between a matching code and the overlay going away (line 246).
+/// The pause between a matching code and the overlay going away.
 pub const UNLOCK_SETTLE: Duration = Duration::from_millis(240);
 
-/// What the screen reads from the window (`windowActivity` deps).
+/// What the screen reads from the window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowView {
     pub foreground: bool,
@@ -39,45 +35,39 @@ pub struct WindowView {
     pub page_visible: bool,
 }
 
+/// A focused, visible window: the state before the shell reports one.
 impl Default for WindowView {
     fn default() -> Self {
-        Self::from(&WindowActivity::new())
-    }
-}
-
-impl From<&WindowActivity> for WindowView {
-    fn from(activity: &WindowActivity) -> Self {
         Self {
-            foreground: activity.is_foreground(),
-            minimized: activity.is_minimized(),
-            page_visible: activity.is_page_visible(),
+            foreground: true,
+            minimized: false,
+            page_visible: true,
         }
     }
 }
 
-/// The per-frame inputs (`SecureScreenDeps` getters).
+/// The per-frame inputs.
 #[derive(Debug, Clone, Copy)]
 pub struct SecureInputs<'a> {
-    /// `getSettings()`: the shell's settings.
+    /// The shell's settings.
     pub settings: &'a AppSettings,
-    /// `getIsAccountSelectionView()`: no settings panel and an adapter
-    /// (App.svelte line 145). The AFK cover only covers the account grid;
+    /// No settings panel and an adapter. The AFK cover only covers the
+    /// account grid;
     /// the PIN lock engages in every view.
     pub is_account_selection_view: bool,
     pub window: WindowView,
-    /// `getAppVersion()`, empty until known.
+    /// The app version, empty until known.
     pub app_version: &'a str,
 }
 
 /// What the UI does in return.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SecureEvent {
-    /// `onCloseContextMenu()`.
+    /// Close the context menu.
     CloseContextMenu,
-    /// Put keyboard focus in the PIN field (the `setTimeout` focus calls and
-    /// the AppScreenOverlays focus effect, lines 74-76).
+    /// Put keyboard focus in the PIN field.
     FocusPinInput,
-    /// `persistPinHash(hash)`: a PBKDF2 hash replaced a legacy one. Write it
+    /// A PBKDF2 hash replaced a legacy one. Write it
     /// with [`persist_pin_hash`].
     PersistPinHash(String),
 }
@@ -114,7 +104,7 @@ impl Snapshot {
     }
 }
 
-/// `createSecureScreenController`.
+/// The AFK cover and PIN lock state, driven once per frame.
 pub struct SecureScreen {
     snap: Snapshot,
     blur: InactivityBlur,
@@ -128,7 +118,7 @@ pub struct SecureScreen {
     unlock: Option<Pending<PinCheck>>,
     /// The backend refused a switch for want of the PIN. The screen stays
     /// locked on that alone, even when this window holds no PIN: only a code
-    /// the backend accepts clears it (lines 82-85).
+    /// the backend accepts clears it.
     backend_locked: bool,
     afk_listeners_attached: bool,
     afk_wave_active: bool,
@@ -140,8 +130,7 @@ pub struct SecureScreen {
 }
 
 impl SecureScreen {
-    /// Starts locked when the settings carry an enabled, well-formed PIN
-    /// (`startupPinLocked`, lines 71-73).
+    /// Starts locked when the settings carry an enabled, well-formed PIN.
     pub fn new(settings: &AppSettings, now: Instant) -> Self {
         let mut snap = Snapshot::default();
         snap.read(&SecureInputs {
@@ -196,17 +185,17 @@ impl SecureScreen {
         &self.pin_attempt
     }
 
-    /// `pinError`: `pin.invalid` or `pin.tooManyAttempts { seconds }`.
+    /// The PIN error: `pin.invalid` or `pin.tooManyAttempts { seconds }`.
     pub fn pin_error(&self) -> Option<&Text> {
         self.pin_error.as_ref()
     }
 
-    /// `pinCodeLength`.
+    /// The digits in a PIN.
     pub fn pin_code_length(&self) -> usize {
         PIN_CODE_LENGTH
     }
 
-    /// `afkTextRevealDelayMs`.
+    /// The delay before the AFK wave text starts.
     pub fn afk_text_reveal_delay_ms(&self) -> u64 {
         AFK_TEXT_REVEAL_DELAY_MS
     }
@@ -216,7 +205,7 @@ impl SecureScreen {
         self.backend_locked
     }
 
-    /// `windowForeground`.
+    /// The window is in the foreground.
     pub fn window_foreground(&self) -> bool {
         self.snap.window.foreground
     }
@@ -225,7 +214,7 @@ impl SecureScreen {
         self.snap.window.page_visible && !self.snap.window.minimized
     }
 
-    /// `renderSuspended`: minimized with "suspend graphics" on.
+    /// Drawing is suspended: minimized with "suspend graphics" on.
     pub fn render_suspended(&self) -> bool {
         self.snap.suspend_graphics_when_minimized && self.snap.window.minimized
     }
@@ -242,12 +231,12 @@ impl SecureScreen {
         self.inactivity_enabled() && self.blur.is_blurred() && self.snap.is_account_selection_view
     }
 
-    /// `isObscured` (lines 96-101): the frost over the app.
+    /// The frost over the app.
     pub fn is_obscured(&self) -> bool {
         self.afk_covering() || self.pin_overlay_up()
     }
 
-    /// `afkOverlayVisible` (lines 102-111).
+    /// The AFK cover is shown.
     pub fn afk_overlay_visible(&self) -> bool {
         self.afk_covering()
             && !self.pin_overlay_up()
@@ -255,29 +244,29 @@ impl SecureScreen {
             && !self.render_suspended()
     }
 
-    /// `motionPaused`.
+    /// Animations are paused.
     pub fn motion_paused(&self) -> bool {
         !self.window_renderable() || self.render_suspended()
     }
 
-    /// `afkWaveActive`: the AFK wave text runs (it keeps running for
+    /// The AFK wave text runs (it keeps running for
     /// [`AFK_TEXT_FADE`] after the cover goes).
     pub fn afk_wave_active(&self) -> bool {
         self.afk_wave_active
     }
 
-    /// `afkVersionLabel`.
+    /// The version label of the AFK cover.
     pub fn afk_version_label(&self) -> Option<&str> {
         (self.afk_overlay_visible() && !self.snap.app_version.is_empty())
             .then_some(self.snap.app_version.as_str())
     }
 
-    /// The PIN overlay is drawn (AppScreenOverlays lines 113 and 130).
+    /// The PIN overlay is drawn.
     pub fn pin_overlay_visible(&self) -> bool {
         !self.render_suspended() && self.pin_overlay_up()
     }
 
-    /// The PIN field takes input (AppScreenOverlays line 161).
+    /// The PIN field takes input.
     pub fn pin_input_enabled(&self) -> bool {
         !self.is_pin_unlocking && !self.is_pin_retry_locked
     }
@@ -302,8 +291,8 @@ impl SecureScreen {
 
     // ------------------------------------------------------------ input
 
-    /// `setPinAttempt`: keeps the digits only, four at most (the attempt
-    /// effect, lines 197-207). The unlock starts on the next
+    /// The typed code: keeps the digits only, four at most. The unlock
+    /// starts on the next
     /// [`Self::update`].
     pub fn set_pin_attempt(&mut self, value: &str) {
         self.pin_attempt = sanitize_pin_digits(value);
@@ -329,7 +318,7 @@ impl SecureScreen {
 
     // ------------------------------------------------------------ lifecycle
 
-    /// `handleAppMounted` (lines 261-276). Call once after the first
+    /// The app is drawn. Call once after the first
     /// [`Self::update`] fed the real settings.
     pub fn handle_app_mounted(&mut self, jobs: &Jobs, now: Instant) {
         self.blur.start(now, self.snap.inactivity_blur_seconds);
@@ -346,17 +335,7 @@ impl SecureScreen {
         }
     }
 
-    /// `handleAppDestroyed` (lines 278-293).
-    pub fn handle_app_destroyed(&mut self) {
-        self.afk_wave_stop_deadline = None;
-        self.retry_deadline = None;
-        if self.afk_listeners_attached {
-            self.blur.detach_listeners();
-        }
-        self.blur.stop();
-    }
-
-    /// `handleSettingsClosed` (lines 253-259): the timer starts over.
+    /// The settings panel closed: the timer starts over.
     pub fn handle_settings_closed(&mut self, now: Instant) {
         self.blur.start(now, self.snap.inactivity_blur_seconds);
         if !self.afk_listeners_attached {
@@ -365,7 +344,7 @@ impl SecureScreen {
         }
     }
 
-    /// `handleBackendLocked` (lines 190-195): the backend refused a command
+    /// The backend refused a command
     /// for want of the PIN.
     pub fn handle_backend_locked(&mut self) {
         self.backend_locked = true;
@@ -376,21 +355,10 @@ impl SecureScreen {
         self.engage_lock(None);
     }
 
-    /// `reportPinLockedError` (pinSession.ts lines 33-37) wired to this
-    /// screen: true when `error` was the PIN refusal, so the caller skips
-    /// its generic failure message.
-    pub fn report_backend_error(&mut self, error: &BackendError) -> bool {
-        if !is_pin_locked_error(error) {
-            return false;
-        }
-        self.handle_backend_locked();
-        true
-    }
-
     // ------------------------------------------------------------ frame
 
     /// One frame: read the inputs, apply a finished unlock, fire due timers,
-    /// then run the effects of lines 115-207 in order.
+    /// then run the reactions in order.
     pub fn update(
         &mut self,
         inputs: &SecureInputs<'_>,
@@ -401,7 +369,7 @@ impl SecureScreen {
         self.poll_unlock(now);
         self.fire_timers(now);
 
-        // AFK wave (lines 115-131).
+        // AFK wave.
         let afk_visible = self.afk_overlay_visible();
         if afk_visible && !self.prev_afk_visible {
             self.afk_wave_stop_deadline = None;
@@ -412,14 +380,14 @@ impl SecureScreen {
         }
         self.prev_afk_visible = afk_visible;
 
-        // Render suspend closes the context menu (lines 133-137).
+        // Render suspend closes the context menu.
         let suspended = self.render_suspended();
         if suspended && !self.prev_render_suspended {
             self.events.push(SecureEvent::CloseContextMenu);
         }
         self.prev_render_suspended = suspended;
 
-        // Listeners follow render suspend (lines 139-151).
+        // Listeners follow render suspend.
         if suspended {
             if self.afk_listeners_attached {
                 self.blur.detach_listeners();
@@ -430,7 +398,7 @@ impl SecureScreen {
             self.afk_listeners_attached = true;
         }
 
-        // No PIN any more: drop the lock (lines 153-162).
+        // No PIN any more: drop the lock.
         if (!self.snap.pin_enabled || !self.snap.has_valid_pin()) && !self.backend_locked {
             self.is_pin_locked = false;
             self.is_pin_retry_locked = false;
@@ -438,7 +406,7 @@ impl SecureScreen {
             self.pin_error = None;
         }
 
-        // Inactivity engages the PIN lock (lines 164-177).
+        // Inactivity engages the PIN lock.
         if self.blur.is_blurred()
             && self.snap.pin_enabled
             && self.snap.has_valid_pin()
@@ -448,7 +416,7 @@ impl SecureScreen {
             self.engage_lock(Some(jobs));
         }
 
-        // Four digits typed: unlock (lines 197-207).
+        // Four digits typed: unlock.
         if self.is_pin_locked
             && !self.is_pin_unlocking
             && !self.is_pin_retry_locked
@@ -457,8 +425,7 @@ impl SecureScreen {
             self.start_unlock(jobs);
         }
 
-        // The field holds focus while the lock waits for a code
-        // (AppScreenOverlays lines 74-76).
+        // The field holds focus while the lock waits for a code.
         let wants_focus = self.is_pin_locked && !self.is_pin_unlocking;
         if wants_focus && !self.prev_wants_focus {
             self.events.push(SecureEvent::FocusPinInput);
@@ -497,7 +464,7 @@ impl SecureScreen {
         self.blur.tick(now, self.snap.inactivity_blur_seconds);
     }
 
-    /// `engageLock` (lines 180-188). `None` skips telling the backend.
+    /// Locks the screen. `None` skips telling the backend.
     fn engage_lock(&mut self, tell_backend: Option<&Jobs>) {
         if let Some(jobs) = tell_backend {
             tell_backend_lock(jobs);
@@ -510,7 +477,7 @@ impl SecureScreen {
         self.events.push(SecureEvent::FocusPinInput);
     }
 
-    /// The first half of `unlockWithPin` (lines 209-221).
+    /// The first half of an unlock: checks the code on a job.
     fn start_unlock(&mut self, jobs: &Jobs) {
         let expected = self.snap.pin_hash.clone();
         if !is_valid_pin_hash(&expected) && !self.backend_locked {
@@ -544,7 +511,7 @@ impl SecureScreen {
         self.apply_unlock(check, now);
     }
 
-    /// The second half of `unlockWithPin` (lines 222-251).
+    /// The second half of an unlock: applies the check.
     fn apply_unlock(&mut self, check: PinCheck, now: Instant) {
         if let Some(wait) = check.failure_wait() {
             self.is_pin_unlocking = false;
@@ -576,11 +543,11 @@ impl SecureScreen {
 }
 
 fn tell_backend_lock(jobs: &Jobs) {
-    // Fire and forget, as `lockPinSession`: the result is dropped.
+    // Fire and forget: the result is dropped.
     drop(jobs.run(lock_pin_session));
 }
 
-/// `persistPinHash` (App.svelte lines 256-261): re-read the store rather
+/// Saves a new PIN hash: re-read the store rather
 /// than write the shell's settings back, since the settings panel may hold a
 /// draft; only the hash travels.
 pub fn persist_pin_hash(stores: &mut ClientStores, hash: &str) {

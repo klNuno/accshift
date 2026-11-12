@@ -1,10 +1,9 @@
 //! The WebView `localStorage` of installs older than v1.0.0, read from disk.
 //!
 //! Before v1.0.0 the Tauri app kept settings, folders, notes, colours and
-//! caches only in the WebView's `localStorage`; the Svelte app copies them
-//! into the backend stores in `initializeClientStorage`
-//! (`src/lib/storage/clientStorage.ts`). The egui app has no WebView, so it
-//! reads that storage itself and hands the 12 keys of
+//! caches only in the WebView's `localStorage`, and copied them into the
+//! backend stores on boot. The egui app has no WebView, so it reads that
+//! storage itself and hands the 12 keys of
 //! [`LEGACY_LOCAL_STORAGE_KEYS`] to [`crate::storage::initialize`].
 //!
 //! Boot use: [`needs_read`] on the boot snapshot first (no I/O), [`read`] only
@@ -50,7 +49,7 @@ pub mod webkit_paths;
 #[cfg(not(windows))]
 mod webkit_sqlite;
 
-use crate::storage::{LegacyLocalStorage, CLIENT_STORE_IDS, LEGACY_LOCAL_STORAGE_KEYS};
+use crate::storage::{LegacyLocalStorage, StoreId, CLIENT_STORE_IDS, LEGACY_LOCAL_STORAGE_KEYS};
 use crate::types::ClientStorageSnapshot;
 use accshift_core::AppContext;
 use std::path::{Path, PathBuf};
@@ -84,12 +83,10 @@ pub fn is_legacy_key(key: &str) -> bool {
 /// would migrate anything (`ClientStorage::migrate_legacy` skips every store
 /// that has a value).
 pub fn needs_read(snapshot: &ClientStorageSnapshot) -> bool {
-    CLIENT_STORE_IDS
-        .iter()
-        .any(|id| snapshot.stores.get(*id).is_none_or(|value| value.is_null()))
+    missing_stores(snapshot).next().is_some()
 }
 
-/// The boot's `LegacyStorageRead` step ([`crate::lifecycle::BootStep`]):
+/// The boot's legacy storage read:
 /// [`read`] when the stores under `ctx` need it. It runs before the log
 /// session begins, so the snapshot is loaded without the log line of
 /// `load_client_storage_snapshot`; a snapshot that cannot be read gives
@@ -98,13 +95,43 @@ pub fn read_for_boot(ctx: &dyn AppContext, identifier: &str) -> Option<LegacyRea
     read_for_boot_with(ctx, || read(identifier))
 }
 
-/// [`read_for_boot`] with the reader given.
+/// The file that says the legacy storage holds nothing more to migrate.
+/// Without it, every boot of an install where one store was never written
+/// would read the WebView storage again.
+pub const READ_MARKER: &str = "legacy-web-storage.read";
+
+/// [`read_for_boot`] with the reader given. The marker is written once a
+/// read finds no value for any missing store: the stores it did fill are
+/// saved by this boot, and a save that failed is retried on the next one.
 pub fn read_for_boot_with(
     ctx: &dyn AppContext,
     read: impl FnOnce() -> LegacyRead,
 ) -> Option<LegacyRead> {
+    let marker = ctx.app_data_dir().ok()?.join(READ_MARKER);
+    if marker.exists() {
+        return None;
+    }
     let snapshot = accshift_core::storage::load_client_storage_snapshot(ctx).ok()?;
-    needs_read(&snapshot).then(read)
+    if !needs_read(&snapshot) {
+        return None;
+    }
+    let legacy = read();
+    let migrates_more = missing_stores(&snapshot)
+        .any(|id| crate::storage::read_legacy_value(id, &legacy.storage).is_some());
+    if !migrates_more {
+        let _ = marker
+            .parent()
+            .map(std::fs::create_dir_all)
+            .transpose()
+            .and_then(|_| std::fs::write(&marker, b""));
+    }
+    Some(legacy)
+}
+
+fn missing_stores(snapshot: &ClientStorageSnapshot) -> impl Iterator<Item = StoreId> + '_ {
+    CLIENT_STORE_IDS
+        .into_iter()
+        .filter(|id| snapshot.stores.get(*id).is_none_or(|value| value.is_null()))
 }
 
 /// Reads the legacy `localStorage` of the app `identifier` (the Tauri bundle

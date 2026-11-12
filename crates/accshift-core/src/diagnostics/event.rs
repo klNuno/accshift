@@ -3,9 +3,9 @@
 //! A record is a flat object with fixed columns plus a typed `fields` bag:
 //!
 //! ```json
-//! {"schemaVersion":2,"tsMs":1754000000000,"level":"error","code":"platform.switch.failed",
-//!  "source":"platform.steam","msg":"Steam refused to exit","fields":{"platform":"steam","stage":"shutdown"},
-//!  "runId":"run-4f2a1c9d8b70","opId":"op-91c2ab77de10","durMs":4211,"outcome":"failure","errKind":"client_running"}
+//! {"schemaVersion":2,"tsMs":1754000000000,"level":"warn","code":"health.disk.low",
+//!  "source":"health","msg":"only 1048576 bytes free","fields":{"path":"/home/<user>","availableBytes":1048576,
+//!  "requiredBytes":33554432},"runId":"run-4f2a1c9d8b70"}
 //! ```
 //!
 //! `fields` replaces the free-text `details` of the legacy line: everything in
@@ -299,8 +299,8 @@ impl EventBuilder {
     }
 }
 
-/// `platform.switch.failed` belongs to the `platform` module unless the call
-/// site says something more precise.
+/// `health.disk.low` belongs to the `health` module unless the call site
+/// says something more precise.
 fn default_source(code: &str) -> &str {
     code.split('.').next().unwrap_or(code)
 }
@@ -565,14 +565,14 @@ mod tests {
             .map(|i| json!(format!("{}{}", "x".repeat(900), i)))
             .collect();
         let record = parse(
-            &event(&catalog::HEALTH_LAUNCHER_RUNNING)
-                .field("platform", "steam")
-                .field("processes", Value::Array(bulky))
+            &event(&catalog::DIAGNOSTICS_EVENT_INVALID)
+                .field("offendingCode", "health.disk.low")
+                .field("defects", Value::Array(bulky))
                 .render(),
         );
 
-        assert_eq!(record["fields"]["platform"], json!("steam"));
-        assert_eq!(record["fields"]["processes"], json!("<truncated>"));
+        assert_eq!(record["fields"]["offendingCode"], json!("health.disk.low"));
+        assert_eq!(record["fields"]["defects"], json!("<truncated>"));
         assert_eq!(record["fields"]["_truncatedFields"], json!(1));
     }
 

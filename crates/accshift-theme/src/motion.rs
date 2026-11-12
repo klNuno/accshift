@@ -1,5 +1,4 @@
-//! Port of the motion mode of `src/lib/theme/motion.ts`: what
-//! `data-motion` on `<html>` says. Listening to the OS setting stays with the
+//! The motion mode: what `data-motion` on `<html>` says. Listening to the OS setting stays with the
 //! app; it calls [`motion_attribute`] again when that setting changes.
 
 /// The animations setting (`AnimationsMode` in the settings types).
@@ -18,11 +17,6 @@ impl AnimationsMode {
             "off" => Some(AnimationsMode::Off),
             _ => None,
         }
-    }
-
-    /// Whether the OS reduced-motion setting must be watched (`system` only).
-    pub fn follows_os(self) -> bool {
-        self == AnimationsMode::System
     }
 }
 
@@ -75,7 +69,5 @@ mod tests {
             motion_attribute(AnimationsMode::System, false),
             MotionAttribute::Full
         );
-        assert!(AnimationsMode::System.follows_os());
-        assert!(!AnimationsMode::Off.follows_os());
     }
 }

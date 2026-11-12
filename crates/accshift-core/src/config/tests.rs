@@ -317,7 +317,7 @@ fn a_corrupt_legacy_beside_one_split_file_poisons_saves() {
 }
 
 #[test]
-fn save_window_size_preserves_other_config_fields() {
+fn a_size_only_save_preserves_other_config_fields() {
     let _test_guard = config_io_test_mutex()
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -331,7 +331,7 @@ fn save_window_size_preserves_other_config_fields() {
     };
     save_config(&*ctx, &initial).unwrap();
 
-    save_window_size(&*ctx, 1280.0, 720.0).unwrap();
+    save_window_geometry(&*ctx, 1280.0, 720.0, None, None).unwrap();
 
     let saved = load_config(&*ctx);
     assert_eq!(saved.steam.path_override, "D:\\Games\\Steam");
@@ -370,14 +370,14 @@ fn window_size_round_trips_in_logical_pixels_at_scale_1_5() {
     .unwrap();
 
     assert_eq!(
-        load_window_size(&*ctx),
+        load_window(&*ctx).size,
         Some((logical_width, logical_height)),
         "a saved size must come back unchanged, not scaled"
     );
 
     // Second launch: the restored size is what the window is built with, so
     // feeding it back through the same path must not move either.
-    let (restored_width, restored_height) = load_window_size(&*ctx).unwrap();
+    let (restored_width, restored_height) = load_window(&*ctx).size.unwrap();
     save_window_geometry(
         &*ctx,
         logical_from_physical(restored_width * scale, scale),
@@ -387,7 +387,7 @@ fn window_size_round_trips_in_logical_pixels_at_scale_1_5() {
     )
     .unwrap();
     assert_eq!(
-        load_window_size(&*ctx),
+        load_window(&*ctx).size,
         Some((logical_width, logical_height))
     );
 
@@ -420,17 +420,17 @@ fn window_position_round_trips_and_survives_a_missing_field() {
     save_config(&*ctx, &AppConfig::default()).unwrap();
 
     // A config written before the field existed means "center me".
-    assert_eq!(load_window_position(&*ctx), None);
+    assert_eq!(load_window(&*ctx).position, None);
 
     // A second monitor to the left gives a negative origin, which is valid.
     save_window_geometry(&*ctx, 1280.0, 720.0, Some((-1920.0, 240.0)), Some(1.5)).unwrap();
-    assert_eq!(load_window_position(&*ctx), Some((-1920.0, 240.0)));
-    assert_eq!(load_window_physical_position(&*ctx), Some((-2880, 360)));
+    assert_eq!(load_window(&*ctx).position, Some((-1920.0, 240.0)));
+    assert_eq!(load_window(&*ctx).physical_position, Some((-2880, 360)));
 
     // A size-only save must not erase the placement.
-    save_window_size(&*ctx, 1000.0, 600.0).unwrap();
-    assert_eq!(load_window_position(&*ctx), Some((-1920.0, 240.0)));
-    assert_eq!(load_window_size(&*ctx), Some((1000.0, 600.0)));
+    save_window_geometry(&*ctx, 1000.0, 600.0, None, None).unwrap();
+    assert_eq!(load_window(&*ctx).position, Some((-1920.0, 240.0)));
+    assert_eq!(load_window(&*ctx).size, Some((1000.0, 600.0)));
 
     let _ = std::fs::remove_dir_all(&ctx.root);
 }

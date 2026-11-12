@@ -1,15 +1,12 @@
 //! `get_desktop_wallpaper`: the desktop picture behind the window, for the
-//! glass themes. Port of the capture in `src-tauri/src/commands/backdrop.rs`
-//! (lines 60-400) on `windows-sys`. `None` outside Windows, as there.
+//! glass themes, on `windows-sys`. `None` outside Windows.
 
 use crate::types::WallpaperSnapshot;
 
-/// The capture, the cache and the encoding of backdrop.rs, called on the
-/// calling thread.
+/// The capture, the cache and the encoding, on the calling thread.
 ///
-/// The Tauri command runs `PrintWindow` on the main thread (its event loop)
-/// and the encoding on the blocking pool. The egui backend runs both on the
-/// thread that calls it, which is a job thread: `PrintWindow` on Progman
+/// Both run on the thread that calls it, which is a job thread:
+/// `PrintWindow` on Progman
 /// talks to Explorer's own thread across processes, so it needs no window or
 /// message loop of ours.
 #[cfg(windows)]
@@ -80,7 +77,7 @@ mod capture {
     }
 
     /// Snapshot of the shell's wallpaper as rendered (Progman +
-    /// PW_RENDERFULLCONTENT), backdrop.rs lines 120-252.
+    /// PW_RENDERFULLCONTENT).
     pub(super) fn capture() -> Option<CapturedWallpaper> {
         unsafe {
             let mut progman: HWND = std::ptr::null_mut();
@@ -190,8 +187,7 @@ mod capture {
         }
     }
 
-    /// BGRA to RGB in place, JPEG at quality 82, base64 data URL,
-    /// backdrop.rs lines 254-292.
+    /// BGRA to RGB in place, JPEG at quality 82, base64 data URL.
     pub(super) fn encode(capture: CapturedWallpaper) -> Option<WallpaperSnapshot> {
         let mut bgra = capture.bgra;
         let n = bgra.len() / 4;
@@ -225,7 +221,7 @@ mod capture {
     }
 
     /// What the last answer was computed from: `TranscodedWallpaper`'s size
-    /// and mtime plus the virtual-screen rect, backdrop.rs lines 294-350.
+    /// and mtime plus the virtual-screen rect.
     #[derive(PartialEq, Eq)]
     pub(super) struct WallpaperKey {
         modified: Option<SystemTime>,

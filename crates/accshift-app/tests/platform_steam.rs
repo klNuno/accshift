@@ -1,6 +1,5 @@
-//! Steam: `adapter.test.ts`, `friendCode.test.ts`, `steamIdUtils.test.ts`,
-//! `warnings.test.ts`, `steamApi.test.ts` and `shared/url.test.ts` ported,
-//! plus checks of the menu and task model.
+//! Steam: the adapter, friend codes, Steam ids, warnings, the Steam API
+//! calls and profile URLs, plus checks of the menu and task model.
 
 mod support;
 
@@ -61,7 +60,7 @@ const FORCED: WarningLoadOptions = WarningLoadOptions {
 };
 const NOW_MS: f64 = 1_791_000_000_000.0;
 
-// ------------------------------------------------ adapter.test.ts
+// ------------------------------------------------ adapter
 
 #[test]
 fn steam_passes_seconds_through() {
@@ -80,7 +79,7 @@ fn steam_missing_stamp_is_none() {
     assert_eq!(account.last_login_at_sec, None);
 }
 
-// ------------------------------------------------ friendCode.test.ts
+// ------------------------------------------------ friend codes
 
 #[test]
 fn friend_code_known_vector() {
@@ -108,7 +107,7 @@ fn friend_code_decimal_is_empty() {
     assert_eq!(encode_friend_code("1.5"), "");
 }
 
-// ------------------------------------------------ steamIdUtils.test.ts
+// ------------------------------------------------ Steam ids
 
 #[test]
 fn profile_url_for_steam_id() {
@@ -126,7 +125,7 @@ fn profile_url_for_any_string() {
     );
 }
 
-// ------------------------------------------------ warnings.test.ts
+// ------------------------------------------------ warnings
 
 #[test]
 fn already_checked_forced_refresh_checks_everything() {
@@ -348,7 +347,7 @@ fn bans_stop_after_two_omissions_until_forced() {
     );
 }
 
-// ------------------------------------------------ steamApi.test.ts
+// ------------------------------------------------ Steam API calls
 
 #[test]
 fn api_key_decrypts_once_then_memo() {
@@ -396,7 +395,7 @@ fn api_key_failed_set_keeps_memo() {
     assert_eq!(backend.calls("steam_has_api_key").len(), 1);
 }
 
-// ------------------------------------------------ url.test.ts
+// ------------------------------------------------ profile URLs
 
 #[test]
 fn url_https() {
@@ -435,7 +434,7 @@ fn url_ftp() {
     assert!(!is_safe_http_url("ftp://files.example.com/readme.txt"));
 }
 
-// ------------------------------------------------ Rust-only: menu and tasks
+// ------------------------------------------------ menu and tasks
 
 fn ids(actions: &[accshift_app::menu::MenuAction]) -> Vec<String> {
     actions.iter().map(|action| action.id.clone()).collect()

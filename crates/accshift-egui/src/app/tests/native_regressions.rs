@@ -332,3 +332,226 @@ fn native_text_input_keeps_focus_for_vertical_arrows() {
         assert_eq!(value, "editable");
     }
 }
+
+#[test]
+fn a_boot_that_reset_a_store_or_failed_a_migration_says_so() {
+    let ctx = Context::default();
+    let (app, _) = external_app_with(&ctx, |fixture| {
+        let boot = &mut fixture["commands"]["get_boot_payload"][0]["result"];
+        boot["migration"] = json!("error:disk full");
+        boot["recoveredStores"] = json!(["client.folders"]);
+    });
+    let texts: Vec<Text> = app
+        .toasts()
+        .toasts()
+        .iter()
+        .map(|t| t.text.clone())
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            Text::key("toast.legacyConfigMigrationFailed"),
+            Text::key("toast.storesReset"),
+        ]
+    );
+}
+
+#[test]
+fn a_failed_boot_draws_its_error_instead_of_a_blank_window() {
+    let ctx = Context::default();
+    let mut fixture: Value =
+        serde_json::from_str(include_str!("../../../parity/data/empty.json")).unwrap();
+    fixture["commands"]["get_boot_payload"] =
+        json!([{ "args": {}, "error": "Could not read file settings.json: access denied" }]);
+    let mock = Arc::new(MockBackend::from_json(&fixture.to_string(), None).unwrap());
+    let mut app = AppModel::with_backend(&ctx, mock.clone(), Some(mock), Clock::wall());
+    let error = app.wait_boot(&ctx).unwrap_err();
+    assert!(error.contains("access denied"), "{error}");
+
+    // The first frames bind the fonts; the screen is there once they are.
+    let mut shapes = 0;
+    for _ in 0..4 {
+        let mut output = ctx.run_ui(input(true, false), |ui| app.frame(ui));
+        output.textures_delta.clear();
+        shapes = output.shapes.len();
+    }
+    // Background, three texts, the button and its label.
+    assert!(shapes >= 6, "boot error screen drew {shapes} shapes");
+}
+
+#[test]
+fn a_debounced_save_wakes_the_ui_at_its_deadline() {
+    // Regression: nothing asked for a frame when a debounced write fell due,
+    // so a change waited for the next input and was lost if the app ended.
+    let ctx = Context::default();
+    let (mut app, _) = external_app(&ctx);
+    pump_until(&mut app, &ctx, |a| {
+        a.booted().unwrap().stores.next_save_due().is_none()
+    });
+    // The idle app sleeps: nothing else would draw the frame of the write.
+    // A frame, and how long the app then sleeps without input.
+    let sleep_after_frame = |app: &mut AppModel| {
+        let mut output = ctx.run_ui(input(true, false), |ui| app.frame(ui));
+        output.textures_delta.clear();
+        output.viewport_output[&ViewportId::ROOT].repaint_delay
+    };
+    let settled = Instant::now() + std::time::Duration::from_secs(5);
+    while sleep_after_frame(&mut app) <= std::time::Duration::from_secs(1) {
+        assert!(Instant::now() < settled, "the idle app never settles");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    app.booted
+        .as_mut()
+        .unwrap()
+        .stores
+        .set_account_card_note("76561198000000001", "wake me");
+    let due = app.booted().unwrap().stores.next_save_due();
+    assert!(due.is_some(), "the note is a debounced write");
+
+    let delay = sleep_after_frame(&mut app);
+    assert!(
+        delay <= std::time::Duration::from_secs(1),
+        "no frame is scheduled for the write: {delay:?}"
+    );
+}
+
+#[test]
+fn a_boot_sends_the_settings_snapshot_once() {
+    // Regression: the event was ported and never sent.
+    let ctx = Context::default();
+    let (mut app, mock) = external_app(&ctx);
+    let sent = |mock: &MockBackend| mock.seen("telemetry_track_settings_snapshot");
+    pump_until(&mut app, &ctx, |_| sent(&mock) > 0);
+    frame(&mut app, &ctx, true, false);
+    assert_eq!(sent(&mock), 1);
+}
+
+fn mouse_back(app: &mut AppModel, ctx: &Context) {
+    let mut raw = input(true, false);
+    raw.events.push(egui::Event::PointerButton {
+        pos: pos2(500.0, 400.0),
+        button: egui::PointerButton::Extra1,
+        pressed: true,
+        modifiers: Default::default(),
+    });
+    let mut output = ctx.run_ui(raw, |ui| app.frame(ui));
+    output.textures_delta.clear();
+}
+
+#[test]
+fn the_mouse_back_button_leaves_settings_then_the_folder() {
+    let ctx = Context::default();
+    let (mut app, _mock) = external_app(&ctx);
+    frame(&mut app, &ctx, true, false);
+    let folder = {
+        let b = app.booted.as_mut().unwrap();
+        let tab = b.nav.active_tab.clone();
+        let folder = b.stores.create_folder("Smurfs", None, &tab);
+        b.accounts
+            .navigate_to(&b.stores, &tab, Some(folder.id.clone()));
+        folder.id
+    };
+    let current = |app: &AppModel| {
+        let b = app.booted.as_ref().unwrap();
+        b.accounts
+            .navigation
+            .current_folder_id()
+            .map(str::to_string)
+    };
+
+    // Settings is open over the folder: back closes it and stays in the folder.
+    app.toggle_settings_panel();
+    mouse_back(&mut app, &ctx);
+    assert!(app.settings_panel.is_none(), "back closes Settings");
+    assert_eq!(current(&app), Some(folder.clone()));
+
+    // A dialog owns the pointer: back does nothing behind it.
+    app.dialogs.open_new_folder_dialog();
+    mouse_back(&mut app, &ctx);
+    assert_eq!(current(&app), Some(folder));
+    app.dialogs.close_input_dialog();
+
+    mouse_back(&mut app, &ctx);
+    assert_eq!(current(&app), None, "back leaves the folder");
+}
+
+fn press(app: &mut AppModel, ctx: &Context, key: egui::Key) {
+    let mut raw = input(true, false);
+    raw.events.push(egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    });
+    let mut output = ctx.run_ui(raw, |ui| app.frame(ui));
+    output.textures_delta.clear();
+}
+
+#[test]
+fn escape_in_the_theme_editor_keeps_settings_open() {
+    let ctx = Context::default();
+    let (mut app, _mock) = external_app(&ctx);
+    frame(&mut app, &ctx, true, false);
+    app.toggle_settings_panel();
+    frame(&mut app, &ctx, true, false);
+    app.apply_settings(&ctx, settings_panel::SettingsAction::CustomizeTheme);
+    frame(&mut app, &ctx, true, false);
+    let editor_open = |app: &AppModel| {
+        app.settings_panel
+            .as_ref()
+            .is_some_and(|p| p.theme_editor.is_some())
+    };
+    assert!(editor_open(&app), "the theme editor opened");
+
+    press(&mut app, &ctx, egui::Key::Escape);
+    frame(&mut app, &ctx, true, false);
+    assert!(app.settings_panel.is_some(), "Escape keeps Settings open");
+    assert!(!editor_open(&app), "Escape closes the theme editor");
+
+    // With nothing over it, Escape closes the panel itself.
+    press(&mut app, &ctx, egui::Key::Escape);
+    frame(&mut app, &ctx, true, false);
+    assert!(app.settings_panel.is_none(), "Escape closes Settings");
+}
+
+#[test]
+fn a_path_picker_that_cannot_open_says_why() {
+    let ctx = Context::default();
+    let (mut app, mock) = external_app(&ctx);
+    frame(&mut app, &ctx, true, false);
+    app.toggle_settings_panel();
+    frame(&mut app, &ctx, true, false);
+    let choose = || settings_panel::SettingsAction::ChoosePlatformPath("steam".into());
+    // The picker's own toasts: the backend's message, not a translation key.
+    let raised = |app: &AppModel| -> Vec<(Text, accshift_app::actions::toasts::ToastType)> {
+        let toasts = app.toasts().toasts().iter();
+        toasts
+            .filter(|toast| toast.text.key_str().is_none())
+            .map(|toast| (toast.text.clone(), toast.kind))
+            .collect()
+    };
+
+    // A cancel stays silent.
+    mock.fail("platform_select_path", Some("Dialog cancelled"));
+    app.apply_settings(&ctx, choose());
+    pump_until(&mut app, &ctx, |_| mock.seen("platform_select_path") == 1);
+    for _ in 0..20 {
+        frame(&mut app, &ctx, true, false);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert_eq!(raised(&app), [], "a cancel raises nothing");
+
+    // A dialog that could not open reports the backend's reason.
+    let why = "No file picker is available: install xdg-desktop-portal or zenity";
+    mock.fail("platform_select_path", Some(why));
+    app.apply_settings(&ctx, choose());
+    pump_until(&mut app, &ctx, |app| !raised(app).is_empty());
+    assert_eq!(
+        raised(&app),
+        [(
+            Text::raw(why),
+            accshift_app::actions::toasts::ToastType::Error
+        )]
+    );
+}

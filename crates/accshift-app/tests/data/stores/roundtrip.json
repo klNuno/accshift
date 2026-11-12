@@ -3221,6 +3221,10 @@
             "accountId": "s1"
           },
           {
+            "platformId": "ghost",
+            "accountId": "g1"
+          },
+          {
             "platformId": "discord",
             "accountId": "d1"
           }

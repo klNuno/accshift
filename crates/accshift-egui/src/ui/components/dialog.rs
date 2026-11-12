@@ -1,5 +1,5 @@
-//! `BaseDialog.svelte` and the two dialogs built on it, `ConfirmDialog.svelte`
-//! and `InputDialog.svelte`, drawn by `AppDialogs` above the toasts:
+//! The base dialog and the two dialogs built on it, the confirm and the
+//! input dialog, drawn above the toasts:
 //!
 //! ```text
 //! .overlay     fixed, inset 0, rgba(0,0,0,.5), backdrop-filter:
@@ -12,13 +12,13 @@
 //!     .actions flex-end, 8 px gaps
 //! ```
 //!
-//! Keys (a window keydown in the Svelte): Escape cancels, Tab and Shift+Tab
+//! Keys (read for the whole window): Escape cancels, Tab and Shift+Tab
 //! cycle inside the dialog, Enter confirms or submits. A click on the
 //! overlay cancels. Focus starts on the field, or on Cancel for a
 //! destructive confirm and on Confirm otherwise. While a dialog is open it
 //! owns focus moves: egui's own arrow and Tab navigation is cancelled.
 //!
-//! On close the Svelte gives focus back to what had it at mount when that
+//! On close focus goes back to what had it at open when that
 //! element still exists; from the context menu that is the menu item, gone
 //! by then, so focus is simply dropped.
 //!
@@ -259,9 +259,8 @@ fn button(
             ppp,
         );
     }
-    let keyed = focused && ui.input(|i| i.key_pressed(Key::Space));
     Pressed {
-        clicked: b.enabled && (response.clicked() || keyed),
+        clicked: b.enabled && response.clicked(),
         focused,
     }
 }
@@ -483,7 +482,7 @@ fn cancel_look(v: &Vars) -> impl Fn(bool) -> ButtonLook + '_ {
 /// `.with("input")`.
 pub const CONFIRM_ID: &str = "accshift-confirm-dialog";
 pub const INPUT_ID: &str = "accshift-input-dialog";
-/// `ConfirmDialog.svelte`: `width: min(360px, 100vw - 24px)`, the message
+/// The confirm dialog: `width: min(360px, 100vw - 24px)`, the message
 /// in 12 px `--fg-muted` (`line-height: 1.35`, `pre-line`), Cancel and the
 /// confirm button in `--confirm-bg` (the danger red by default).
 pub fn confirm_dialog(
@@ -530,7 +529,7 @@ pub fn confirm_dialog(
         &[(message_h, 0.0), (actions_h, 0.0)],
         |ui, column| {
             if ctx.data(|d| d.get_temp::<bool>(id.with("focused")).is_none()) {
-                // `onMount`: Cancel for a destructive confirm.
+                // At open: Cancel for a destructive confirm.
                 let first = if destructive(&state.confirm_color) {
                     cancel.id
                 } else {
@@ -578,9 +577,9 @@ pub fn confirm_dialog(
     events
 }
 
-/// `InputDialog.svelte`: 280 px wide, the `.input` field (focused at
+/// The input dialog: 280 px wide, the `.input` field (focused at
 /// mount), its `n/max` counter in the last 20 characters, Cancel and OK
-/// (disabled while the draft is blank, unless `allowEmpty`).
+/// (disabled while the draft is blank, unless empty is allowed).
 pub fn input_dialog(
     ui: &mut Ui,
     props: &DialogProps,

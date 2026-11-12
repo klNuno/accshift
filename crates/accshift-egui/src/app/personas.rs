@@ -1,13 +1,12 @@
-//! The personas panel: `PersonasPanel.svelte`'s script and its wiring in
-//! `App.svelte`.
+//! The personas panel's state and its wiring into the app.
 //!
-//! The panel mounts when the Personas tab opens and drops when it closes, as
-//! the `{:else if personaSwitch.showPersonas}` block does. On mount it loads
-//! the accounts of every persona platform at once and, once all of them have
-//! answered, resolves an avatar for each account: the cached profile at once,
-//! then `getProfileInfo` in the background when the cache has nothing fresh.
+//! The panel opens with the Personas tab and is dropped when it closes. On
+//! open it loads the accounts of every persona platform at once and, once all
+//! of them have answered, resolves an avatar for each account: the cached
+//! profile at once, then a profile fetch in the background when the cache has
+//! nothing fresh.
 //!
-//! The card menu (`buildPersonaMenuItems`) goes through the shared context
+//! The card menu goes through the shared context
 //! menu as custom entries; the switch and the delete confirm through the
 //! shared confirm dialog. The new card and the menu's edit open the wizard
 //! ([`super::persona_wizard`]) in place of the grid.
@@ -40,13 +39,13 @@ use super::{AppModel, Booted};
 /// What the panel asks for.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PersonasEvent {
-    /// A card click: `onSwitch(persona)`.
+    /// A card click: switch to that persona.
     Switch(String),
     /// A right click on a card at this window point.
     ContextMenu(String, Pos2),
     /// The new-persona card: the create wizard.
     New,
-    /// The wizard's finish button: `handleSave`.
+    /// The wizard's finish button: save the persona.
     Save,
 }
 
@@ -59,20 +58,20 @@ const DELETE: &str = "persona.delete:";
 type AccountsJob = Pending<BackendResult<Vec<PlatformAccount>>>;
 type ProfileJob = Pending<Fetched<Option<PlatformProfileInfo>>>;
 
-/// `PersonasPanel.svelte`'s state.
+/// The personas panel's state.
 pub struct PersonasPanel {
-    /// `platforms`: `personaPlatforms` when the panel mounted.
+    /// The persona platforms when the panel opened.
     pub platforms: Vec<PersonaPlatform>,
     loads: Vec<(String, AccountsJob)>,
     loaded: BTreeMap<String, Vec<PlatformAccount>>,
     failed: Vec<String>,
-    /// `accountsByPlatform`, set once every platform answered.
+    /// Each platform's accounts, set once every platform answered.
     pub accounts_by_platform: BTreeMap<String, Vec<PlatformAccount>>,
-    /// `accountsLoading`.
+    /// Some platform has not answered yet.
     pub accounts_loading: bool,
-    /// `accountLoadFailed`.
+    /// The platforms whose accounts failed to load.
     pub account_load_failed: Vec<String>,
-    /// `avatarByKey`: `platform:account` to its avatar, `None` for none.
+    /// `platform:account` to its avatar, `None` for none.
     avatars: HashMap<String, Option<String>>,
     profiles: Vec<(String, String, ProfileJob)>,
     /// `.personas-panel`'s scroll offset.
@@ -82,12 +81,12 @@ pub struct PersonasPanel {
 }
 
 impl PersonasPanel {
-    /// `onMount`: every platform's accounts, in parallel.
+    /// Opens the panel: every platform's accounts load in parallel.
     pub fn open(jobs: &Jobs, registry: &PlatformRegistry, platforms: Vec<PersonaPlatform>) -> Self {
         let mut loads = Vec::new();
         let mut loaded = BTreeMap::new();
         for platform in &platforms {
-            // `loadPlatformAccounts`: no adapter, no accounts.
+            // No adapter, no accounts.
             match AccountLoading::load_platform_accounts(jobs, registry, &platform.id) {
                 Some(job) => loads.push((platform.id.clone(), job)),
                 None => {
@@ -115,7 +114,7 @@ impl PersonasPanel {
         self.editing = Some(PersonaWizard::new(persona, self));
     }
 
-    /// `avatarFor`.
+    /// The avatar of an account, when one is known.
     pub fn avatar_for(&self, platform_id: &str, account_id: &str) -> Option<&str> {
         self.avatars
             .get(&format!("{platform_id}:{account_id}"))
@@ -206,7 +205,8 @@ impl PersonasPanel {
         });
     }
 
-    /// `resolveAvatar`.
+    /// Resolves one account's avatar: the cached profile, then a background
+    /// fetch when the cache has nothing fresh.
     #[allow(clippy::too_many_arguments)]
     fn resolve_avatar(
         &mut self,
@@ -250,7 +250,7 @@ impl PersonasPanel {
     }
 }
 
-/// `buildPersonaMenuItems`: edit, the colour swatches, delete, one group
+/// The persona card's menu: edit, the colour swatches, delete, one group
 /// each, separated.
 pub fn persona_menu(persona: &Persona) -> Vec<AppMenuEntry> {
     let swatches = ACCOUNT_CARD_COLOR_PRESETS
@@ -287,11 +287,11 @@ pub fn persona_menu(persona: &Persona) -> Vec<AppMenuEntry> {
 /// The personas half of the model.
 #[derive(Default)]
 pub struct PersonasState {
-    /// `createPersonaSwitch`: the switch confirm.
+    /// The switch confirm.
     pub switch: PersonaSwitch,
     /// The mounted panel.
     pub panel: Option<PersonasPanel>,
-    /// `confirmDelete`'s pending confirm: its ticket and the persona.
+    /// The pending delete confirm: its ticket and the persona.
     delete: Option<(ConfirmTicket, String)>,
 }
 
@@ -359,6 +359,7 @@ impl AppModel {
                 };
                 let effects = self.personas.switch.handle_switch_persona(
                     &mut self.dialogs,
+                    &b.accounts.registry,
                     &persona,
                     b.personas.switching(),
                     false,
@@ -386,7 +387,7 @@ impl AppModel {
         }
     }
 
-    /// `handleSave`: an edit patches the persona, a new one is created
+    /// An edit patches the persona, a new one is created
     /// uncoloured; the grid comes back either way.
     fn save_persona(&mut self) {
         let (Some(b), Some(panel)) = (self.booted.as_mut(), self.personas.panel.as_mut()) else {

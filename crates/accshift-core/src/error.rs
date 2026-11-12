@@ -57,7 +57,7 @@ impl From<AppError> for String {
 
 /// Machine-readable family for a [`PlatformError`].
 ///
-/// Serialized as `snake_case` so it can be exposed to the frontend later
+/// Serialized as `snake_case`, so a structured error report can carry it
 /// without renaming. Only a handful of creation sites are typed today
 /// (Steam, the cross-process lock); everything migrated mechanically from
 /// `Result<_, String>` lands on [`PlatformErrorKind::Other`].
@@ -85,14 +85,13 @@ pub enum PlatformErrorKind {
     Other,
 }
 
-/// Structured error for platform operations (trait `PlatformService`, Tauri
-/// platform commands, CLI).
+/// Structured error for platform operations (trait `PlatformService`, the
+/// app backend, CLI).
 ///
-/// Contract with the frontend: every `catch` around `invoke()` does
-/// `String(e)` (or feeds `e` to a toast) and expects a plain string, so this
-/// type serializes as its `Display` string, the exact message that used to
-/// be the `Err(String)` payload. `kind` is not sent over IPC yet; it exists
-/// for the CLI (exit codes) and for a later structured serialization.
+/// It serializes as its `Display` string, the exact message that used to be
+/// the `Err(String)` payload, because whatever reads a serialized error shows
+/// it as plain text. `kind` is not serialized; it exists for the CLI (exit
+/// codes) and for a later structured serialization.
 #[derive(Debug, Clone)]
 pub struct PlatformError {
     pub kind: PlatformErrorKind,
@@ -121,9 +120,8 @@ impl std::fmt::Display for PlatformError {
 
 impl std::error::Error for PlatformError {}
 
-/// Serialize as the bare message string: Tauri command rejections must reach
-/// the webview as the same plain string they were before the typed-error
-/// migration (the frontend renders rejections with `String(e)`).
+/// Serialize as the bare message string, the same plain text an
+/// `Err(String)` carried before errors were typed.
 impl Serialize for PlatformError {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.message)
@@ -194,7 +192,7 @@ mod tests {
 
     // Regression test: every variant that wraps an OS/detail string must surface it
     // through Display (and therefore through `to_string()` and `From<AppError> for
-    // String`, which is what every Tauri command and the diagnostic logger relies on).
+    // String`, which is what the app backend and the diagnostic logger rely on).
     // Losing the detail here means callers only ever see a generic sentence with no
     // way to tell a permission error from a locked file from a missing path.
     #[test]
@@ -265,12 +263,11 @@ mod tests {
         assert_eq!(err.to_string(), "Could not locate Discord executable");
     }
 
-    // Regression: the frontend renders command rejections with `String(e)` and
-    // shows them in toasts verbatim. A PlatformError must therefore serialize
-    // as a plain JSON string (the message), NOT as `{ kind, message }`.
-    // Otherwise every error toast would read "[object Object]".
+    // Regression: a serialized error is shown in a toast verbatim. A
+    // PlatformError must therefore serialize as a plain JSON string (the
+    // message), NOT as `{ kind, message }`.
     #[test]
-    fn platform_error_serializes_as_plain_string_for_the_webview() {
+    fn platform_error_serializes_as_plain_string() {
         let err = PlatformError::new(PlatformErrorKind::ClientRunning, "Steam is still running");
         let json = serde_json::to_string(&err).unwrap();
         assert_eq!(json, "\"Steam is still running\"");

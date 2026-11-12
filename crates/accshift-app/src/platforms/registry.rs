@@ -1,4 +1,4 @@
-//! The platform list, ported from `src/lib/platforms/registry.ts`.
+//! The platform list.
 //!
 //! A platform's look (accent, settings tab, capabilities) comes from
 //! [`chrome`]; its name, systems and launcher path come from its descriptor
@@ -18,8 +18,8 @@ use crate::storage::{
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// `PlatformDef`. The TS `settingsComponent` and the bulk edit bar loader are
-/// UI and stay with the egui crate; `settings_tab_key` names the tab.
+/// One platform as the app lists it. Its settings component and bulk edit
+/// bar are UI and stay with the egui crate; `settings_tab_key` names the tab.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlatformDef {
     pub id: String,
@@ -42,7 +42,7 @@ impl PlatformDef {
     }
 }
 
-/// `PlatformChrome`: what a platform looks like, as opposed to what it does.
+/// What a platform looks like, as opposed to what it does.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PlatformChrome {
     pub name: Option<&'static str>,
@@ -175,7 +175,7 @@ pub fn chrome(id: &str) -> Option<PlatformChrome> {
     })
 }
 
-/// `accentFor`: a stable hue from the id, so a user platform keeps its colour.
+/// A stable hue from the id, so a user platform keeps its colour.
 pub fn accent_for(id: &str) -> String {
     let mut hue: u32 = 0;
     for c in id.chars() {
@@ -186,7 +186,7 @@ pub fn accent_for(id: &str) -> String {
     format!("hsl({hue} 62% 52%)")
 }
 
-/// `buildDef`.
+/// One platform from its chrome and its descriptor.
 pub fn build_def(
     id: &str,
     chrome: Option<&PlatformChrome>,
@@ -221,8 +221,8 @@ pub fn build_def(
     }
 }
 
-/// `buildShippedDefs`: the chrome in order, each with its descriptor, then
-/// any shipped descriptor the chrome does not know.
+/// The chrome in order, each with its descriptor, then any shipped
+/// descriptor the chrome does not know.
 pub fn build_shipped_defs(descriptors: &[PlatformDescriptor]) -> Vec<PlatformDef> {
     let by_id: BTreeMap<&str, &PlatformDescriptor> = descriptors
         .iter()
@@ -240,9 +240,9 @@ pub fn build_shipped_defs(descriptors: &[PlatformDescriptor]) -> Vec<PlatformDef
     defs
 }
 
-/// `PLATFORM_DEFS` and the adapters (`registerPlatform`,
-/// `ensurePlatformLoaded`). Adapters are cheap and built eagerly; they are
-/// shared so the job pool can hold one while the UI keeps the registry.
+/// The platform definitions and their adapters. Adapters are cheap and built
+/// eagerly; they are shared so the job pool can hold one while the UI keeps
+/// the registry.
 #[derive(Debug, Clone)]
 pub struct PlatformRegistry {
     defs: Vec<PlatformDef>,
@@ -274,18 +274,16 @@ impl PlatformRegistry {
         &self.defs
     }
 
-    /// `getPlatformDefinition`.
     pub fn definition(&self, platform_id: &str) -> Option<&PlatformDef> {
         self.defs.iter().find(|def| def.id == platform_id)
     }
 
-    /// `ensurePlatformLoaded`.
     pub fn adapter(&self, platform_id: &str) -> Option<Arc<PlatformAdapter>> {
         self.adapters.get(platform_id).cloned()
     }
 
-    /// `registerUserPlatforms`: the folder is the truth. A shipped id wins;
-    /// a user platform still listed keeps its adapter (and session state).
+    /// The descriptor folder is the truth. A shipped id wins; a user platform
+    /// still listed keeps its adapter (and session state).
     pub fn register_user_platforms(&mut self, descriptors: &[PlatformDescriptor]) {
         let previous: Vec<String> = self
             .defs

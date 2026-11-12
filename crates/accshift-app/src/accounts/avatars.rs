@@ -1,16 +1,14 @@
-//! Per account avatar state, ported from `src/lib/shared/useAvatarLoader.svelte.ts`,
-//! and the avatar images behind it.
+//! Per account avatar state, and the avatar images behind it.
 //!
-//! [`AvatarStates`] keeps the TS coalescing: updates queue in a pending map
-//! that [`AvatarStates::flush`] commits once per frame (the
-//! `requestAnimationFrame` flush), and readers inside this module see the
-//! pending value first, like `readState`.
+//! [`AvatarStates`] coalesces updates: they queue in a pending map that
+//! [`AvatarStates::flush`] commits once per frame, and readers inside this
+//! module see the pending value first.
 //!
-//! [`AvatarImages`] is the part the browser did for free: turning an avatar
-//! URL into something to draw. It yields an [`AvatarImage`] (a file path or
-//! downloaded bytes, plus a stable key); decoding and texture upload belong
-//! to the egui side. HTTP runs on the job pool through [`AvatarHttp`]; the
-//! mock's avatars are local files and need no fetch.
+//! [`AvatarImages`] turns an avatar URL into something to draw. It yields an
+//! [`AvatarImage`] (a file path or downloaded bytes, plus a stable key);
+//! decoding and texture upload belong to the egui side. HTTP runs on the job
+//! pool through [`AvatarHttp`]; the mock's avatars are local files and need
+//! no fetch.
 
 use super::profile_cache::UrlPolicy;
 use crate::platforms::{CachedPlatformProfile, PlatformAccount, PlatformProfileInfo};
@@ -19,10 +17,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// `BATCH_SIZE`: per account profile fetches run this many at a time.
+/// Per account profile fetches run this many at a time.
 pub const BATCH_SIZE: usize = 15;
 
-/// `AvatarState`.
+/// The avatar of one account: its URL and whether it is loading.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AvatarState {
     pub url: Option<String>,
@@ -30,7 +28,8 @@ pub struct AvatarState {
     pub refreshing: bool,
 }
 
-/// `Partial<AvatarState>` for [`AvatarStates::update_state`].
+/// The fields of an [`AvatarState`] that [`AvatarStates::update_state`]
+/// changes; `None` keeps the current value.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AvatarPatch {
     pub url: Option<Option<String>>,
@@ -40,14 +39,14 @@ pub struct AvatarPatch {
 
 /// What seeding reads from the adapter.
 pub trait ProfileSource {
-    /// `adapter.getCachedProfile?.(id)`: `None` when the platform has no
-    /// cache or no entry.
+    /// The platform's cached profile: `None` when the platform has no cache
+    /// or no entry.
     fn cached_profile(&self, account_id: &str) -> Option<CachedPlatformProfile>;
-    /// `adapter.getProfileInfo` exists.
+    /// Whether the adapter fetches profiles.
     fn has_profile_info(&self) -> bool;
 }
 
-/// `createAvatarLoader`: the state half.
+/// Per account avatar state, with updates queued until the next flush.
 #[derive(Debug, Clone, Default)]
 pub struct AvatarStates {
     states: BTreeMap<String, AvatarState>,
@@ -61,7 +60,7 @@ impl AvatarStates {
         Self::default()
     }
 
-    /// `states`: the committed map, as the UI reads it.
+    /// The committed map, as the UI reads it.
     pub fn states(&self) -> &BTreeMap<String, AvatarState> {
         &self.states
     }
@@ -79,7 +78,7 @@ impl AvatarStates {
         self.pending.is_some()
     }
 
-    /// `readState`: pending first, then committed.
+    /// Pending first, then committed.
     pub fn read(&self, account_id: &str) -> Option<&AvatarState> {
         self.pending
             .as_ref()
@@ -87,8 +86,7 @@ impl AvatarStates {
             .or_else(|| self.states.get(account_id))
     }
 
-    /// `flushPending`: commits the queued updates. True when it changed the
-    /// committed map.
+    /// Commits the queued updates. True when it changed the committed map.
     pub fn flush(&mut self) -> bool {
         let Some(updates) = self.pending.take() else {
             return false;
@@ -107,7 +105,7 @@ impl AvatarStates {
             .insert(account_id.to_string(), state);
     }
 
-    /// `updateState`.
+    /// Queues a patch of one account's state.
     pub fn update_state(&mut self, account_id: &str, patch: AvatarPatch) {
         let previous = self.read(account_id).cloned();
         let base = previous.clone().unwrap_or_default();
@@ -122,7 +120,7 @@ impl AvatarStates {
         self.queue(account_id, next);
     }
 
-    /// `mergeStates`.
+    /// Queues several states at once.
     pub fn merge(&mut self, updates: BTreeMap<String, AvatarState>) {
         for (account_id, next) in updates {
             if self.read(&account_id) == Some(&next) {
@@ -132,8 +130,8 @@ impl AvatarStates {
         }
     }
 
-    /// `seedForAccounts`: the cached avatar of each account, or a loading
-    /// placeholder. Returns the accounts whose profile needs a fetch.
+    /// The cached avatar of each account, or a loading placeholder. Returns
+    /// the accounts whose profile needs a fetch.
     pub fn seed_for_accounts<S: ProfileSource + ?Sized>(
         &mut self,
         accounts: &[PlatformAccount],
@@ -198,8 +196,8 @@ impl AvatarStates {
         }
     }
 
-    /// `applyProfileUpdate`: one resolved profile, and its display name
-    /// written into `accounts`. Returns whether `accounts` changed.
+    /// One resolved profile, and its display name written into `accounts`.
+    /// Returns whether `accounts` changed.
     pub fn apply_profile_update(
         &mut self,
         account: &PlatformAccount,
@@ -223,8 +221,8 @@ impl AvatarStates {
         }
     }
 
-    /// `applyBatchProfileUpdates`: every resolved profile in one merge.
-    /// Returns whether `accounts` changed.
+    /// Every resolved profile in one merge. Returns whether `accounts`
+    /// changed.
     pub fn apply_batch_profile_updates(
         &mut self,
         targets: &[PlatformAccount],
@@ -253,7 +251,7 @@ impl AvatarStates {
         changed
     }
 
-    /// `removeAvatar`.
+    /// Forgets one account's avatar.
     pub fn remove(&mut self, account_id: &str) {
         if let Some(pending) = &mut self.pending {
             pending.remove(account_id);
@@ -263,7 +261,7 @@ impl AvatarStates {
         }
     }
 
-    /// `clear`.
+    /// Forgets every avatar.
     pub fn clear(&mut self) {
         self.pending = None;
         if !self.states.is_empty() {
@@ -287,7 +285,8 @@ impl AvatarStates {
     }
 }
 
-/// `updateAccountDisplayName`.
+/// Writes a fetched display name into the account with that id, true when
+/// it changed.
 pub fn update_account_display_name(
     accounts: &mut [PlatformAccount],
     account_id: &str,
@@ -557,11 +556,10 @@ pub const AVATAR_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 pub const AVATAR_CACHE_STABLE_HOSTS: &[&str] =
     &["steamstatic.com", "steamcdn-a.akamaihd.net", "rbxcdn.com"];
 
-/// Downloaded avatars on disk, so a launch draws them without the network
-/// (the Tauri app had WebView2's HTTP cache for this). One file per URL,
-/// named by the SHA-256 of the URL; it starts with the URL and a newline, so
-/// a read checks it has the right one. Only bytes that open like an image
-/// (JPEG, PNG, GIF, WebP) are stored.
+/// Downloaded avatars on disk, so a launch draws them without the network.
+/// One file per URL, named by the SHA-256 of the URL; it starts with the URL
+/// and a newline, so a read checks it has the right one. Only bytes that
+/// open like an image (JPEG, PNG, GIF, WebP) are stored.
 #[derive(Debug, Clone)]
 pub struct AvatarDiskCache {
     dir: PathBuf,

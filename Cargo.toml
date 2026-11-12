@@ -31,7 +31,7 @@ rustls = { version = "0.23", default-features = false, features = [
   "tls12",
 ] }
 thiserror = "2"
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.42", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 winreg = "0.56"
 windows-sys = { version = "0.61", features = [
@@ -48,7 +48,7 @@ sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 open = { version = "5", features = ["shellexecute-on-windows"] }
 fs4 = { version = "1.1", features = ["sync"] }
 clap = { version = "4", features = ["derive"] }
-directories = "6"
+dirs = "7"
 is-terminal = "0.4"
 unicode-width = "0.2"
 keyring = "4"

@@ -1,6 +1,6 @@
 //! Cross-process exclusive lock covering mutating operations.
 //!
-//! Both the Tauri GUI and the CLI take this lock before writing config, so
+//! Both the egui GUI and the CLI take this lock before writing config, so
 //! two instances can't clobber each other mid-switch. The lock is released
 //! when the returned `LockGuard` is dropped.
 //!
@@ -45,7 +45,7 @@ thread_local! {
     /// self-deadlock.
     ///
     /// This is deliberately thread-local rather than process-global: a switch
-    /// running on one Tauri thread must not let an unrelated write on another
+    /// running on one GUI job thread must not let an unrelated write on another
     /// thread nest past the file lock. Cross-thread callers see a count of 0
     /// and block on the real cross-process lock.
     static GUARDS_HELD: Cell<u32> = const { Cell::new(0) };
@@ -90,7 +90,7 @@ pub enum WriteGuard {
 /// and protected by the outer guard, so skip the file lock instead of
 /// self-deadlocking on a second handle.
 ///
-/// A write running on a different thread (e.g. another Tauri command thread
+/// A write running on a different thread (e.g. another GUI job thread
 /// mid-switch) sees a thread-local count of 0 and falls through to
 /// `acquire_exclusive`, blocking on the real cross-process file lock.
 pub fn acquire_for_write(ctx: &dyn AppContext, timeout: Duration) -> Result<WriteGuard, LockError> {

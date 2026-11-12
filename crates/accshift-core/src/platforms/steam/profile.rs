@@ -1,16 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Taille max du XML de profil qu'on accepte de lire (512 KB).
-/// Au-dela on coupe : evite l'OOM sur un flux malveillant ou infini.
+/// Most bytes of profile XML read (512 KB). Anything longer is cut off, which
+/// avoids an OOM on a hostile or endless stream.
 const MAX_PROFILE_BODY: usize = 512 * 1024;
 
-/// GetPlayerSummaries accepte jusqu'a 100 steamids par appel (meme plafond
-/// que GetPlayerBans, cf. bans.rs).
+/// GetPlayerSummaries takes up to 100 steamids per call (the same cap as
+/// GetPlayerBans, see bans.rs).
 const STEAM_SUMMARY_IDS_PER_REQUEST: usize = 100;
 
-/// Concurrence du fallback XML sans cle API : assez pour paralleliser un
-/// refresh de N comptes, assez bas pour ne pas se faire limiter par
+/// Concurrency of the XML fallback without an API key: enough to refresh N
+/// accounts in parallel, low enough not to get rate limited by
 /// steamcommunity.com.
 const XML_FALLBACK_CONCURRENCY: usize = 8;
 
@@ -49,20 +49,19 @@ pub async fn fetch_profile_info(client: &reqwest::Client, steam_id: &str) -> Opt
     let mut avatar_url = extract_cdata(&body, "avatarFull");
     let mut display_name = extract_cdata(&body, "steamID");
 
-    // Les tags de ban (<vacBanned>/<tradeBanState>) vivent hors CDATA. Le nom
-    // de persona est attaquant-controle et siege dans <steamID><![CDATA[...]]>
-    // AVANT les vrais tags, donc un nom forge ("<vacBanned>1</vacBanned>")
-    // injecterait un faux ban via le find brut. On retire toutes les sections
-    // CDATA avant de scanner les bans.
+    // The ban tags (<vacBanned>/<tradeBanState>) live outside CDATA. The persona
+    // name is attacker-controlled and sits in <steamID><![CDATA[...]]> BEFORE
+    // the real tags, so a forged name ("<vacBanned>1</vacBanned>") would inject
+    // a fake ban through a raw find. Every CDATA section is removed before the
+    // bans are scanned.
     let ban_scan = strip_cdata(&body);
 
-    // On plie sur TOUTES les occurrences, pas seulement la premiere : si Steam
-    // n'echappe pas un `]]>` present dans le nom de persona, ce nom casse sa
-    // propre section CDATA et laisse un faux `<vacBanned>0>` AVANT le vrai tag ;
-    // un parse au premier match lirait alors la valeur forgee. OR vers "banni"
-    // => un tag propre injecte ne peut jamais masquer un vrai ban (l'attaquant
-    // est le proprietaire du compte qui cache son ban ; se faire passer pour
-    // banni n'a aucun interet).
+    // Fold over EVERY occurrence, not just the first: if Steam does not escape
+    // a `]]>` in the persona name, that name breaks its own CDATA section and
+    // leaves a fake `<vacBanned>0>` BEFORE the real tag; a first-match parse
+    // would then read the forged value. OR towards "banned" => an injected clean
+    // tag can never hide a real ban (the attacker is the account owner hiding
+    // their ban; posing as banned gains nothing).
     let vac_banned = tag_values(&ban_scan, "vacBanned").iter().any(|v| v == "1");
 
     let trade_bans = tag_values(&ban_scan, "tradeBanState");
@@ -114,10 +113,10 @@ struct PlayerSummariesResponse {
 }
 
 fn summary_to_profile(summary: PlayerSummaryApi) -> (String, ProfileInfo) {
-    // GetPlayerSummaries ne renvoie pas les infos de ban : elles arrivent par
-    // GetPlayerBans (bans.rs) cote warnings et le frontend n'exploite pas ces
-    // champs de ProfileInfo. On remplit avec les valeurs neutres d'un profil
-    // sans ban pour garder la meme forme que le chemin XML unitaire.
+    // GetPlayerSummaries does not return ban data: it comes through
+    // GetPlayerBans (bans.rs) for the warnings, and these ProfileInfo fields are
+    // not used by the UI. They get the neutral values of an unbanned profile to
+    // keep the same shape as the single-account XML path.
     (
         summary.steamid,
         ProfileInfo {
@@ -129,11 +128,11 @@ fn summary_to_profile(summary: PlayerSummaryApi) -> (String, ProfileInfo) {
     )
 }
 
-/// Recupere les profils de plusieurs comptes en une passe : avec cle API,
-/// GetPlayerSummaries par chunks de 100 ids ; sans cle (ou si tous les appels
-/// API echouent), fallback XML par compte avec une concurrence bornee.
-/// Les ids sans resultat (profil supprime, echec reseau) sont absents de la
-/// map, comme le `None` du chemin unitaire.
+/// Fetch the profiles of several accounts in one pass: with an API key,
+/// GetPlayerSummaries in chunks of 100 ids; without one (or when every API
+/// call fails), the per-account XML fallback with bounded concurrency. Ids
+/// with no result (deleted profile, network failure) are absent from the
+/// map, like the `None` of the single-account path.
 pub async fn fetch_profile_infos(
     client: &reqwest::Client,
     api_key: &str,
@@ -147,7 +146,7 @@ pub async fn fetch_profile_infos(
         if let Ok(profiles) = fetch_profile_infos_web_api(client, api_key, steam_ids).await {
             return profiles;
         }
-        // Cle invalide ou API down : le XML public couvre quand meme.
+        // Invalid key or API down: the public XML still covers it.
     }
 
     fetch_profile_infos_xml(client, steam_ids).await
@@ -159,9 +158,9 @@ async fn fetch_profile_infos_web_api(
     steam_ids: &[String],
 ) -> Result<HashMap<String, ProfileInfo>, String> {
     let mut profiles: HashMap<String, ProfileInfo> = HashMap::new();
-    // Meme logique que fetch_player_bans : un chunk tardif qui echoue ne doit
-    // pas jeter les profils deja recuperes. On ne remonte l'erreur que si
-    // aucun chunk n'a abouti (le fallback XML prend alors le relais).
+    // Same rule as fetch_player_bans: a late chunk that fails must not throw
+    // away the profiles already fetched. The error is only returned when no
+    // chunk succeeded (the XML fallback then takes over).
     let mut last_error: Option<String> = None;
     let mut any_chunk_succeeded = false;
 
@@ -212,9 +211,9 @@ async fn fetch_profile_infos_web_api(
     Ok(profiles)
 }
 
-/// Fallback sans cle API : les memes requetes XML que le chemin unitaire,
-/// mais lancees en parallele avec une fenetre glissante de
-/// [`XML_FALLBACK_CONCURRENCY`] taches.
+/// Fallback without an API key: the same XML requests as the single-account
+/// path, run in parallel with a sliding window of
+/// [`XML_FALLBACK_CONCURRENCY`] tasks.
 async fn fetch_profile_infos_xml(
     client: &reqwest::Client,
     steam_ids: &[String],
@@ -297,11 +296,10 @@ async fn fetch_mini_profile(client: &reqwest::Client, steam_id: &str) -> Option<
     Some(parsed)
 }
 
-/// Retourne la valeur (trimmee) de CHAQUE `<tag>...</tag>` du corps, dans
-/// l'ordre. Balayer toutes les occurrences (et non la premiere) est ce qui
-/// neutralise un breakout CDATA : un faux tag injecte avant le vrai ne peut pas
-/// gagner un scan par premier match si l'appelant plie vers la valeur la plus
-/// severe.
+/// Return the trimmed value of EVERY `<tag>...</tag>` in the body, in order.
+/// Sweeping every occurrence (not the first) is what defeats a CDATA
+/// breakout: a fake tag injected before the real one cannot win a first-match
+/// scan when the caller folds towards the most severe value.
 fn tag_values(body: &str, tag: &str) -> Vec<String> {
     let open = format!("<{}>", tag);
     let close = format!("</{}>", tag);
@@ -320,9 +318,9 @@ fn tag_values(body: &str, tag: &str) -> Vec<String> {
     values
 }
 
-/// Retire toutes les sections `<![CDATA[ ... ]]>` du corps. Sert a obtenir une
-/// copie de travail pour extraire les tags de ban sans que du contenu
-/// attaquant-controle (nom de persona) puisse imiter un tag XML.
+/// Remove every `<![CDATA[ ... ]]>` section from the body. Gives a working
+/// copy to extract the ban tags from without attacker-controlled content
+/// (the persona name) being able to mimic an XML tag.
 fn strip_cdata(body: &str) -> String {
     const OPEN: &str = "<![CDATA[";
     const CLOSE: &str = "]]>";
@@ -337,8 +335,8 @@ fn strip_cdata(body: &str) -> String {
                 rest = &after_open[end + CLOSE.len()..];
             }
             None => {
-                // CDATA non terminee : on jette tout le reste, il ne contient
-                // aucun tag de ban exploitable.
+                // Unterminated CDATA: drop the whole rest, it holds no usable ban
+                // tag.
                 rest = "";
                 break;
             }
@@ -348,10 +346,10 @@ fn strip_cdata(body: &str) -> String {
     out
 }
 
-/// Lit le corps d'une reponse en accumulant les chunks avec un plafond dur.
-/// Stoppe en erreur si le `Content-Length` annonce, ou les octets recus,
-/// depassent `max`. Empeche l'OOM sur un flux malveillant/infini qui tiendrait
-/// dans le timeout HTTP.
+/// Read a response body chunk by chunk under a hard cap. Fails when the
+/// announced `Content-Length`, or the bytes received, exceed `max`. Prevents
+/// an OOM on a hostile or endless stream that would fit within the HTTP
+/// timeout.
 async fn read_body_capped(response: reqwest::Response, max: usize) -> Result<String, ()> {
     if let Some(len) = response.content_length() {
         if len as usize > max {
@@ -463,14 +461,14 @@ mod tests {
     #[test]
     fn strip_cdata_unterminated_drops_rest() {
         let body = "<steamID><![CDATA[oops<vacBanned>1</vacBanned>";
-        // Pas de ]]> : tout le reste est jete, aucun tag exploitable ne survit.
+        // No ]]>: the whole rest is dropped, no usable tag survives.
         assert_eq!(strip_cdata(body), "<steamID>");
     }
 
     #[test]
     fn malicious_persona_cannot_inject_vac_ban() {
-        // Nom de persona attaquant-controle qui imite un tag de ban, place
-        // AVANT le vrai <vacBanned> comme dans le XML reel de Steam.
+        // An attacker-controlled persona name that mimics a ban tag, placed
+        // BEFORE the real <vacBanned> as in Steam's real XML.
         let body = concat!(
             "<profile>",
             "<steamID><![CDATA[<vacBanned>1</vacBanned>]]></steamID>",
@@ -479,14 +477,14 @@ mod tests {
             "</profile>"
         );
 
-        // Le nom complet est bien recupere via CDATA.
+        // The full name is still read through CDATA.
         assert_eq!(
             extract_cdata(body, "steamID"),
             Some("<vacBanned>1</vacBanned>".into())
         );
 
-        // Mais le scan de ban se fait sur la copie sans CDATA, donc le faux
-        // tag injecte est ignore et on lit le vrai 0.
+        // But the ban scan runs on the copy without CDATA, so the injected
+        // fake tag is ignored and the real 0 is read.
         let ban_scan = strip_cdata(body);
         let vac_banned = tag_values(&ban_scan, "vacBanned").iter().any(|v| v == "1");
         assert!(
@@ -503,10 +501,10 @@ mod tests {
 
     #[test]
     fn cdata_breakout_cannot_hide_real_vac_ban() {
-        // Steam qui n'echappe PAS un `]]>` present dans le nom de persona : le
-        // nom "x]]><vacBanned>0</vacBanned>" casse sa propre section CDATA et
-        // injecte un faux tag "propre" AVANT le vrai <vacBanned>1>. Un parse au
-        // premier match lirait 0 et masquerait le ban reel.
+        // Steam does NOT escape a `]]>` in the persona name: the name
+        // "x]]><vacBanned>0</vacBanned>" breaks its own CDATA section and
+        // injects a fake "clean" tag BEFORE the real <vacBanned>1>. A first-match
+        // parse would read 0 and hide the real ban.
         let body = concat!(
             "<profile>",
             "<steamID><![CDATA[x]]><vacBanned>0</vacBanned>]]></steamID>",
@@ -516,15 +514,15 @@ mod tests {
         );
 
         let ban_scan = strip_cdata(body);
-        // Le faux <vacBanned>0> survit au strip (il est hors CDATA apres le
-        // breakout), mais le fold OR sur toutes les occurrences voit le vrai 1.
+        // The fake <vacBanned>0> survives the strip (it is outside CDATA after
+        // the breakout), but the OR fold over every occurrence sees the real 1.
         let vac_banned = tag_values(&ban_scan, "vacBanned").iter().any(|v| v == "1");
         assert!(
             vac_banned,
             "un breakout ]]> ne doit pas pouvoir masquer un vrai ban VAC"
         );
 
-        // Idem pour le trade ban : on retient la valeur non-"None".
+        // Same for the trade ban: the non-"None" value wins.
         let trade_bans = tag_values(&ban_scan, "tradeBanState");
         let trade_ban_state = trade_bans
             .iter()
@@ -561,7 +559,7 @@ mod tests {
         assert!(!alice.vac_banned);
         assert_eq!(alice.trade_ban_state, "");
 
-        // Champs vides ou blancs -> None, comme is_blank sur le chemin XML.
+        // Empty or blank fields -> None, like is_blank on the XML path.
         let empty = &profiles["76561198000000002"];
         assert_eq!(empty.avatar_url, None);
         assert_eq!(empty.display_name, None);

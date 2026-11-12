@@ -5,18 +5,24 @@
 //! the hash formats and the verification live in `accshift_core::pin`, shared
 //! with the GUI backend; this module only prompts for the code on a terminal.
 
-use crate::context::CliAppContext;
 use crate::exit;
 use crate::output::{emit_err, Format};
-use accshift_core::pin::{upgrade_legacy_pin_hash, verify_pin_code, PinLock, PinVerdict};
+use accshift_core::pin::{
+    upgrade_legacy_pin_hash, verify_pin_code, verify_pin_throttled, PinLock, PinVerdict,
+    ThrottledVerdict,
+};
+use accshift_core::AppContext;
 use is_terminal::IsTerminal;
 use std::io::Write;
+use std::time::SystemTime;
 
 /// Apply the GUI's PIN lock to a switch: prompt for the PIN when one is set
 /// and verify it. Returns the lock that was admitted, so the caller can
 /// compare it again under the operation lock. A changed PIN is not this
 /// result. Otherwise an exit code the caller should return without switching.
-pub fn enforce(format: Format, lock: PinLock) -> Result<PinLock, u8> {
+/// Wrong codes share the GUI's on-disk wait, so a script cannot try codes
+/// faster than the lock screen allows.
+pub fn enforce(ctx: &dyn AppContext, format: Format, lock: PinLock) -> Result<PinLock, u8> {
     let stored_hash = match lock {
         PinLock::Off => return Ok(PinLock::Off),
         PinLock::On(hash) => hash,
@@ -50,7 +56,26 @@ pub fn enforce(format: Format, lock: PinLock) -> Result<PinLock, u8> {
         None => return Err(exit::PIN_DENIED),
     };
 
-    match verify_pin_code(&attempt, &stored_hash) {
+    let verdict = match verify_pin_throttled(ctx, &attempt, &stored_hash, SystemTime::now()) {
+        Ok(ThrottledVerdict::Checked { verdict, .. }) => verdict,
+        Ok(ThrottledVerdict::RetryLater(wait)) => {
+            emit_err(
+                format,
+                "switch",
+                "pin_retry_later",
+                &format!(
+                    "Too many incorrect PINs. Try again in {} s.",
+                    wait.as_secs().max(1)
+                ),
+            );
+            return Err(exit::PIN_DENIED);
+        }
+        Err(e) => {
+            emit_err(format, "switch", "io", &e.message);
+            return Err(exit::PIN_DENIED);
+        }
+    };
+    match verdict {
         PinVerdict::Accepted => Ok(PinLock::On(stored_hash)),
         PinVerdict::AcceptedLegacy => {
             // The PIN was correct, so the switch goes through whatever happens
@@ -62,20 +87,14 @@ pub fn enforce(format: Format, lock: PinLock) -> Result<PinLock, u8> {
             // operation lock does not treat the upgrade as a PIN change. A
             // hash that no longer verifies this PIN is left as the one we
             // checked, and that compare then refuses the switch.
-            let admitted = match CliAppContext::new() {
-                Ok(ctx) => match upgrade_legacy_pin_hash(&ctx, &attempt) {
-                    Ok(()) => match accshift_core::pin::read_pin_lock(&ctx) {
+            let admitted = match upgrade_legacy_pin_hash(ctx, &attempt) {
+                Ok(()) => match accshift_core::pin::read_pin_lock(ctx) {
+                    PinLock::On(hash)
+                        if verify_pin_code(&attempt, &hash) != PinVerdict::Rejected =>
+                    {
                         PinLock::On(hash)
-                            if verify_pin_code(&attempt, &hash) != PinVerdict::Rejected =>
-                        {
-                            PinLock::On(hash)
-                        }
-                        _ => PinLock::On(stored_hash),
-                    },
-                    Err(e) => {
-                        eprintln!("Warning: could not upgrade the stored PIN hash: {e}");
-                        PinLock::On(stored_hash)
                     }
+                    _ => PinLock::On(stored_hash),
                 },
                 Err(e) => {
                     eprintln!("Warning: could not upgrade the stored PIN hash: {e}");
@@ -257,19 +276,40 @@ mod tests {
     // `accshift_core::pin`. Only the paths that never reach the prompt are
     // tested here: the prompt needs a terminal.
 
+    /// Paths that never reach the prompt never touch the disk either.
+    struct NoDirs;
+
+    impl AppContext for NoDirs {
+        fn app_config_dir(&self) -> Result<std::path::PathBuf, String> {
+            Err("no directory in this test".into())
+        }
+        fn app_data_dir(&self) -> Result<std::path::PathBuf, String> {
+            Err("no directory in this test".into())
+        }
+        fn app_local_data_dir(&self) -> Result<std::path::PathBuf, String> {
+            Err("no directory in this test".into())
+        }
+        fn app_cache_dir(&self) -> Result<std::path::PathBuf, String> {
+            Err("no directory in this test".into())
+        }
+    }
+
     #[test]
     fn no_pin_lets_the_switch_through_without_a_prompt() {
-        assert_eq!(enforce(Format::Json, PinLock::Off), Ok(PinLock::Off));
+        assert_eq!(
+            enforce(&NoDirs, Format::Json, PinLock::Off),
+            Ok(PinLock::Off)
+        );
     }
 
     #[test]
     fn a_misconfigured_or_unreadable_lock_fails_closed() {
         assert_eq!(
-            enforce(Format::Json, PinLock::Misconfigured),
+            enforce(&NoDirs, Format::Json, PinLock::Misconfigured),
             Err(exit::PIN_DENIED)
         );
         assert_eq!(
-            enforce(Format::Json, PinLock::Unreadable("corrupt".into())),
+            enforce(&NoDirs, Format::Json, PinLock::Unreadable("corrupt".into())),
             Err(exit::PIN_DENIED)
         );
     }

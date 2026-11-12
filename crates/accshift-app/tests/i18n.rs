@@ -1,6 +1,4 @@
-//! The i18n tests of the former TS frontend
-//! (`src/lib/i18n/{index,messages}.test.ts`) against the embedded
-//! dictionaries.
+//! The i18n runtime and messages against the embedded dictionaries.
 
 use accshift_app::i18n::{
     boot_locale, detect_preferred_locale, dictionary, format_template, is_locale, normalize_locale,
@@ -9,7 +7,7 @@ use accshift_app::i18n::{
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 
-// ------------------------------------------------------------ isLocale, normalizeLocale
+// ------------------------------------------------------------ locale codes
 
 #[test]
 fn is_locale_accepts_en() {
@@ -96,7 +94,7 @@ fn format_template_empties_missing_params_and_renders_values() {
     assert_eq!(format_template("{a}", None), "{a}");
 }
 
-// ------------------------------------------------------------ detectPreferredLocale
+// ------------------------------------------------------------ preferred locale
 
 #[test]
 fn detect_returns_an_exact_match() {

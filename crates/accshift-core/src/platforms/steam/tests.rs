@@ -227,7 +227,7 @@ fn classify_steam_folder_rejects_a_missing_path_and_a_plain_file() {
     assert_eq!(classify_steam_folder(&file), SteamFolder::NotADirectory);
 }
 
-// The webview splits the message on the first '|' and translates the left
+// accshift-app's path_error splits the message on the first '|' and translates the left
 // half. Losing that shape would drop it back to matching English prose.
 #[test]
 fn coded_path_error_carries_the_code_then_the_english_fallback() {
@@ -375,4 +375,34 @@ fn unused_secret_replacement_is_deleted_without_touching_current_token() {
 
     assert!(!result.unwrap());
     assert_eq!(&*deleted.borrow(), &["unused-token"]);
+}
+
+#[test]
+fn a_linux_data_folder_with_only_the_launcher_script_is_never_signed_in() {
+    // ~/.local/share/Steam before any login holds steam.sh and
+    // ubuntu12_32/steam, never a bare `steam` at its root.
+    let linux_files: Vec<&str> = std::iter::once("steam")
+        .chain(install::LINUX_STEAM_CLIENT_FILES.iter().copied())
+        .collect();
+
+    let script_only = TempRoot::new("linux-script");
+    std::fs::write(script_only.0.join("steam.sh"), b"#!/bin/sh").unwrap();
+    assert_eq!(
+        install::classify_steam_folder_with(&script_only.0, &linux_files),
+        SteamFolder::NeverSignedIn
+    );
+
+    let binary_only = TempRoot::new("linux-binary");
+    std::fs::create_dir_all(binary_only.0.join("ubuntu12_32")).unwrap();
+    std::fs::write(binary_only.0.join("ubuntu12_32").join("steam"), b"elf").unwrap();
+    assert_eq!(
+        install::classify_steam_folder_with(&binary_only.0, &linux_files),
+        SteamFolder::NeverSignedIn
+    );
+
+    let empty = TempRoot::new("linux-empty");
+    assert_eq!(
+        install::classify_steam_folder_with(&empty.0, &linux_files),
+        SteamFolder::NotSteam
+    );
 }

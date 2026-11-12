@@ -1,5 +1,5 @@
-//! The TypeScript tests of `src/lib/theme/*.test.ts` for the logic this crate
-//! ports: schema, surface opacities and themes. Contrast, safety and token
+//! The schema, surface opacity and theme registry cases, kept from the
+//! previous engine's suite so both engines answer the same. Contrast, safety and token
 //! tests live next to their modules.
 
 use std::collections::BTreeMap;
@@ -494,7 +494,7 @@ fn duplicate_extends_the_source_instead_of_copying_its_tokens() {
     assert_eq!(copy.color_scheme, source.color_scheme);
 }
 
-/// `surfaceOpacities.test.ts`, captured from the TypeScript before the four
+/// Surface opacities, captured from the previous engine before the four
 /// surface rules became a table.
 mod surfaces {
     use super::*;
@@ -626,7 +626,7 @@ mod surfaces {
     }
 }
 
-/// `themes.test.ts`.
+/// The theme registry.
 mod themes {
     use super::*;
     use accshift_theme::{is_valid_token_value, BuiltInOverwrite};
@@ -663,7 +663,6 @@ mod themes {
             ..doc("my-liquid")
         });
         assert!(copy.liquid);
-        assert!(registry.uses_liquid_glass(&copy));
         let values = resolve_theme_surface_opacities(&copy, 50.0, true);
         assert!(values.is_liquid);
         assert_eq!(values.window_opacity, 0.18);

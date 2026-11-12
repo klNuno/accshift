@@ -1,9 +1,8 @@
-//! The shared `platform_*` calls, ported from `src/lib/platforms/platformApi.ts`
-//! with the log redaction of `src/lib/shared/appLogger.ts` they rely on.
+//! The shared `platform_*` calls and the log redaction they rely on.
 //!
 //! A switch refused for want of the PIN comes back as an error whose
-//! [`crate::BackendError::is_pin_locked`] is true; TS raises the lock screen
-//! from here (`reportPinLockedError`), the egui shell does it from that flag.
+//! [`crate::BackendError::is_pin_locked`] is true; the egui shell raises the
+//! lock screen from that flag.
 
 use super::add_flow::to_add_flow_status;
 use super::AddFlowStatus;
@@ -60,7 +59,7 @@ fn redact_object(object: &Map<String, Value>) -> Map<String, Value> {
         .collect()
 }
 
-/// `serializeLogValue`: strings as is, objects redacted then JSON.
+/// Strings as is, objects redacted then JSON.
 pub fn serialize_log_value(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
@@ -69,7 +68,8 @@ pub fn serialize_log_value(value: &Value) -> String {
     }
 }
 
-/// `logAppEvent`: failures are ignored so they never mask the action result.
+/// Logs an app event; failures are ignored so they never mask the action
+/// result.
 pub fn log_app_event(
     backend: &dyn Backend,
     level: &str,
@@ -83,14 +83,14 @@ pub fn log_app_event(
     let _ = backend.log_app_event(level, source, message, details.as_deref());
 }
 
-/// `createPlatformApi(platformId)`.
+/// The backend calls of one platform.
 #[derive(Clone, Copy)]
 pub struct PlatformApi<'a> {
     backend: &'a dyn Backend,
     platform_id: &'a str,
 }
 
-/// `frontend.<id>` with the first `-` made `_`, like `String.replace`.
+/// `frontend.<id>` with the first `-` made `_`.
 pub fn log_prefix(platform_id: &str) -> String {
     format!("frontend.{}", platform_id.replacen('-', "_", 1))
 }
@@ -107,7 +107,7 @@ impl<'a> PlatformApi<'a> {
         self.backend
     }
 
-    /// `getAccounts`: the platform's raw account list.
+    /// The platform's raw account list.
     pub fn get_accounts(&self) -> BackendResult<Value> {
         self.backend.platform_get_accounts(self.platform_id)
     }
@@ -120,7 +120,7 @@ impl<'a> PlatformApi<'a> {
         self.backend.platform_get_startup_snapshot(self.platform_id)
     }
 
-    /// `switchAccount`, logged before and after. `log_details` defaults to
+    /// Switches account, logged before and after. `log_details` defaults to
     /// `{ accountId }`, redacted by the logger.
     pub fn switch_account(
         &self,

@@ -1,4 +1,4 @@
-//! `ThemeEditor.svelte`: the theme document's fields, every token, the
+//! The theme editor: the theme document's fields, every token, the
 //! custom CSS and the issues, on `BaseDialog` at `min(720px, 92vw)`.
 //!
 //! ```text
@@ -34,12 +34,13 @@
 //! The dialog sits in `.settings-panel`, so its fields take the panel's
 //! `.field`, `.field-label` and `.text-input` rules.
 //!
-//! Keys: Escape cancels (and the settings panel's own Escape closes the
-//! panel too), Tab cycles inside the dialog. A click on the overlay
-//! cancels. Nothing takes focus at mount.
+//! Keys: Escape cancels and leaves the settings panel open, Tab cycles
+//! inside the dialog. A click on the overlay cancels. Nothing takes focus
+//! at mount.
 //!
 //! The colour input opens Windows' own colour dialog, as Chromium does
-//! ([`window::color`]). Chromium draws the selects' lists in popup windows
+//! ([`window::color`]); elsewhere its swatch is a preview beside the hex
+//! field. Chromium draws the selects' lists in popup windows
 //! no capture includes; their stand-ins here are egui's.
 
 use std::ops::Range;
@@ -187,7 +188,7 @@ struct Model {
     blocked: bool,
     base_ids: Vec<String>,
     base_labels: Vec<String>,
-    /// `saveError`: the alert line under the issues, in `--danger`.
+    /// The save failed: the alert line under the issues, in `--danger`.
     save_error: Option<(String, Rgba)>,
 }
 
@@ -441,7 +442,7 @@ fn faded_button(
     props: &DialogProps,
 ) -> bool {
     let ppp = ui.ctx().pixels_per_point();
-    let group = !enabled && !cfg!(feature = "glow");
+    let group = !enabled;
     let painter = ui.painter().clone();
     if group {
         Mark::Begin {
@@ -726,7 +727,11 @@ fn color_input(ui: &mut Ui, rect: Rect, id: Id, hex: &str, props: &DialogProps) 
     let ppp = ctx.pixels_per_point();
     let v = props.vars;
     let boxed = snap::rect(rect, ppp);
-    let response = ui.interact(boxed, id, Sense::click());
+    let response = ui.interact(
+        boxed,
+        id,
+        window::color::swatch_sense(window::color::AVAILABLE),
+    );
     let focused = take_focus(ui, &response);
     BoxStyle {
         background: Rgba::TRANSPARENT,

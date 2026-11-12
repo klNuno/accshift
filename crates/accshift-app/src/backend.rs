@@ -1,96 +1,14 @@
-//! The `Backend` trait: one blocking method per Tauri command the frontend
-//! calls, minus the window controls the egui shell does itself.
+//! The `Backend` trait: one blocking method per backend command, minus the
+//! window controls the egui shell does itself.
 //!
-//! Method names are the command names. Arguments are the Rust parameters of
-//! the command in `src-tauri/src/commands/*.rs` (the webview sends them in
-//! camelCase, Tauri renames them). Return values serialize to the JSON the
-//! webview receives. Every method blocks: call it from [`crate::jobs`], never
-//! from the UI thread.
+//! Method names are the command names the mock's scenario files record.
+//! Return values serialize to the JSON those files hold. Every method
+//! blocks: call it from [`crate::jobs`], never from the UI thread.
 
 use crate::error::BackendResult;
 use crate::types::*;
 use serde_json::Value;
 use std::collections::BTreeMap;
-
-/// Every command of [`Backend`], in trait order. The window commands
-/// (`minimize_window`, `toggle_maximize_window`, `close_window`,
-/// `set_maximize_button_rect`, `set_keep_backdrop_active`) are not in it,
-/// nor is `diagnostics`, which no frontend code calls.
-pub const COMMANDS: &[&str] = &[
-    "get_boot_payload",
-    "get_runtime_os",
-    "detect_streaming_software",
-    "migrate_legacy_config",
-    "load_client_storage_snapshot",
-    "save_client_storage_store",
-    "get_storage_manifest",
-    "log_app_event",
-    "finish_boot",
-    "pin_unlock",
-    "pin_lock",
-    "platform_get_accounts",
-    "platform_get_startup_snapshot",
-    "platform_get_current_account",
-    "platform_switch_account",
-    "platform_forget_account",
-    "platform_begin_setup",
-    "platform_get_setup_status",
-    "platform_cancel_setup",
-    "platform_get_path",
-    "platform_set_path",
-    "platform_select_path",
-    "platform_detect_installed",
-    "platform_set_account_label",
-    "platform_dry_run",
-    "reload_user_platforms",
-    "descriptor_select_file",
-    "descriptor_preview_file",
-    "descriptor_install_file",
-    "descriptor_remove",
-    "open_descriptors_folder",
-    "open_url",
-    "open_logs_folder",
-    "get_desktop_wallpaper",
-    "steam_set_api_key",
-    "steam_has_api_key",
-    "steam_open_api_key_page",
-    "steam_switch_account_and_launch_game",
-    "steam_get_profile_info",
-    "steam_get_profile_infos",
-    "steam_get_player_bans",
-    "steam_copy_game_settings",
-    "steam_get_copyable_games",
-    "steam_open_userdata",
-    "steam_clear_browser_cache",
-    "steam_bulk_edit",
-    "steam_get_account_games",
-    "cs2_bridge_get_settings",
-    "cs2_bridge_set_settings",
-    "cs2_bridge_fetch",
-    "cs2_bridge_check",
-    "cs2_bridge_test",
-    "riot_capture_profile",
-    "roblox_add_account_by_cookie",
-    "roblox_get_profile_info",
-    "roblox_check_sessions",
-    "list_custom_themes",
-    "save_custom_theme",
-    "delete_custom_theme",
-    "telemetry_get_state",
-    "telemetry_set_mode_a",
-    "telemetry_set_mode_b",
-    "telemetry_retry_forget",
-    "telemetry_complete_onboarding",
-    "telemetry_track_persona_switch",
-    "telemetry_track_account_added",
-    "telemetry_track_account_add_started",
-    "telemetry_track_account_add_cancelled",
-    "telemetry_track_operation_failed",
-    "telemetry_track_update",
-    "telemetry_track_settings_snapshot",
-    "telemetry_track_streamer_mode",
-    "telemetry_export",
-];
 
 /// The logic layer the UI talks to. `Send + Sync` so one instance serves the
 /// whole job pool.
@@ -121,8 +39,8 @@ pub trait Backend: Send + Sync {
         message: &str,
         details: Option<&str>,
     ) -> BackendResult<()>;
-    /// Boot milestones and first-run telemetry. The Tauri command also shows
-    /// the window; the egui shell does that part itself.
+    /// Boot milestones and first-run telemetry. The egui shell shows the
+    /// window itself.
     fn finish_boot(&self, source: &str, marks: Option<&Value>) -> BackendResult<()>;
     /// Where downloaded avatars are kept between launches
     /// ([`crate::accounts::avatars::AvatarDiskCache`]). `None` keeps them in
@@ -224,11 +142,7 @@ pub trait Backend: Send + Sync {
         to_steam_id: &str,
         app_id: &str,
     ) -> BackendResult<()>;
-    fn steam_get_copyable_games(
-        &self,
-        from_steam_id: &str,
-        to_steam_id: &str,
-    ) -> BackendResult<Vec<CopyableGame>>;
+    fn steam_get_copyable_games(&self, from_steam_id: &str) -> BackendResult<Vec<CopyableGame>>;
     fn steam_open_userdata(&self, steam_id: &str) -> BackendResult<()>;
     fn steam_clear_browser_cache(&self) -> BackendResult<()>;
     fn steam_bulk_edit(&self, request: BulkEditRequest) -> BackendResult<BulkEditResult>;

@@ -1,7 +1,6 @@
-//! The command palette as `App.svelte` mounts it: `paletteOpen`, the
-//! getters of `createCommandRegistry` read from the app, and its `run`
-//! callbacks mapped onto the app's actions. The view is
-//! `ui::components::command_palette`.
+//! The command palette's wiring: whether it is open, the command registry
+//! read from the app, and its commands mapped onto the app's actions. The
+//! view is `ui::components::command_palette`.
 
 use std::collections::BTreeSet;
 
@@ -31,7 +30,7 @@ pub struct PaletteCommands {
 }
 
 impl AppModel {
-    /// `setPaletteOpen`: opening mounts a fresh palette (empty query, first
+    /// Opening builds a fresh palette (empty query, first
     /// row, the field focused); closing unmounts it and the field's focus
     /// goes with it.
     pub(super) fn set_palette_open(&mut self, ctx: &Context, open: bool) {
@@ -115,8 +114,7 @@ impl AppModel {
         PaletteCommands { commands, accents }
     }
 
-    /// The `run` callbacks of `createCommandRegistry`, after the palette
-    /// closed.
+    /// Runs a palette command, after the palette closed.
     pub(super) fn run_palette(&mut self, ctx: &Context, action: PaletteAction) {
         match action {
             // `addFlow.cancelIfConflicting` then the switch, bulk edit or

@@ -1,10 +1,8 @@
-//! The software runner: what eframe does for this spike, minus OpenGL.
-//!
-//! Window and input go through egui-winit exactly as in eframe. egui's meshes
-//! are rasterized on the CPU by the vendored `egui_software_backend`, and the
-//! frame is blitted with softbuffer (a 32-bit DIB and `BitBlt` on Windows).
-//! No GPU driver is loaded: with glow, the NVIDIA OpenGL driver took about
-//! 300 ms before the first frame and most of the 100 MB working set.
+//! The runner: window and input through egui-winit, egui's meshes
+//! rasterized on the CPU by the vendored `egui_software_backend`, and the
+//! frame blitted with softbuffer (a 32-bit DIB and `BitBlt` on Windows).
+//! No GPU driver is loaded: an OpenGL driver took about 300 ms before the
+//! first frame and most of the 100 MB working set.
 
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -20,6 +18,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{
     ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy, OwnedDisplayHandle,
 };
+use winit::monitor::MonitorHandle;
 use winit::window::{Window, WindowId};
 
 use crate::window::tray::{Tray, TrayAction};
@@ -67,6 +66,7 @@ pub fn run(
         armed: false,
         tray: None,
         heal_due: Vec::new(),
+        monitor: None,
     };
     event_loop.run_app(&mut runner)
 }
@@ -85,11 +85,109 @@ const HEAL_STEPS: [Duration; 5] = [
 /// one looks, as a hidden WebView throttles its timers.
 const HIDDEN_FRAME_INTERVAL: Duration = Duration::from_millis(250);
 
-struct Live {
+/// The softbuffer surface, with what it takes to build it again: after a
+/// failure ([`Faults`]) and in [`Runner::heal`].
+struct Canvas {
     window: Rc<Window>,
-    /// Kept for [`Runner::heal`], which builds the surface again.
     context: softbuffer::Context<OwnedDisplayHandle>,
     surface: softbuffer::Surface<OwnedDisplayHandle, Rc<Window>>,
+}
+
+/// The presenter steps a frame can fail at, so the failure path is tested
+/// without a window.
+trait Present {
+    type Buffer<'a>
+    where
+        Self: 'a;
+    fn rebuild(&mut self) -> Result<(), String>;
+    fn resize(&mut self, width: NonZeroU32, height: NonZeroU32) -> Result<(), String>;
+    fn buffer(&mut self) -> Result<Self::Buffer<'_>, String>;
+}
+
+impl Present for Canvas {
+    type Buffer<'a> = softbuffer::Buffer<'a, OwnedDisplayHandle, Rc<Window>>;
+
+    fn rebuild(&mut self) -> Result<(), String> {
+        self.surface = softbuffer::Surface::new(&self.context, self.window.clone())
+            .map_err(|err| format!("surface: {err}"))?;
+        Ok(())
+    }
+
+    fn resize(&mut self, width: NonZeroU32, height: NonZeroU32) -> Result<(), String> {
+        self.surface
+            .resize(width, height)
+            .map_err(|err| format!("resize: {err}"))
+    }
+
+    fn buffer(&mut self) -> Result<Self::Buffer<'_>, String> {
+        self.surface
+            .buffer_mut()
+            .map_err(|err| format!("buffer: {err}"))
+    }
+}
+
+/// Presenter failures in a row (a lost X11 connection, a window buffer
+/// that could not be allocated, a lost Wayland buffer). The frame is
+/// skipped, never the app: the next one rebuilds the surface, after a delay
+/// that grows with the failures, and only the first ones are logged.
+#[derive(Default)]
+struct Faults {
+    in_a_row: u32,
+}
+
+/// Failures in a row that reach the log.
+const LOGGED_FAULTS: u32 = 3;
+
+impl Faults {
+    fn fail(&mut self) {
+        self.in_a_row = self.in_a_row.saturating_add(1);
+    }
+
+    fn logged(&self) -> bool {
+        (1..=LOGGED_FAULTS).contains(&self.in_a_row)
+    }
+
+    fn retry_after(&self) -> Duration {
+        Duration::from_millis(16)
+            .saturating_mul(1 << self.in_a_row.min(6))
+            .min(Duration::from_secs(1))
+    }
+
+    fn succeeded(&mut self) {
+        self.in_a_row = 0;
+    }
+}
+
+/// The buffer for a `width` by `height` frame, the surface rebuilt first
+/// when the last frame failed. A failure is counted in `faults`.
+fn frame_buffer<'a, P: Present>(
+    presenter: &'a mut P,
+    faults: &mut Faults,
+    width: NonZeroU32,
+    height: NonZeroU32,
+) -> Result<P::Buffer<'a>, String> {
+    let ready = if faults.in_a_row > 0 {
+        presenter.rebuild()
+    } else {
+        Ok(())
+    }
+    .and_then(|()| presenter.resize(width, height));
+    match ready.and_then(|()| presenter.buffer()) {
+        Ok(buffer) => Ok(buffer),
+        Err(err) => {
+            faults.fail();
+            Err(err)
+        }
+    }
+}
+
+struct Live {
+    window: Rc<Window>,
+    canvas: Canvas,
+    faults: Faults,
+    /// The pointer in window pixels, for the resize edges.
+    #[cfg(target_os = "linux")]
+    pointer: Option<(f64, f64)>,
     state: egui_winit::State,
     info: ViewportInfo,
     shell: Shell,
@@ -145,6 +243,8 @@ struct Runner {
     tray: Option<Tray>,
     /// Full presents still owed by [`Self::heal`], soonest first.
     heal_due: Vec<Instant>,
+    /// The monitor `frame_interval` was read from.
+    monitor: Option<MonitorHandle>,
 }
 
 impl Runner {
@@ -189,6 +289,7 @@ impl Runner {
             )
         });
         live.shell.input_hook(&ctx, &mut raw, zoom);
+        let mut retry = None;
 
         let started = Instant::now();
         self.last_paint = Some(started);
@@ -201,6 +302,10 @@ impl Runner {
             }
         });
         let ui_done = Instant::now();
+        #[cfg(target_os = "linux")]
+        if let Some(edge) = resize_edge(live) {
+            out.platform_output.cursor_icon = edge.cursor();
+        }
         if let Some(ime) = &mut out.platform_output.ime {
             // Back from the stage's points to the window's.
             ime.rect = ime.rect * zoom;
@@ -234,13 +339,24 @@ impl Runner {
         // Hidden in the tray, a frame only runs the UI, as when minimized.
         let hidden = live.hidden();
         let mut screenshot = None;
-        if let (Some(w), Some(h), false) = (
+        let mut fault = None;
+        let frame = match (
             NonZeroU32::new(size.width),
             NonZeroU32::new(size.height),
             hidden,
         ) {
-            live.surface.resize(w, h).expect("softbuffer resize");
-            let mut buffer = live.surface.buffer_mut().expect("softbuffer buffer");
+            (Some(w), Some(h), false) => {
+                match frame_buffer(&mut live.canvas, &mut live.faults, w, h) {
+                    Ok(buffer) => Some((w, h, buffer)),
+                    Err(err) => {
+                        fault = Some(err);
+                        None
+                    }
+                }
+            }
+            _ => None,
+        };
+        if let Some((w, h, mut buffer)) = frame {
             // A buffer that still holds the last frame only needs the tiles
             // that changed; a new one (first frame, resize) or a repaint the
             // OS asked for gets everything.
@@ -341,9 +457,13 @@ impl Runner {
                     );
                 }
             }
-            buffer
-                .present_with_damage(&damage)
-                .expect("softbuffer present");
+            match buffer.present_with_damage(&damage) {
+                Ok(()) => live.faults.succeeded(),
+                Err(err) => {
+                    live.faults.fail();
+                    fault = Some(format!("present: {err}"));
+                }
+            }
         } else {
             rasterized = Instant::now();
             egui_winit::process_viewport_commands(
@@ -353,6 +473,15 @@ impl Runner {
                 &live.window,
                 &mut live.actions,
             );
+        }
+        if let Some(err) = fault {
+            // The frame is lost: the next one draws everything again.
+            live.full_present = true;
+            if live.faults.logged() {
+                live.shell
+                    .log_window_error("Skipped a frame the presenter failed to draw", &err);
+            }
+            retry = Some(Instant::now() + live.faults.retry_after());
         }
 
         if bench::enabled() {
@@ -437,6 +566,24 @@ impl Runner {
         if let Some(&next) = self.heal_due.first() {
             self.repaint_at(next);
         }
+        if let Some(at) = retry {
+            self.repaint_at(at);
+        }
+    }
+
+    /// The frame interval from the refresh rate of the monitor the window
+    /// is on, read again when it moves to another one or on `force` (the
+    /// display mode may have changed).
+    fn follow_monitor(&mut self, force: bool) {
+        let Some(live) = &self.live else { return };
+        let monitor = live.window.current_monitor();
+        if monitor.is_none() || (!force && monitor == self.monitor) {
+            return;
+        }
+        if let Some(interval) = frame_interval(monitor.as_ref()) {
+            self.frame_interval = interval;
+        }
+        self.monitor = monitor;
     }
 
     /// The window's pixels may be gone ([`take_content_lost`], a reveal).
@@ -451,9 +598,7 @@ impl Runner {
         if !live.shown || live.window.is_visible() == Some(false) {
             return;
         }
-        if let Ok(surface) = softbuffer::Surface::new(&live.context, live.window.clone()) {
-            live.surface = surface;
-        }
+        let _ = live.canvas.rebuild();
         live.full_present = true;
         let now = Instant::now();
         self.heal_due = HEAL_STEPS.iter().map(|step| now + *step).collect();
@@ -488,10 +633,13 @@ impl Runner {
     /// sequence. Falling back to close keeps the app reachable if the tray
     /// could not be created.
     fn request_close(&mut self, event_loop: &ActiveEventLoop) {
-        let to_tray = self
-            .live
-            .as_ref()
-            .is_some_and(|live| live.shell.wants_close_to_tray());
+        // The session ending quits for real: a hidden app would lose its
+        // close sequence.
+        let to_tray = !crate::window::session_ending()
+            && self
+                .live
+                .as_ref()
+                .is_some_and(|live| live.shell.wants_close_to_tray());
         if to_tray {
             self.ensure_tray();
             if self.tray.is_some() {
@@ -536,18 +684,78 @@ fn show_window(window: &Window, focus: bool) {
     bench::mark("shown");
 }
 
-/// boot.rs `current_geometry` on the winit window: inner size and outer
-/// origin, which the frame makes tao's.
+/// The winit window's geometry: inner size and outer origin. Wayland has no
+/// origin to give: the size goes alone.
 fn geometry(window: &Window) -> Option<crate::window::Geometry> {
-    let outer = window.outer_position().ok()?;
+    let outer = window.outer_position().ok();
     let inner = window.inner_size();
     crate::window::Geometry::read(
         window.is_maximized(),
         window.is_minimized().unwrap_or(false),
         window.scale_factor(),
         (inner.width, inner.height),
-        (outer.x, outer.y),
+        outer.map(|outer| (outer.x, outer.y)),
     )
+}
+
+/// One frame at the refresh rate of `monitor`.
+fn frame_interval(monitor: Option<&MonitorHandle>) -> Option<Duration> {
+    let mhz = monitor?.refresh_rate_millihertz().filter(|&mhz| mhz > 0)?;
+    Some(Duration::from_secs_f64(1000.0 / f64::from(mhz)))
+}
+
+/// The resize edge under the pointer, when the window can be resized.
+#[cfg(target_os = "linux")]
+fn resize_edge(live: &Live) -> Option<crate::window::edges::Edge> {
+    use crate::window::edges;
+    let window = &live.window;
+    if window.is_maximized() || window.fullscreen().is_some() || !window.is_resizable() {
+        return None;
+    }
+    let size = window.inner_size();
+    edges::hit(
+        live.pointer?,
+        (f64::from(size.width), f64::from(size.height)),
+        edges::BAND * window.scale_factor(),
+    )
+}
+
+/// Tracks the pointer for the resize edges and hands a press on one to the
+/// window manager's interactive resize. True when egui must not see the
+/// event.
+#[cfg(target_os = "linux")]
+fn edge_press(live: &mut Live, event: &WindowEvent) -> bool {
+    use crate::window::edges::Edge;
+    use winit::event::{ElementState, MouseButton};
+    use winit::window::ResizeDirection;
+    match event {
+        WindowEvent::CursorMoved { position, .. } => {
+            live.pointer = Some((position.x, position.y));
+        }
+        WindowEvent::CursorLeft { .. } => live.pointer = None,
+        WindowEvent::MouseInput {
+            state: ElementState::Pressed,
+            button: MouseButton::Left,
+            ..
+        } => {
+            let Some(edge) = resize_edge(live) else {
+                return false;
+            };
+            let direction = match edge {
+                Edge::North => ResizeDirection::North,
+                Edge::South => ResizeDirection::South,
+                Edge::East => ResizeDirection::East,
+                Edge::West => ResizeDirection::West,
+                Edge::NorthEast => ResizeDirection::NorthEast,
+                Edge::NorthWest => ResizeDirection::NorthWest,
+                Edge::SouthEast => ResizeDirection::SouthEast,
+                Edge::SouthWest => ResizeDirection::SouthWest,
+            };
+            return live.window.drag_resize_window(direction).is_ok();
+        }
+        _ => {}
+    }
+    false
 }
 
 /// Whether Windows has part of the client area marked for repaint: it does
@@ -591,7 +799,6 @@ fn take_content_lost() -> bool {
     false
 }
 
-/// The frame as egui's glow painter returns it: premultiplied RGBA.
 /// The renderer's view of [`crate::ui::backdrop_filter::Mark`].
 fn backdrop_op(
     callback: &egui::PaintCallback,
@@ -693,10 +900,23 @@ impl ApplicationHandler<UserEvent> for Runner {
             }
         };
         bench::mark("window");
-        let context = softbuffer::Context::new(event_loop.owned_display_handle())
-            .expect("softbuffer context");
-        let surface =
-            softbuffer::Surface::new(&context, window.clone()).expect("softbuffer surface");
+        // No presenter, no app: a message and a clean exit, not a panic.
+        let context = match softbuffer::Context::new(event_loop.owned_display_handle()) {
+            Ok(context) => context,
+            Err(err) => {
+                eprintln!("presenter setup failed: {err}");
+                event_loop.exit();
+                return;
+            }
+        };
+        let surface = match softbuffer::Surface::new(&context, window.clone()) {
+            Ok(surface) => surface,
+            Err(err) => {
+                eprintln!("presenter setup failed: {err}");
+                event_loop.exit();
+                return;
+            }
+        };
 
         let mut state = egui_winit::State::new(
             self.ctx.clone(),
@@ -729,22 +949,26 @@ impl ApplicationHandler<UserEvent> for Runner {
         });
         // The monitor's refresh rate; the primary one while the window sits
         // off screen.
-        if let Some(mhz) = window
+        self.monitor = window
             .current_monitor()
-            .or_else(|| event_loop.primary_monitor())
-            .and_then(|monitor| monitor.refresh_rate_millihertz())
-            .filter(|&mhz| mhz > 0)
-        {
-            self.frame_interval = Duration::from_secs_f64(1000.0 / f64::from(mhz));
+            .or_else(|| event_loop.primary_monitor());
+        if let Some(interval) = frame_interval(self.monitor.as_ref()) {
+            self.frame_interval = interval;
         }
 
         let shell = init(&self.ctx, &window);
         let mut info = ViewportInfo::default();
         egui_winit::update_viewport_info(&mut info, &self.ctx, &window, true);
         self.live = Some(Live {
+            canvas: Canvas {
+                window: window.clone(),
+                context,
+                surface,
+            },
             window,
-            context,
-            surface,
+            faults: Faults::default(),
+            #[cfg(target_os = "linux")]
+            pointer: None,
             state,
             info,
             shell,
@@ -764,6 +988,13 @@ impl ApplicationHandler<UserEvent> for Runner {
         // on its own, so the tray is the only way to reach the app.
         if self.live.as_ref().is_some_and(|l| l.shell.starts_in_tray()) {
             self.ensure_tray();
+            if self.tray.is_none() {
+                // No tray here (none off Windows, or it failed): the window
+                // shows on boot, else nothing would reach the app.
+                if let Some(live) = &mut self.live {
+                    live.shell.no_tray();
+                }
+            }
         }
         self.paint(event_loop);
     }
@@ -771,7 +1002,7 @@ impl ApplicationHandler<UserEvent> for Runner {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::Repaint { when, pass } => {
-                // eframe's guard against requests from a pass already painted.
+                // Drops requests from a pass already painted.
                 let current = self.ctx.cumulative_pass_nr_for(ViewportId::ROOT);
                 if current == pass || current == pass + 1 {
                     self.repaint_at(when);
@@ -811,13 +1042,17 @@ impl ApplicationHandler<UserEvent> for Runner {
                 self.request_close(event_loop);
                 return;
             }
-            WindowEvent::Moved(_) => {
+            // A resize alone is saved too: on macOS the window may end
+            // through Cmd+Q, and Wayland never reports a move.
+            WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
                 if let Some(live) = &self.live {
                     if live.shell.window_moved(geometry(&live.window)) {
                         self.ctx.request_repaint();
                     }
                 }
+                self.follow_monitor(false);
             }
+            WindowEvent::ScaleFactorChanged { .. } => self.follow_monitor(true),
             // Back in front: put back any tile Windows dropped while the
             // window was away, then egui gets the event.
             WindowEvent::Focused(true) | WindowEvent::Occluded(false) => {
@@ -839,10 +1074,25 @@ impl ApplicationHandler<UserEvent> for Runner {
             _ => {}
         }
         let Some(live) = &mut self.live else { return };
+        #[cfg(target_os = "linux")]
+        if edge_press(live, &event) {
+            return;
+        }
         let response = live.state.on_window_event(&live.window, &event);
         let menu_key = context_menu_key(live, &event);
         if response.repaint || menu_key {
             self.repaint_at(Instant::now());
+        }
+    }
+
+    /// The loop also ends without a close request: the macOS Quit menu,
+    /// Cmd+Q and the Dock's Quit. The close sequence runs here then; after a
+    /// normal close it already ran, and [`Shell::close`] runs once.
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(live) = &mut self.live {
+            let geometry = geometry(&live.window);
+            let window = &live.window;
+            live.shell.close(geometry, || window.set_visible(false));
         }
     }
 
@@ -863,5 +1113,72 @@ impl ApplicationHandler<UserEvent> for Runner {
             Some(when) => event_loop.set_control_flow(ControlFlow::WaitUntil(when)),
             None => event_loop.set_control_flow(ControlFlow::Wait),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A presenter whose buffer fails a given number of times.
+    struct Flaky {
+        failures: u32,
+        rebuilt: u32,
+    }
+
+    impl Present for Flaky {
+        type Buffer<'a> = ();
+
+        fn rebuild(&mut self) -> Result<(), String> {
+            self.rebuilt += 1;
+            Ok(())
+        }
+
+        fn resize(&mut self, _: NonZeroU32, _: NonZeroU32) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn buffer(&mut self) -> Result<(), String> {
+            if self.failures == 0 {
+                return Ok(());
+            }
+            self.failures -= 1;
+            Err("buffer: lost".into())
+        }
+    }
+
+    #[test]
+    fn a_failed_frame_is_skipped_and_the_next_rebuilds_the_surface() {
+        let size = NonZeroU32::new(8).unwrap();
+        let mut presenter = Flaky {
+            failures: 1,
+            rebuilt: 0,
+        };
+        let mut faults = Faults::default();
+        assert!(frame_buffer(&mut presenter, &mut faults, size, size).is_err());
+        assert!(faults.logged());
+        assert!(frame_buffer(&mut presenter, &mut faults, size, size).is_ok());
+        assert_eq!(presenter.rebuilt, 1);
+        faults.succeeded();
+        // A healthy frame does not rebuild.
+        assert!(frame_buffer(&mut presenter, &mut faults, size, size).is_ok());
+        assert_eq!(presenter.rebuilt, 1);
+    }
+
+    #[test]
+    fn repeated_failures_back_off_and_stop_logging() {
+        let mut faults = Faults::default();
+        let mut last = Duration::ZERO;
+        for _ in 0..LOGGED_FAULTS {
+            faults.fail();
+            assert!(faults.logged());
+            assert!(faults.retry_after() > last);
+            last = faults.retry_after();
+        }
+        for _ in 0..20 {
+            faults.fail();
+        }
+        assert!(!faults.logged());
+        assert_eq!(faults.retry_after(), Duration::from_secs(1));
     }
 }

@@ -1,5 +1,4 @@
-//! Port of the decision half of `src/lib/theme/backdrop.ts`: which OS effect
-//! a theme asks for behind the transparent window. Applying it is the app's
+//! Which OS effect a theme asks for behind the transparent window. Applying it is the app's
 //! job (window-vibrancy on Windows and macOS, nothing on Linux).
 
 /// macOS vibrancy material.
@@ -32,7 +31,7 @@ pub enum WindowBackdrop {
 }
 
 impl WindowBackdrop {
-    /// The memo key of `applyWindowBackdrop`: re-apply only when it changes.
+    /// The key the app compares to re-apply the backdrop only when it changes.
     pub fn key(&self) -> String {
         match self {
             WindowBackdrop::Off => "off".to_owned(),
@@ -41,9 +40,9 @@ impl WindowBackdrop {
     }
 }
 
-/// `applyWindowBackdrop(glass, themeId, liquid)` without the OS call.
-/// `liquid` defaults to `theme_id == "liquid-glass"` in TypeScript; pass
-/// `AppTheme::liquid`.
+/// The backdrop for the glass setting and a theme, without the OS call.
+/// Pass `AppTheme::liquid` as `liquid`: it also covers themes that extend
+/// Liquid Glass.
 pub fn window_backdrop(glass: bool, theme_id: &str, liquid: bool) -> WindowBackdrop {
     if !glass {
         return WindowBackdrop::Off;

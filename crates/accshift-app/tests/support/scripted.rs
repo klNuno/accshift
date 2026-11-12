@@ -462,20 +462,15 @@ impl Backend for Scripted {
         self.inner
             .steam_copy_game_settings(from_steam_id, to_steam_id, app_id)
     }
-    fn steam_get_copyable_games(
-        &self,
-        from_steam_id: &str,
-        to_steam_id: &str,
-    ) -> BackendResult<Vec<CopyableGame>> {
+    fn steam_get_copyable_games(&self, from_steam_id: &str) -> BackendResult<Vec<CopyableGame>> {
         self.record(
             "steam_get_copyable_games",
-            format!("{:?}", (&from_steam_id, &to_steam_id)),
+            format!("{:?}", (&from_steam_id,)),
         );
         if let Some(answer) = self.next("steam_get_copyable_games") {
             return answer;
         }
-        self.inner
-            .steam_get_copyable_games(from_steam_id, to_steam_id)
+        self.inner.steam_get_copyable_games(from_steam_id)
     }
     fn steam_open_userdata(&self, steam_id: &str) -> BackendResult<()> {
         self.record("steam_open_userdata", format!("{:?}", (&steam_id,)));
