@@ -1,10 +1,9 @@
 //! The WebView `localStorage` of installs older than v1.0.0, read from disk.
 //!
 //! Before v1.0.0 the Tauri app kept settings, folders, notes, colours and
-//! caches only in the WebView's `localStorage`; the Svelte app copies them
-//! into the backend stores in `initializeClientStorage`
-//! (`src/lib/storage/clientStorage.ts`). The egui app has no WebView, so it
-//! reads that storage itself and hands the 12 keys of
+//! caches only in the WebView's `localStorage`, and copied them into the
+//! backend stores on boot. The egui app has no WebView, so it reads that
+//! storage itself and hands the 12 keys of
 //! [`LEGACY_LOCAL_STORAGE_KEYS`] to [`crate::storage::initialize`].
 //!
 //! Boot use: [`needs_read`] on the boot snapshot first (no I/O), [`read`] only
@@ -87,7 +86,7 @@ pub fn needs_read(snapshot: &ClientStorageSnapshot) -> bool {
     missing_stores(snapshot).next().is_some()
 }
 
-/// The boot's `LegacyStorageRead` step ([`crate::lifecycle::BootStep`]):
+/// The boot's legacy storage read:
 /// [`read`] when the stores under `ctx` need it. It runs before the log
 /// session begins, so the snapshot is loaded without the log line of
 /// `load_client_storage_snapshot`; a snapshot that cannot be read gives
