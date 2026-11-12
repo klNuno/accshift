@@ -342,6 +342,39 @@ fn a_reset_settings_store_keeps_its_pin_lock() {
 }
 
 #[test]
+fn a_pin_lock_that_cannot_be_written_back_fails_the_boot() {
+    // Regression: the damaged file was moved aside before its PIN was written
+    // back. When that write failed, no settings file was left, the boot
+    // succeeded and the backend read the lock as off.
+    use crate::pin::{read_pin_lock, PinLock, PinSession};
+    let root = unique_test_root("corrupt-settings-pin-write-fails");
+    let ctx = TestCtx { root: root.clone() };
+    let settings = client_store_path(&ctx, STORE_SETTINGS).unwrap();
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    let hash = format!("{}:{}", "ab".repeat(16), "cd".repeat(32));
+    let damaged = format!(r#"{{"pinEnabled":true,"pinHash":"{hash}","themeId":"da"#);
+    fs::write(&settings, &damaged).unwrap();
+    // A directory where the write stages its temp file makes the write fail.
+    let blocker = unique_tmp_path(&settings);
+    fs::create_dir(&blocker).unwrap();
+
+    let error = load_client_storage_snapshot_reporting(&ctx).unwrap_err();
+
+    assert!(error.contains("PIN lock"), "{error}");
+    assert_eq!(fs::read(&settings).unwrap(), damaged.as_bytes());
+    assert!(matches!(read_pin_lock(&ctx), PinLock::Unreadable(_)));
+    assert!(PinSession::new().ensure_unlocked(&ctx).is_err());
+
+    // Once the write goes through, the boot resets the file and stays locked.
+    fs::remove_dir(&blocker).unwrap();
+    let (_, recovered) = load_client_storage_snapshot_reporting(&ctx).unwrap();
+    assert_eq!(recovered, [STORE_SETTINGS]);
+    assert_eq!(read_pin_lock(&ctx), PinLock::On(hash));
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn a_reset_settings_store_without_a_pin_loads_empty() {
     let root = unique_test_root("corrupt-settings-no-pin");
     let ctx = TestCtx { root: root.clone() };

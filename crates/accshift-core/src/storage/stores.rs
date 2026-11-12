@@ -221,10 +221,12 @@ struct StoreRead {
 /// A file that cannot be parsed, with no valid `.bak`, is moved aside to
 /// `<stem>.corrupt` and the store loads empty, bar what [`kept_through_reset`]
 /// saves from it: nothing can read it, and leaving it in place fails every
-/// later launch the same way. A read the OS refuses is retried (antivirus and
-/// indexers hold files for a moment), then a cache store loads empty while a
-/// user store still fails the load: its content may be good, and loading it
-/// empty would let the next save replace it.
+/// later launch the same way. When that saved content cannot be written, the
+/// load fails with the damaged file still in place: a boot that went on
+/// would run with the PIN lock gone from disk. A read the OS refuses is
+/// retried (antivirus and indexers hold files for a moment), then a cache
+/// store loads empty while a user store still fails the load: its content may
+/// be good, and loading it empty would let the next save replace it.
 fn read_store(store: &ClientStoreLayout, path: &Path) -> Result<StoreRead, String> {
     let mut read = read_json_classified::<Value>(path);
     for delay_ms in [50, 100, 200] {
@@ -240,18 +242,22 @@ fn read_store(store: &ClientStoreLayout, path: &Path) -> Result<StoreRead, Strin
             reset: None,
         }),
         Err(JsonReadError::Corrupt(reason)) => {
-            // Read before the file moves.
             let kept = kept_through_reset(store.id, path);
             let aside = path.with_extension("corrupt");
             let _ = fs::remove_file(&aside);
-            let mut reason = match fs::rename(path, &aside) {
+            // A file whose lock is kept is copied, not moved: it stays in
+            // place until the new file has replaced it.
+            let set_aside = match &kept {
+                Some(_) => fs::copy(path, &aside).map(drop),
+                None => fs::rename(path, &aside),
+            };
+            let reason = match set_aside {
                 Ok(()) => format!("{reason}; kept as {}", aside.display()),
-                Err(e) => format!("{reason}; could not move it aside: {e}"),
+                Err(e) => format!("{reason}; could not set it aside: {e}"),
             };
             if let Some(kept) = &kept {
-                if let Err(e) = write_json_atomic(path, kept) {
-                    reason = format!("{reason}; could not write the PIN lock back: {e}");
-                }
+                write_json_atomic(path, kept)
+                    .map_err(|e| format!("{reason}; could not write the PIN lock back: {e}"))?;
             }
             Ok(StoreRead {
                 value: kept.unwrap_or(Value::Null),
