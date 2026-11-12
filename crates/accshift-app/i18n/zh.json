@@ -167,7 +167,7 @@
   "onboarding.welcome.skip": "跳过",
   "onboarding.features.hint": "应用的这一部分目前不可见。",
   "onboarding.features.addAccount.label": "添加账号",
-  "onboarding.features.addAccount.body": "右上角的 + 按钮可以为当前平台添加账号。登录一次，Accshift 就帮你记住。",
+  "onboarding.features.addAccount.body": "顶栏的 + 按钮可以为当前平台添加账号。登录一次，Accshift 就帮你记住。",
   "onboarding.features.switch.label": "切换账号",
   "onboarding.features.switch.body": "点一下卡片就切到那个账号。说实话，整个应用就这么简单。",
   "onboarding.features.contextMenu.label": "右键查看操作",

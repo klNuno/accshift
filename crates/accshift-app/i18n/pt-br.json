@@ -167,7 +167,7 @@
   "onboarding.welcome.skip": "Pular",
   "onboarding.features.hint": "Esta parte do app não está visível agora.",
   "onboarding.features.addAccount.label": "Adicionar uma conta",
-  "onboarding.features.addAccount.body": "O botão + no canto superior direito adiciona uma conta à plataforma atual. Faça login uma vez e o Accshift guarda a conta.",
+  "onboarding.features.addAccount.body": "O botão + na barra superior adiciona uma conta à plataforma atual. Faça login uma vez e o Accshift guarda a conta.",
   "onboarding.features.switch.label": "Trocar de conta",
   "onboarding.features.switch.body": "Clique em um card e você já está nessa conta. Sinceramente, o app inteiro é isso.",
   "onboarding.features.contextMenu.label": "Botão direito para mais ações",

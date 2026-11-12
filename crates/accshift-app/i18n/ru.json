@@ -167,7 +167,7 @@
   "onboarding.welcome.skip": "Пропустить",
   "onboarding.features.hint": "Эта часть приложения сейчас не видна.",
   "onboarding.features.addAccount.label": "Добавить аккаунт",
-  "onboarding.features.addAccount.body": "Кнопка + справа сверху добавляет аккаунт на текущую платформу. Войдите один раз, Accshift его запомнит.",
+  "onboarding.features.addAccount.body": "Кнопка + на верхней панели добавляет аккаунт на текущую платформу. Войдите один раз, Accshift его запомнит.",
   "onboarding.features.switch.label": "Смена аккаунта",
   "onboarding.features.switch.body": "Нажмите на карточку, и вы уже в этом аккаунте. Честно говоря, это всё приложение целиком.",
   "onboarding.features.contextMenu.label": "Правый клик для действий",

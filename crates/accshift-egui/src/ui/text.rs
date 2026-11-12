@@ -890,7 +890,9 @@ fn row_width(glyphs: &[egui::epaint::text::Glyph], spacing: f32) -> f32 {
 /// blocks to Segoe UI Symbol, emoji to Segoe UI Emoji, Hangul to Malgun
 /// Gothic. Probed: U+21BA draws with Cambria Math. Off Windows the names
 /// missing from the catalog drop out and egui's own fonts (Noto Emoji
-/// among them) close every family.
+/// among them) close every family; they hold no arrow, so Linux asks
+/// fontconfig for the face that draws the symbol blocks. On macOS the
+/// system face draws them (checked on macOS 15).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Fallback {
     None,
@@ -918,8 +920,12 @@ impl Fallback {
     fn faces(self) -> &'static [&'static str] {
         match self {
             Fallback::None => &[],
-            Fallback::Math => &["cambria math", "segoe ui symbol"],
-            Fallback::Symbol => &["segoe ui symbol", "segoe ui emoji"],
+            Fallback::Math => &["cambria math", "segoe ui symbol", fontconfig::SYSTEM_MATH],
+            Fallback::Symbol => &[
+                "segoe ui symbol",
+                "segoe ui emoji",
+                fontconfig::SYSTEM_SYMBOL,
+            ],
             Fallback::Emoji => &["segoe ui emoji", "segoe ui symbol"],
             Fallback::Hangul => &[
                 "malgun gothic",
@@ -1640,6 +1646,21 @@ mod tests {
         assert!(needs_cjk_faces('\u{3042}') && needs_cjk_faces('\u{30AB}'));
         assert!(needs_cjk_faces('\u{20000}') && needs_cjk_faces('\u{8D26}'));
         assert!(!needs_cjk_faces('\u{AC00}') && !needs_cjk_faces('a'));
+    }
+
+    /// On Linux the sans fontconfig answers may hold no arrow, dingbat or
+    /// Hangul (Noto Sans, Ubuntu's default, has none of them) and egui's own
+    /// fonts have no arrow either: each of those kinds names a face
+    /// fontconfig is asked for.
+    #[test]
+    fn symbol_kinds_name_a_face_fontconfig_finds() {
+        for kind in [Fallback::Math, Fallback::Symbol, Fallback::Hangul] {
+            let asked = kind
+                .faces()
+                .iter()
+                .any(|face| fontconfig::QUERIES.iter().any(|q| q.names.contains(face)));
+            assert!(asked, "{kind:?} has no face on Linux");
+        }
     }
 
     /// Whether a face of `family` maps `c`.

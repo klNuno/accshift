@@ -15,6 +15,32 @@ use super::faces::{Entry, Source};
 /// fallback asks for after the platforms' own Korean faces.
 pub const SYSTEM_HANGUL: &str = "accshift system hangul";
 
+/// Catalog names of the faces fontconfig picks for arrows and maths, and for
+/// the other symbol blocks. The desktop's sans may hold none of them (Noto
+/// Sans, Ubuntu's default, has no arrow) and egui's own fonts have no arrow
+/// either, so the symbol fallbacks ask for a face by what it must draw.
+pub const SYSTEM_MATH: &str = "accshift system math";
+pub const SYSTEM_SYMBOL: &str = "accshift system symbol";
+
+/// The files tried for the symbol faces without fontconfig: DejaVu Sans
+/// draws the arrows and the dingbats, wherever the distribution put it.
+const DEJAVU_SANS: &[(&str, u32, u16)] = &[
+    ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 0, 400),
+    (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        0,
+        700,
+    ),
+    ("/usr/share/fonts/TTF/DejaVuSans.ttf", 0, 400),
+    ("/usr/share/fonts/TTF/DejaVuSans-Bold.ttf", 0, 700),
+    ("/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf", 0, 400),
+    (
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
+        0,
+        700,
+    ),
+];
+
 /// One catalog family resolved through fontconfig.
 pub struct Query {
     /// The catalog names it answers (normalized CSS family names).
@@ -27,30 +53,15 @@ pub struct Query {
     pub fixed: &'static [(&'static str, u32, u16)],
 }
 
-/// The families the stacks need off Windows and macOS. The CJK and Hangul
-/// ones are only resolved once such text shows up. Noto Sans CJK
+/// The families the stacks need off Windows and macOS. The CJK, Hangul and
+/// symbol ones are only resolved once such text shows up. Noto Sans CJK
 /// collections hold JP, KR, SC, TC and HK, in that order.
 pub const QUERIES: &[Query] = &[
     Query {
         names: &["system-ui", "sans-serif", "ui-sans-serif"],
         pattern: "sans-serif",
         weights: &[400, 600, 700],
-        fixed: &[
-            ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 0, 400),
-            (
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                0,
-                700,
-            ),
-            ("/usr/share/fonts/TTF/DejaVuSans.ttf", 0, 400),
-            ("/usr/share/fonts/TTF/DejaVuSans-Bold.ttf", 0, 700),
-            ("/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf", 0, 400),
-            (
-                "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
-                0,
-                700,
-            ),
-        ],
+        fixed: DEJAVU_SANS,
     },
     Query {
         names: &["monospace", "ui-monospace"],
@@ -128,6 +139,21 @@ pub const QUERIES: &[Query] = &[
                 700,
             ),
         ],
+    },
+    // A charset outranks the family in fontconfig's matching: the answer is
+    // the sans that draws these characters. Arrows, the reset arrow, minus
+    // and a geometric shape; then a star, a check, a cross and a heart.
+    Query {
+        names: &[SYSTEM_MATH],
+        pattern: "sans-serif:charset=2190 2192 21ba 2212 25b6",
+        weights: &[400, 700],
+        fixed: DEJAVU_SANS,
+    },
+    Query {
+        names: &[SYSTEM_SYMBOL],
+        pattern: "sans-serif:charset=2605 2713 2715 2665",
+        weights: &[400, 700],
+        fixed: DEJAVU_SANS,
     },
 ];
 
@@ -337,6 +363,62 @@ mod tests {
             }]
         );
         assert!(resolve(query(&["monospace", "ui-monospace"]), &mut missing, &exists).is_empty());
+    }
+
+    /// Ubuntu: the sans is Noto Sans, which has no arrow, and fontconfig
+    /// answers DejaVu Sans once the pattern names the characters.
+    #[test]
+    fn the_symbol_faces_come_from_a_charset_pattern() {
+        let noto = "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf";
+        let regular = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+        let bold = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
+        let answers = [
+            (
+                "sans-serif:weight=80",
+                format!(
+                    "{noto}
+0"
+                ),
+            ),
+            (
+                "sans-serif:charset=2190 2192 21ba 2212 25b6:weight=80",
+                format!(
+                    "{regular}
+0"
+                ),
+            ),
+            (
+                "sans-serif:charset=2190 2192 21ba 2212 25b6:weight=200",
+                format!(
+                    "{bold}
+0"
+                ),
+            ),
+            (
+                "sans-serif:charset=2605 2713 2715 2665:weight=80",
+                format!(
+                    "{regular}
+0"
+                ),
+            ),
+        ];
+        let answers: Vec<(&str, &str)> = answers.iter().map(|(p, o)| (*p, o.as_str())).collect();
+        let exists = |p: &Path| [noto, regular, bold].iter().any(|f| Path::new(f) == p);
+        let file = |path: &str, weight| Entry {
+            source: Source::File(path.into()),
+            index: 0,
+            weight,
+        };
+
+        let math = resolve(query(&[SYSTEM_MATH]), &mut fake(&answers), &exists);
+        assert_eq!(math, vec![file(regular, 400), file(bold, 700)]);
+        let symbol = resolve(query(&[SYSTEM_SYMBOL]), &mut fake(&answers), &exists);
+        assert_eq!(symbol, vec![file(regular, 400)]);
+
+        // Without fontconfig, the DejaVu files that exist.
+        let mut missing = |patterns: &[String]| vec![None; patterns.len()];
+        let fixed = resolve(query(&[SYSTEM_MATH]), &mut missing, &exists);
+        assert_eq!(fixed, vec![file(regular, 400), file(bold, 700)]);
     }
 
     #[test]

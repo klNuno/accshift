@@ -167,7 +167,7 @@
   "onboarding.welcome.skip": "Omitir",
   "onboarding.features.hint": "Esta parte de la app no está visible ahora mismo.",
   "onboarding.features.addAccount.label": "Añadir una cuenta",
-  "onboarding.features.addAccount.body": "El botón + de arriba a la derecha añade una cuenta a la plataforma actual. Inicia sesión una vez y Accshift la guarda.",
+  "onboarding.features.addAccount.body": "El botón + de la barra superior añade una cuenta a la plataforma actual. Inicia sesión una vez y Accshift la guarda.",
   "onboarding.features.switch.label": "Cambiar de cuenta",
   "onboarding.features.switch.body": "Haz clic en una tarjeta y ya estás en esa cuenta. Sinceramente, eso es toda la app.",
   "onboarding.features.contextMenu.label": "Clic derecho para más acciones",

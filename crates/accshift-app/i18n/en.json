@@ -167,7 +167,7 @@
   "onboarding.welcome.skip": "Skip",
   "onboarding.features.hint": "This part of the app isn't visible right now.",
   "onboarding.features.addAccount.label": "Add an account",
-  "onboarding.features.addAccount.body": "The + button at the top right adds an account to the current platform. Log in once, Accshift keeps it.",
+  "onboarding.features.addAccount.body": "The + button in the top bar adds an account to the current platform. Log in once, Accshift keeps it.",
   "onboarding.features.switch.label": "Switch account",
   "onboarding.features.switch.body": "Click a card and you're on that account. That's the whole app, honestly.",
   "onboarding.features.contextMenu.label": "Right-click for actions",
