@@ -22,25 +22,7 @@ fn main() {
     let scene_mode = !scene_files.is_empty();
     // `--tray`: the autostart launch. The window starts hidden in the tray.
     let tray_start = std::env::args().skip(1).any(|arg| arg == "--tray");
-    let scenes = if scene_mode {
-        let Some(out) = out_dir else {
-            eprintln!("usage: accshift-egui --scene <scene.json>... --out <dir>");
-            std::process::exit(2);
-        };
-        let mut loaded = Vec::new();
-        for file in &scene_files {
-            match harness::load(file) {
-                Ok(scene) => loaded.push(scene),
-                Err(err) => {
-                    eprintln!("scene: {err}");
-                    std::process::exit(2);
-                }
-            }
-        }
-        Some((loaded, out))
-    } else {
-        None
-    };
+    let scenes = scene_mode.then(|| load_scenes(&scene_files, out_dir));
     let hidden = bench_build || scene_mode;
     // Experiment knob for the boot breakdown: an opaque window without the
     // acrylic, to price the transparent framebuffer.
@@ -97,20 +79,7 @@ fn main() {
     // may show (about 4 ms here). Doing it first on another thread overlaps
     // that with the event loop and window creation.
     #[cfg(windows)]
-    std::thread::spawn(|| {
-        use windows_sys::Win32::UI::Accessibility::{
-            AutomationIdentifierType_Property, ControlType_Property_GUID, UiaLookupId,
-        };
-        // SAFETY: plain lookup of a built-in property id, the same call
-        // accesskit_windows makes to force UIA initialization.
-        unsafe {
-            UiaLookupId(
-                AutomationIdentifierType_Property,
-                &ControlType_Property_GUID,
-            )
-        };
-        bench::mark("uia_warm");
-    });
+    std::thread::spawn(warm_ui_automation);
 
     if bench_build {
         // The core is called directly, no IPC: read the real Steam login
@@ -331,6 +300,47 @@ fn main() {
 
 /// [`single_instance::acquire`] on this launch's arguments; a second
 /// launch arriving later repaints the window through `wake` once it exists.
+/// The scenes of `--scene`, and the `--out` folder they render to. A
+/// missing `--out` or a scene that does not load ends the process.
+fn load_scenes(
+    files: &[std::path::PathBuf],
+    out_dir: Option<std::path::PathBuf>,
+) -> (Vec<harness::Scene>, std::path::PathBuf) {
+    let Some(out) = out_dir else {
+        eprintln!("usage: accshift-egui --scene <scene.json>... --out <dir>");
+        std::process::exit(2);
+    };
+    let mut loaded = Vec::new();
+    for file in files {
+        match harness::load(file) {
+            Ok(scene) => loaded.push(scene),
+            Err(err) => {
+                eprintln!("scene: {err}");
+                std::process::exit(2);
+            }
+        }
+    }
+    (loaded, out)
+}
+
+/// Initializes UI Automation, as AccessKit would on the UI thread before
+/// the window may show.
+#[cfg(windows)]
+fn warm_ui_automation() {
+    use windows_sys::Win32::UI::Accessibility::{
+        AutomationIdentifierType_Property, ControlType_Property_GUID, UiaLookupId,
+    };
+    // SAFETY: plain lookup of a built-in property id, the same call
+    // accesskit_windows makes to force UIA initialization.
+    unsafe {
+        UiaLookupId(
+            AutomationIdentifierType_Property,
+            &ControlType_Property_GUID,
+        )
+    };
+    bench::mark("uia_warm");
+}
+
 fn acquire_single_instance(
     identifier: &str,
     wake: Arc<OnceLock<egui::Context>>,
