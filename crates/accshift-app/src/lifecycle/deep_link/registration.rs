@@ -159,7 +159,6 @@ pub fn wire_scheme_registration(
 /// refresh that could not run ([`run_registration_tools`]).
 #[cfg(target_os = "linux")]
 pub fn register_linux(scheme: &str, product_name: &str) -> Result<Option<String>, String> {
-    use std::process::Command;
     let bin = std::fs::canonicalize(std::env::current_exe().map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     let file_name = format!(
@@ -179,15 +178,23 @@ pub fn register_linux(scheme: &str, product_name: &str) -> Result<Option<String>
     let mime_type = format!("x-scheme-handler/{scheme}");
 
     write_linux_desktop(&target_file, product_name, &qualified_exec, &mime_type)?;
-    run_registration_tools(
-        &mut |program, args| Command::new(program).args(args).status().map(drop),
-        target.as_os_str(),
-        &file_name,
-        &mime_type,
-    )
+    run_registration_tools(&mut run_tool, target.as_os_str(), &file_name, &mime_type)
 }
 
-/// Runs a program with its arguments and reports whether it could start.
+/// Runs a program with its arguments and waits for it: `Err` when it could
+/// not start or exited with a failure (`xdg-mime` exits 4 when its action
+/// fails).
+pub fn run_tool(program: &str, args: &[&std::ffi::OsStr]) -> std::io::Result<()> {
+    let status = std::process::Command::new(program).args(args).status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(status.to_string()))
+    }
+}
+
+/// Runs a program with its arguments: `Err` when it could not start or
+/// failed.
 pub type ToolRunner<'a> = dyn FnMut(&str, &[&std::ffi::OsStr]) -> std::io::Result<()> + 'a;
 
 /// The system tools run after the handler file is written:
