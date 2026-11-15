@@ -26,6 +26,9 @@ const GATES = [
   { name: "worker", cmd: `${node} node_modules/typescript/bin/tsc --noEmit`, cwd: "server" },
   { name: "worker-test", cmd: `${node} node_modules/vitest/vitest.mjs run`, cwd: "server" },
   { name: "bundle", cmd: `${node} --test crates/accshift-egui/bundle/linux-deps.test.mjs` },
+  // Stream Deck plugin: parsing, links, CLI lookup and strings. Its tests
+  // import Node built-ins only, so no `pnpm install` is needed.
+  { name: "streamdeck", cmd: `${node} --test "test/*.test.mjs"`, cwd: "integrations/streamdeck" },
 ];
 
 function select(argv) {

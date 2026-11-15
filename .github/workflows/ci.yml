@@ -91,3 +91,7 @@ jobs:
 
       - name: Bundle script tests
         run: node --test crates/accshift-egui/bundle/linux-deps.test.mjs
+
+      - name: Stream Deck plugin tests
+        working-directory: integrations/streamdeck
+        run: node --test "test/*.test.mjs"
