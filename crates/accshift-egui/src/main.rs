@@ -389,11 +389,23 @@ fn register_schemes(backend: &RealBackend) {
     let failure = accshift_app::lifecycle::deep_link::SCHEMES
         .iter()
         .find_map(|scheme| {
-            accshift_app::lifecycle::deep_link::register_linux(
+            match accshift_app::lifecycle::deep_link::register_linux(
                 scheme,
                 accshift_app::lifecycle::updater::PRODUCT_NAME,
-            )
-            .err()
+            ) {
+                Ok(None) => None,
+                Ok(Some(skipped)) => {
+                    let _ = accshift_core::logging::append_app_log(
+                        backend.context(),
+                        "warn",
+                        "backend.deep-link",
+                        "Registered accshift:// scheme without refreshing the MIME cache",
+                        Some(&skipped),
+                    );
+                    None
+                }
+                Err(err) => Some(err),
+            }
         });
     #[cfg(not(any(windows, target_os = "linux")))]
     let failure: Option<String> = None;

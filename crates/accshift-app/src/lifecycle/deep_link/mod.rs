@@ -19,8 +19,8 @@ pub use registration::register_linux;
 pub use registration::WindowsRegistry;
 pub use registration::{
     current_exe_for_registration, desktop_template, is_registered, register_all, register_scheme,
-    registered_command, registration_entries, schemes_need_registration, wire_scheme_registration,
-    RegistrationFailure, RegistryValue, SchemeRegistry,
+    registered_command, registration_entries, run_registration_tools, schemes_need_registration,
+    wire_scheme_registration, RegistrationFailure, RegistryValue, SchemeRegistry, ToolRunner,
 };
 
 use url::Url;
