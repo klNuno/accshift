@@ -477,7 +477,7 @@ fn the_window_commands_are_not_dispatched() {
         }
     }
     let real = RealBackend::with_context(Arc::new(Scratch(std::env::temp_dir())));
-    assert_eq!(COMMANDS.len(), 73);
+    assert_eq!(COMMANDS.len(), 74);
     // The commands are not called here: some open a dialog, a URL or a
     // folder. tests/real_*.rs covers them on a scratch context.
     assert!(dispatch(&real, "minimize_window", &json!({})).is_none());
