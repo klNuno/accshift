@@ -7,7 +7,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { clearPackageDirs, currentPackages, packageKinds, resignPackage, signerKey } from "./linux-deps.mjs";
+import {
+  APPIMAGE_DLOPEN_LIBS,
+  appImageFiles,
+  clearPackageDirs,
+  currentPackages,
+  packageKinds,
+  resignPackage,
+  signerKey,
+} from "./linux-deps.mjs";
 
 const root = join(fileURLToPath(import.meta.url), "..", "..", "..", "..");
 
@@ -96,5 +104,26 @@ test("--no-updater drops a stale .sig without calling the signer", () => {
     assert.throws(() => resignPackage(file, true, () => {}), /no updater signature/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the AppImage carries the libraries winit opens at run time, for the build arch", () => {
+  const ldconfig = [
+    "1234 libs found in cache `/etc/ld.so.cache'",
+    "\tlibxkbcommon.so.0 (libc6,x86-64) => /lib/x86_64-linux-gnu/libxkbcommon.so.0",
+    "\tlibxkbcommon.so.0 (libc6) => /lib/i386-linux-gnu/libxkbcommon.so.0",
+    "\tlibxkbcommon-x11.so.0 (libc6,x86-64) => /lib/x86_64-linux-gnu/libxkbcommon-x11.so.0",
+    "\tlibxkbcommon-x11.so.0 (libc6,AArch64) => /lib/aarch64-linux-gnu/libxkbcommon-x11.so.0",
+  ].join("\n");
+  assert.deepEqual(appImageFiles(["libxkbcommon.so.0", "libxkbcommon-x11.so.0"], "x86_64-unknown-linux-gnu", ldconfig), {
+    "/usr/lib/libxkbcommon.so.0": "/lib/x86_64-linux-gnu/libxkbcommon.so.0",
+    "/usr/lib/libxkbcommon-x11.so.0": "/lib/x86_64-linux-gnu/libxkbcommon-x11.so.0",
+  });
+  assert.throws(
+    () => appImageFiles(["libxkbcommon.so.0"], "aarch64-unknown-linux-gnu", ldconfig),
+    /libxkbcommon\.so\.0 .*aarch64/,
+  );
+  for (const name of ["libxkbcommon.so.0", "libxkbcommon-x11.so.0", "libwayland-client.so.0", "libwayland-cursor.so.0"]) {
+    assert.ok(APPIMAGE_DLOPEN_LIBS.includes(name), name);
   }
 });

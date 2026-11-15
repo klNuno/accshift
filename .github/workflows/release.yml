@@ -401,12 +401,15 @@ jobs:
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
       # librsvg2-dev: the AppImage's GTK plugin bundles its pixbuf loader.
+      # libxkbcommon-x11-0: bundle.mjs copies it into the AppImage (winit
+      # opens it at run time, linuxdeploy cannot see it).
       - name: Install Linux build deps
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libgtk-3-dev \
             libxkbcommon-dev \
+            libxkbcommon-x11-0 \
             librsvg2-dev \
             pkg-config
 

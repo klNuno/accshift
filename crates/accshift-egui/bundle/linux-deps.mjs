@@ -344,3 +344,45 @@ export function resignPackage(file, updater, sign) {
   sign(file);
   if (!existsSync(sig)) throw new Error(`no updater signature for ${file}`);
 }
+
+// --- AppImage: the libraries the app opens at run time
+
+/**
+ * The libraries winit opens with dlopen (xkbcommon-dl, wayland-sys, x11-dl)
+ * and which no distribution guarantees. linuxdeploy follows the ELF NEEDED
+ * entries alone, so without them the image dies at start on a system that
+ * lacks one: libxkbcommon-x11 on a minimal X11 install. libX11, libxcb and
+ * libX11-xcb stay with the host, as the AppImage exclude list wants.
+ */
+export const APPIMAGE_DLOPEN_LIBS = [
+  "libxkbcommon.so.0",
+  "libxkbcommon-x11.so.0",
+  "libxcb-xkb.so.1",
+  "libwayland-client.so.0",
+  "libwayland-cursor.so.0",
+  "libXcursor.so.1",
+  "libXi.so.6",
+];
+
+const LDCONFIG_ARCH = { x86_64: "x86-64", aarch64: "AArch64", arm: "hard-float" };
+
+/**
+ * The `bundle.linux.appimage.files` entries that copy `names` from the build
+ * machine into the image's usr/lib, which AppRun puts on LD_LIBRARY_PATH.
+ * `ldconfig` is the output of `ldconfig -p`; the copy is the one of the
+ * target's architecture. Throws when one is not installed.
+ */
+export function appImageFiles(names, triple, ldconfig) {
+  const tag = LDCONFIG_ARCH[triple.split("-")[0].replace(/^armv7.*/, "arm")];
+  if (!tag) throw new Error(`no ldconfig architecture for ${triple}`);
+  const files = {};
+  for (const name of names) {
+    const line = ldconfig
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l.startsWith(`${name} (`) && l.includes(tag));
+    if (!line) throw new Error(`${name} for ${triple} is not installed on the build machine`);
+    files[`/usr/lib/${name}`] = line.slice(line.indexOf("=> ") + 3);
+  }
+  return files;
+}

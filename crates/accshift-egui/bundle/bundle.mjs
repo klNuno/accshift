@@ -33,6 +33,8 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  APPIMAGE_DLOPEN_LIBS,
+  appImageFiles,
   clearPackageDirs,
   currentPackages,
   debDepends,
@@ -151,6 +153,15 @@ function checkAppImage(file) {
 }
 
 if (appimage) await seedAppRun();
+
+// The libraries winit opens at run time ride in the image (linux-deps.mjs):
+// linuxdeploy does not see a dlopen.
+if (appimage) {
+  const ldconfig = execFileSync("ldconfig", ["-p"], { encoding: "utf8" });
+  const files = appImageFiles(APPIMAGE_DLOPEN_LIBS, triple, ldconfig);
+  for (const [to, from] of Object.entries(files)) console.log(`AppImage library: ${from} -> ${to}`);
+  configs.push(JSON.stringify({ bundle: { linux: { appimage: { files } } } }));
+}
 
 // The bundler writes the bundle kind into the executable, which breaks an
 // Authenticode signature made before it. Windows ships one kind (NSIS), so
