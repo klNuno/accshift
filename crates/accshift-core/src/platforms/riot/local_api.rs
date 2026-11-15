@@ -179,6 +179,55 @@ pub(super) fn read_riot_login_state(access: &RiotLocalApiAccess) -> RiotLoginSta
     })
 }
 
+/// The RSO session as a post-switch watch reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RiotSessionType {
+    /// No answer yet: no lockfile, no RSO (404 while the client boots), an
+    /// error, or a body without `type`.
+    Booting,
+    Authenticated,
+    /// RSO answered with another `type`: the restored token was refused.
+    NotAuthenticated,
+}
+
+/// `/rso-auth/v1/session` as a session type. `None` is no answer.
+pub(super) fn session_type_from_rso(value: Option<&Value>) -> RiotSessionType {
+    let kind = value
+        .and_then(|value| value.get("type"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if kind.is_empty() {
+        RiotSessionType::Booting
+    } else if kind.eq_ignore_ascii_case("authenticated") {
+        RiotSessionType::Authenticated
+    } else {
+        RiotSessionType::NotAuthenticated
+    }
+}
+
+impl RiotSessionType {
+    pub(super) fn watch_step(self) -> crate::platforms::session_marks::WatchStep {
+        use crate::platforms::session_marks::WatchStep;
+        match self {
+            Self::Booting => WatchStep::Pending,
+            Self::Authenticated => WatchStep::SignedIn,
+            Self::NotAuthenticated => WatchStep::NotSignedIn,
+        }
+    }
+}
+
+/// One read of the RSO session. Any failure reads as booting.
+pub(super) fn read_rso_session_type() -> RiotSessionType {
+    let Ok(access) = read_riot_local_api_access() else {
+        return RiotSessionType::Booting;
+    };
+    crate::runtime::block_on(async {
+        let value = fetch_local_json(&access, "/rso-auth/v1/session").await.ok();
+        session_type_from_rso(value.as_ref())
+    })
+}
+
 pub(super) fn detect_live_identity() -> Result<RiotDetectedIdentity, String> {
     let access = read_riot_local_api_access()?;
     detect_live_identity_with_access(&access)

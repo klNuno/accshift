@@ -26,6 +26,10 @@ pub(super) struct RawAppConfig {
     pub(super) custom_platforms: Option<BTreeMap<String, CustomPlatformConfig>>,
     #[serde(default)]
     pub(super) telemetry: Option<TelemetryConfig>,
+    /// Read as a plain value so a damaged mark never makes the whole file
+    /// unreadable: a shape that does not parse reads as no marks.
+    #[serde(default)]
+    pub(super) session_marks: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(super) steam_api_key: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -257,5 +261,9 @@ pub(super) fn normalize_config(raw: RawAppConfig) -> AppConfig {
         window_x: raw.window_x,
         window_y: raw.window_y,
         window_scale: raw.window_scale,
+        session_marks: raw
+            .session_marks
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default(),
     }
 }

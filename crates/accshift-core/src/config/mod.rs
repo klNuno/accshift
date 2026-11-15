@@ -364,6 +364,15 @@ pub struct AppConfig {
     /// saved on a 150% screen beside a 100% primary a third of the way back.
     #[serde(default)]
     pub window_scale: Option<f64>,
+    /// After-the-fact session marks, by platform then account id. A fact
+    /// about this machine's launchers: kept in the local file only. Configs
+    /// written before 2.0 have none.
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "crate::platforms::session_marks::deserialize_lenient"
+    )]
+    pub session_marks: crate::platforms::session_marks::SessionMarkStore,
 }
 
 #[cfg(test)]

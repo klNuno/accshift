@@ -570,6 +570,17 @@ fn portable_config_strips_secrets_and_paths() {
         window_x: Some(120.0),
         window_y: Some(64.0),
         window_scale: Some(1.25),
+        session_marks: [(
+            "riot".to_string(),
+            [(
+                "r1".to_string(),
+                crate::platforms::session_marks::SessionMark::default(),
+            )]
+            .into_iter()
+            .collect(),
+        )]
+        .into_iter()
+        .collect(),
     };
 
     let p = portable_config(&config);
@@ -592,6 +603,7 @@ fn portable_config_strips_secrets_and_paths() {
     assert!(p.window_x.is_none());
     assert!(p.window_y.is_none());
     assert!(p.window_scale.is_none());
+    assert!(p.session_marks.is_empty());
 
     // Roblox cookies stripped
     assert!(p.roblox.accounts[0].cookie_encrypted.is_empty());
@@ -664,6 +676,17 @@ fn local_config_keeps_only_secrets_paths_and_window() {
         window_x: Some(-1920.0),
         window_y: Some(40.0),
         window_scale: Some(1.5),
+        session_marks: [(
+            "riot".to_string(),
+            [(
+                "r1".to_string(),
+                crate::platforms::session_marks::SessionMark::default(),
+            )]
+            .into_iter()
+            .collect(),
+        )]
+        .into_iter()
+        .collect(),
     };
 
     let l = local_config(&config);
@@ -683,6 +706,7 @@ fn local_config_keeps_only_secrets_paths_and_window() {
     assert_eq!(l.window_x, Some(-1920.0));
     assert_eq!(l.window_y, Some(40.0));
     assert_eq!(l.window_scale, Some(1.5));
+    assert!(l.session_marks["riot"].contains_key("r1"));
 
     // Roblox local keeps user_id + cookie, but not username/display_name
     assert_eq!(l.roblox.accounts.len(), 1);

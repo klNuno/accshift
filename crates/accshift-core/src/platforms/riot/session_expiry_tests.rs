@@ -1,7 +1,9 @@
 //! Offline expiry of a saved Riot session (PSL restore window).
 
 use super::session::{expired_profile_ids_in, psl_restore_deadline, snapshot_session_health};
+use super::*;
 use super::{session_health, SessionHealth};
+use crate::config;
 use crate::config::RiotProfileConfig;
 use std::fs;
 
@@ -177,4 +179,81 @@ fn snapshots_on_disk_mark_only_ready_expired_profiles() {
         vec!["old".to_string()]
     );
     let _ = fs::remove_dir_all(&root);
+}
+
+// ------------------------------------------------------------ after the fact
+
+#[test]
+fn the_rso_session_type_reads_booting_authenticated_or_refused() {
+    use serde_json::json;
+    assert_eq!(session_type_from_rso(None), RiotSessionType::Booting);
+    assert_eq!(
+        session_type_from_rso(Some(&json!({}))),
+        RiotSessionType::Booting
+    );
+    assert_eq!(
+        session_type_from_rso(Some(&json!({ "type": "" }))),
+        RiotSessionType::Booting
+    );
+    assert_eq!(
+        session_type_from_rso(Some(&json!({ "type": 3 }))),
+        RiotSessionType::Booting
+    );
+    assert_eq!(
+        session_type_from_rso(Some(&json!({ "type": "Authenticated" }))),
+        RiotSessionType::Authenticated
+    );
+    assert_eq!(
+        session_type_from_rso(Some(&json!({ "type": "none" }))),
+        RiotSessionType::NotAuthenticated
+    );
+}
+
+#[test]
+fn a_relaunch_refused_after_booting_marks_and_one_that_signs_in_does_not() {
+    use crate::platforms::session_marks::{watch_after_switch, WatchVerdict};
+    let run = |answers: Vec<RiotSessionType>| {
+        let mut answers = answers.into_iter();
+        watch_after_switch(
+            super::switch::SESSION_WATCH_ATTEMPTS,
+            || {
+                answers
+                    .next()
+                    .unwrap_or(RiotSessionType::Booting)
+                    .watch_step()
+            },
+            || {},
+        )
+    };
+    let refused = std::iter::repeat_n(RiotSessionType::Booting, 3)
+        .chain(std::iter::repeat_n(RiotSessionType::NotAuthenticated, 30))
+        .collect();
+    assert_eq!(run(refused), WatchVerdict::Refused);
+    // Not authenticated first, then the restore finishes.
+    let restored = vec![
+        RiotSessionType::Booting,
+        RiotSessionType::NotAuthenticated,
+        RiotSessionType::NotAuthenticated,
+        RiotSessionType::Authenticated,
+    ];
+    assert_eq!(run(restored), WatchVerdict::SignedIn);
+    // Booting to the end: no clear answer.
+    assert_eq!(run(Vec::new()), WatchVerdict::Unknown);
+}
+
+#[test]
+fn a_new_capture_clears_the_profile_mark() {
+    use crate::platforms::session_marks::{set_mark_in, SessionMark};
+    let mut cfg = config::AppConfig::default();
+    cfg.riot.profiles.push(config::RiotProfileConfig {
+        id: "r1".into(),
+        snapshot_state: "ready".into(),
+        ..Default::default()
+    });
+    set_mark_in(&mut cfg, "riot", "r1", SessionMark::default());
+    // A use stamp alone keeps the mark.
+    update_profile_state(&mut cfg, "r1", None, None, Some(Some(5)), None).unwrap();
+    assert!(cfg.session_marks.contains_key("riot"));
+    update_profile_state(&mut cfg, "r1", Some("ready"), Some(Some(10)), None, None).unwrap();
+    assert!(cfg.session_marks.is_empty());
 }
