@@ -20,7 +20,7 @@ jobs:
             artifact_name: accshift-windows
             artifact_paths: |
               target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             artifact_name: accshift-linux
             artifact_paths: |
               target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
@@ -39,7 +39,7 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Install Linux build deps
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -64,6 +64,19 @@ jobs:
       # test installs never reach the analytics dashboard. Only release.yml sets it.
       - name: Build the installers (unsigned, no updater artifacts)
         run: node crates/accshift-egui/bundle/bundle.mjs --build --no-updater
+
+      # Same floor as release.yml: a newer runner glibc breaks older distros.
+      - name: Check the glibc floor
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          floor="2.35"
+          bin=target/x86_64-unknown-linux-gnu/release/accshift-gui
+          need=$(objdump -T "$bin" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -1)
+          echo "$bin needs glibc $need (floor $floor)"
+          if [ "$(printf '%s\n%s\n' "$floor" "$need" | sort -V | tail -1)" != "$floor" ]; then
+            echo "$bin needs glibc $need, above the $floor floor" >&2
+            exit 1
+          fi
 
       - name: Compress macOS .app bundle
         if: matrix.os == 'macos-latest'

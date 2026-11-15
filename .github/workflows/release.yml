@@ -384,7 +384,7 @@ jobs:
           path: RELEASE_NOTES.md
 
   build-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout
@@ -431,6 +431,20 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: node crates/accshift-egui/bundle/bundle.mjs --build
+
+      # ubuntu-latest moves to newer glibc releases; a binary built there does
+      # not start on older distros, and the updater would ship it to them.
+      - name: Check the glibc floor
+        run: |
+          floor="2.35"
+          for bin in target/x86_64-unknown-linux-gnu/release/accshift-gui target/release/accshift; do
+            need=$(objdump -T "$bin" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -1)
+            echo "$bin needs glibc $need (floor $floor)"
+            if [ "$(printf '%s\n%s\n' "$floor" "$need" | sort -V | tail -1)" != "$floor" ]; then
+              echo "$bin needs glibc $need, above the $floor floor" >&2
+              exit 1
+            fi
+          done
 
       - name: Stage standalone CLI artifact
         run: |
