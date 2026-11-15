@@ -114,6 +114,8 @@ impl AppModel {
             SettingsAction::ToggleTelemetryB => panel.toggle_telemetry_b(jobs),
             SettingsAction::RetryTelemetryDeletion => panel.retry_telemetry_deletion(jobs),
             SettingsAction::ExportTelemetry => panel.export_telemetry(jobs),
+            SettingsAction::ExportBackup => panel.export_backup(jobs),
+            SettingsAction::ImportBackup => panel.import_backup(jobs),
             SettingsAction::RetryTelemetryLoad => panel.refresh_telemetry(jobs),
             SettingsAction::PlatformSearch(text) => panel.platform_search = text,
             SettingsAction::TogglePlatform(id) => {

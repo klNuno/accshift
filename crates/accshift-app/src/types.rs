@@ -21,7 +21,9 @@ pub use accshift_core::platforms::steam::profile::ProfileInfo;
 pub use accshift_core::platforms::{
     RejectedDescriptor, SetupStatus, SkippedPlatform, UserPlatformReport,
 };
-pub use accshift_core::storage::{ClientStorageSnapshot, StorageManifest};
+pub use accshift_core::storage::{
+    BackupPreview, BackupReport, ClientStorageSnapshot, StorageManifest,
+};
 pub use accshift_core::themes::CustomTheme;
 
 /// `get_boot_payload`: everything the UI needs before the window shows.

@@ -12,6 +12,7 @@
 //! together.
 
 mod app;
+mod backup;
 mod boot;
 mod context;
 mod descriptors;
@@ -266,6 +267,23 @@ impl Backend for RealBackend {
     }
     fn open_descriptors_folder(&self) -> BackendResult<()> {
         descriptors::open_folder(&self.ctx)
+    }
+    /// The save dialog: same thread rule as [`Self::descriptor_select_file`].
+    fn backup_select_export_path(&self) -> BackendResult<String> {
+        backup::select_export_path()
+    }
+    fn backup_export(&self, path: &str) -> BackendResult<BackupReport> {
+        backup::export(&self.ctx, path)
+    }
+    /// The file picker: same thread rule as [`Self::descriptor_select_file`].
+    fn backup_select_import_file(&self) -> BackendResult<String> {
+        backup::select_import_file()
+    }
+    fn backup_preview(&self, path: &str) -> BackendResult<BackupPreview> {
+        backup::preview(path)
+    }
+    fn backup_restore(&self, path: &str) -> BackendResult<BackupReport> {
+        backup::restore(&self.ctx, path)
     }
     fn open_url(&self, url: &str) -> BackendResult<()> {
         utility::open_url(url)

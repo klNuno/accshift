@@ -109,6 +109,22 @@ pub trait Backend: Send + Sync {
     fn descriptor_remove(&self, platform_id: &str) -> BackendResult<UserPlatformReport>;
     fn open_descriptors_folder(&self) -> BackendResult<()>;
 
+    // ---------------------------------------------------------------- backup
+
+    /// Opens a save dialog on `accshift-backup-<date>.json`. Cancelling is
+    /// an error. Same thread rule as [`Self::descriptor_select_file`].
+    fn backup_select_export_path(&self) -> BackendResult<String>;
+    /// Writes the backup of the current setup to `path`.
+    fn backup_export(&self, path: &str) -> BackendResult<BackupReport>;
+    /// Opens a file picker. Cancelling is an error.
+    fn backup_select_import_file(&self) -> BackendResult<String>;
+    /// What the backup at `path` holds; refused for a newer format or a file
+    /// that does not read. Writes nothing.
+    fn backup_preview(&self, path: &str) -> BackendResult<BackupPreview>;
+    /// Copies the current files to `user/backups/pre-restore-<timestamp>/`,
+    /// then replaces the stores with the backup's.
+    fn backup_restore(&self, path: &str) -> BackendResult<BackupReport>;
+
     // ---------------------------------------------------------------- utility
 
     fn open_url(&self, url: &str) -> BackendResult<()>;

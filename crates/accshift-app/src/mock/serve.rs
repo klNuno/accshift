@@ -11,7 +11,8 @@ use std::time::Duration;
 
 /// Command prefixes the mock refuses when it has no answer for them, so a
 /// mock session never reaches a real platform.
-const GUARDED_PREFIXES: [&str; 7] = [
+const GUARDED_PREFIXES: [&str; 8] = [
+    "backup_",
     "platform_",
     "steam_",
     "riot_",

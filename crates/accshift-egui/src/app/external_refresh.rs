@@ -13,6 +13,9 @@ use super::*;
 pub(super) struct ExternalRefresh {
     window: Option<(bool, bool)>,
     job: Option<RefreshJob>,
+    /// A refresh asked for by the app itself (a restored backup), run as
+    /// soon as no other one is in flight.
+    requested: bool,
 }
 
 enum RefreshJob {
@@ -30,6 +33,11 @@ struct RefreshContents {
 }
 
 impl AppModel {
+    /// Reads the stores changed on disk again, as a focus regain does.
+    pub(in crate::app) fn request_external_refresh(&mut self) {
+        self.external_refresh.requested = true;
+    }
+
     pub(super) fn tick_external_refresh(&mut self, ctx: &Context) {
         if self.booted.is_none() {
             return;
@@ -48,7 +56,8 @@ impl AppModel {
             .is_some_and(|previous| (!previous.0 && window.0) || (previous.1 && !window.1));
         // The pending stage is the web lifecycle's in-flight guard. A single
         // restoration can produce both focus and visibility notifications.
-        if trigger && self.external_refresh.job.is_none() {
+        if (trigger || self.external_refresh.requested) && self.external_refresh.job.is_none() {
+            self.external_refresh.requested = false;
             self.external_refresh.job = Some(RefreshJob::Manifest(
                 self.jobs.run(|backend| backend.get_storage_manifest()),
             ));

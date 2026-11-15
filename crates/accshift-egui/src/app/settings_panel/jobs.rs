@@ -469,5 +469,6 @@ impl AppModel {
         if !effects.is_empty() {
             self.apply_effects(ctx, effects);
         }
+        self.tick_backup(ctx);
     }
 }
