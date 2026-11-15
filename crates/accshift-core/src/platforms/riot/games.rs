@@ -105,7 +105,7 @@ pub(super) fn launch_args(product_id: &str) -> [String; 2] {
 /// What starts once the session work is done: the game after a switch that
 /// worked, the bare client after one that failed, so a game never opens on
 /// the wrong account.
-pub(super) fn product_after_switch<'a>(work_ok: bool, product_id: &'a str) -> &'a str {
+pub(super) fn product_after_switch(work_ok: bool, product_id: &str) -> &str {
     if work_ok {
         product_id
     } else {
