@@ -518,11 +518,7 @@ fn guard_switch(
     // the same lock here so the CLI cannot bypass it. Prompt before taking the
     // lock so we never hold it while waiting on stdin, then compare the
     // admitted lock with the file once the lock is held.
-    let admitted = match pin::enforce(ctx, format, command, accshift_core::pin::read_pin_lock(ctx))
-    {
-        Ok(lock) => lock,
-        Err(code) => return Err(code),
-    };
+    let admitted = pin::enforce(ctx, format, command, accshift_core::pin::read_pin_lock(ctx))?;
 
     let lock = match acquire_exclusive(ctx, LOCK_TIMEOUT) {
         Ok(g) => g,

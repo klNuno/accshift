@@ -345,6 +345,9 @@ fn two_personas() -> Value {
     ])
 }
 
+/// Id, name and `(platform, account)` assignments of one persona.
+type PersonaRow = (String, String, Vec<(String, String)>);
+
 #[test]
 fn the_persona_reader_keeps_what_the_app_keeps() {
     let raw = json!([
@@ -361,19 +364,18 @@ fn the_persona_reader_keeps_what_the_app_keeps() {
         { "id": "b", "name": "A name well past the forty character limit of the app" },
         "not a persona"
     ]);
-    let app: Vec<(String, String, Vec<(String, String)>)> =
-        accshift_app::personas::sanitize_personas(&raw)
-            .into_iter()
-            .map(|p| {
-                let a = p
-                    .assignments
-                    .into_iter()
-                    .map(|a| (a.platform_id, a.account_id))
-                    .collect();
-                (p.id, p.name, a)
-            })
-            .collect();
-    let cli: Vec<(String, String, Vec<(String, String)>)> = personas::from_value(&raw)
+    let app: Vec<PersonaRow> = accshift_app::personas::sanitize_personas(&raw)
+        .into_iter()
+        .map(|p| {
+            let a = p
+                .assignments
+                .into_iter()
+                .map(|a| (a.platform_id, a.account_id))
+                .collect();
+            (p.id, p.name, a)
+        })
+        .collect();
+    let cli: Vec<PersonaRow> = personas::from_value(&raw)
         .into_iter()
         .map(|p| {
             let a = p
