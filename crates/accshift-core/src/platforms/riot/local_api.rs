@@ -115,29 +115,62 @@ pub(super) struct RiotLoginState {
     pub(super) persist: bool,
 }
 
-pub(super) fn read_riot_login_state(access: &RiotLocalApiAccess) -> RiotLoginState {
-    crate::runtime::block_on(async {
-        let value = match fetch_local_json(access, "/riot-login/v1/status").await {
-            Ok(v) => v,
-            Err(_) => {
-                return RiotLoginState {
-                    logged_in: false,
-                    persist: false,
-                }
-            }
-        };
-        let phase = value
-            .get("phase")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let persist = value
+impl RiotLoginState {
+    pub(super) const SIGNED_OUT: Self = Self {
+        logged_in: false,
+        persist: false,
+    };
+}
+
+/// The RSO session, which every Riot Client since the PSL settings format
+/// (137+) answers: `type` is `authenticated` once the login (2FA included)
+/// is done, `persistLogin` is the "Stay signed in" box. `None` when the body
+/// has no `type`, so the caller can try the legacy route.
+pub(super) fn login_state_from_rso_session(value: &Value) -> Option<RiotLoginState> {
+    let kind = value.get("type").and_then(Value::as_str)?;
+    Some(RiotLoginState {
+        logged_in: kind.eq_ignore_ascii_case("authenticated"),
+        persist: value
+            .get("persistLogin")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+/// The legacy `riot-login` status of older clients. A PSL client leaves its
+/// `persist` null, which reads as not persisted.
+pub(super) fn login_state_from_legacy_status(value: &Value) -> RiotLoginState {
+    let phase = value
+        .get("phase")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    RiotLoginState {
+        logged_in: phase.eq_ignore_ascii_case("logged_in"),
+        persist: value
             .get("persist")
             .and_then(Value::as_bool)
-            .unwrap_or(false);
-        RiotLoginState {
-            logged_in: phase.eq_ignore_ascii_case("logged_in"),
-            persist,
+            .unwrap_or(false),
+    }
+}
+
+/// Read the login from the RSO session, or from the legacy status when the
+/// RSO session is not there yet (404 "RSO is not yet initialized" while the
+/// client boots) or not at all (older clients). Any failure reads as signed
+/// out, and the setup poll asks again a second later.
+pub(super) fn read_riot_login_state(access: &RiotLocalApiAccess) -> RiotLoginState {
+    crate::runtime::block_on(async {
+        if let Some(state) = fetch_local_json(access, "/rso-auth/v1/session")
+            .await
+            .ok()
+            .as_ref()
+            .and_then(login_state_from_rso_session)
+        {
+            return state;
         }
+        fetch_local_json(access, "/riot-login/v1/status")
+            .await
+            .map(|value| login_state_from_legacy_status(&value))
+            .unwrap_or(RiotLoginState::SIGNED_OUT)
     })
 }
 

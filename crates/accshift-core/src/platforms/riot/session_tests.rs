@@ -671,6 +671,7 @@ fn the_setup_poll_logs_only_when_its_view_changes() {
         logged_in: false,
         persist: false,
         settings_ready: false,
+        psl_login: false,
         identity: false,
         can_capture: false,
     };

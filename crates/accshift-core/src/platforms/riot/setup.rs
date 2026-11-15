@@ -134,6 +134,14 @@ pub(super) fn relaunch_after_quit(
     work.and(launched)
 }
 
+/// The setup captures once the client is signed in, the login is kept
+/// ("Stay signed in"), and the settings file holds it. A PSL client leaves the
+/// legacy persist flag null, so its refresh token in the file also proves the
+/// login is kept.
+pub(super) fn setup_can_capture(login: &RiotLoginState, settings: RiotSettingsState) -> bool {
+    login.logged_in && (login.persist || settings.psl_login) && settings.has_tokens
+}
+
 /// One setup poll's view of the client. Logged only when it changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SetupPollObservation {
@@ -142,6 +150,7 @@ pub(super) struct SetupPollObservation {
     pub(super) logged_in: bool,
     pub(super) persist: bool,
     pub(super) settings_ready: bool,
+    pub(super) psl_login: bool,
     pub(super) identity: bool,
     pub(super) can_capture: bool,
 }
@@ -357,19 +366,18 @@ pub(super) fn get_profile_setup_status_internal(
         }
     }
 
-    // Login status API is the official way to detect completed auth (including 2FA).
-    // persist=true ("Stay signed in") is required. Without it, tokens are session-only
-    // and won't survive a Riot Client restart, making the captured profile useless.
+    // The local API says when the login (2FA included) is done. "Stay signed
+    // in" is required: without it, tokens are session-only and won't survive a
+    // Riot Client restart, making the captured profile useless.
     let login_state = access
         .as_ref()
         .map(read_riot_login_state)
-        .unwrap_or(RiotLoginState {
-            logged_in: false,
-            persist: false,
-        });
-    let settings_ready =
-        riot_settings_file_ready(resolve_riot_install_dir(app_handle).as_deref()).unwrap_or(false);
-    let can_capture = login_state.logged_in && login_state.persist && settings_ready;
+        .unwrap_or(RiotLoginState::SIGNED_OUT);
+    let settings =
+        riot_settings_state(resolve_riot_install_dir(app_handle).as_deref()).unwrap_or_default();
+    let settings_ready = settings.has_tokens;
+    let persisted = login_state.persist || settings.psl_login;
+    let can_capture = setup_can_capture(&login_state, settings);
 
     // The poll runs about once a second for up to ten minutes: log the view
     // when it changes, not every tick.
@@ -379,6 +387,7 @@ pub(super) fn get_profile_setup_status_internal(
         logged_in: login_state.logged_in,
         persist: login_state.persist,
         settings_ready,
+        psl_login: settings.psl_login,
         identity: identity.is_some(),
         can_capture,
     };
@@ -388,8 +397,8 @@ pub(super) fn get_profile_setup_status_internal(
             "riot.setup_poll",
             "Riot setup poll",
             format!(
-                "lockfile={has_lockfile} logged_in={} persist={} settings_ready={settings_ready} identity={} can_capture={can_capture}",
-                login_state.logged_in, login_state.persist, identity.is_some()
+                "lockfile={has_lockfile} logged_in={} persist={} settings_ready={settings_ready} psl_login={} identity={} can_capture={can_capture}",
+                login_state.logged_in, login_state.persist, settings.psl_login, identity.is_some()
             ),
         );
     }
@@ -404,7 +413,7 @@ pub(super) fn get_profile_setup_status_internal(
         }
         let (state, error_msg) = if !has_lockfile {
             ("waiting_for_client", "")
-        } else if login_state.logged_in && !login_state.persist {
+        } else if login_state.logged_in && !persisted {
             (
                 "waiting_for_login",
                 "Check 'Stay signed in' in the Riot Client, then sign out and sign back in.",
