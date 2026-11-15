@@ -60,6 +60,23 @@ pub fn emit_err(format: Format, command: &str, code: &str, message: &str) {
     }
 }
 
+/// An error carrying structured detail for scripts, under `error.details`
+/// in JSON. On a terminal the message says it all.
+pub fn emit_err_with(format: Format, command: &str, code: &str, message: &str, details: Value) {
+    match format {
+        Format::Json => {
+            let envelope = json!({
+                "schema": SCHEMA,
+                "ok": false,
+                "command": command,
+                "error": { "code": code, "message": message, "details": details },
+            });
+            eprintln!("{envelope}");
+        }
+        Format::Human => emit_err(format, command, code, message),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Human renderers
 // ---------------------------------------------------------------------------
@@ -393,6 +410,14 @@ fn secondary_header_for(platform_id: &str) -> &'static str {
     }
 }
 
+pub fn column_width_of<F: Fn(&T) -> &str, T>(rows: &[T], field: F, header: &str) -> usize {
+    rows.iter()
+        .map(|r| display_width(field(r)))
+        .max()
+        .unwrap_or(0)
+        .max(display_width(header))
+}
+
 fn column_width<F: Fn(&AccountRow) -> &str>(rows: &[AccountRow], field: F, header: &str) -> usize {
     rows.iter()
         .map(|r| display_width(field(r)))
@@ -407,7 +432,7 @@ fn display_width(s: &str) -> usize {
 }
 
 /// Right-pad `s` with spaces so its rendered width equals `target`.
-fn pad(s: &str, target: usize) -> String {
+pub fn pad(s: &str, target: usize) -> String {
     let w = display_width(s);
     if w >= target {
         s.to_string()

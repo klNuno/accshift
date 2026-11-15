@@ -21,6 +21,10 @@ pub struct AppSettings {
     /// usable); the PIN gate (`accshift_core::pin`) is the security boundary,
     /// this one is a convenience opt-out.
     pub cli_enabled: bool,
+    /// The app's `language` when the file has one (a value that is not a
+    /// string reads as `""`, which the CLI then treats as English, as the
+    /// app's `normalize_locale` does). `None` defers to the OS language.
+    pub language: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -56,6 +60,8 @@ impl AppSettings {
             .and_then(Value::as_object);
         Self {
             cli_enabled: !matches!(field(root, "cliEnabled"), Some(Value::Bool(false))),
+            language: field(root, "language")
+                .map(|value| value.as_str().unwrap_or_default().to_string()),
             platform_settings: PlatformSettings {
                 steam: SteamSettings {
                     run_as_admin: truthy(nullish_or(
