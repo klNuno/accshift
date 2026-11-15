@@ -37,6 +37,7 @@ import {
   currentPackages,
   debDepends,
   dropRpmRequires,
+  packageKinds,
   resignPackage,
   rpmRequires,
   setDebDepends,
@@ -157,7 +158,9 @@ if (appimage) await seedAppRun();
 const patching = process.platform === "win32" ? ["--no-binary-patching"] : [];
 
 const tauri = createRequire(join(root, "package.json")).resolve("@tauri-apps/cli/tauri.js");
-if (process.platform === "linux") clearPackageDirs(join(release, "bundle"), bundles.split(","));
+// The deb and rpm this run builds: the only ones cleared, rewritten and signed.
+const packageFormats = process.platform === "linux" ? packageKinds(bundles) : [];
+clearPackageDirs(join(release, "bundle"), packageFormats);
 execFileSync(
   process.execPath,
   [
@@ -187,8 +190,7 @@ const out = join(release, "bundle");
 if (process.platform === "linux") {
   const config = JSON.parse(readFileSync(join(crate, "tauri.conf.json"), "utf8"));
   const wanted = config.bundle.linux;
-  const packages = (kind, suffix) =>
-    currentPackages(join(out, kind), suffix, config.version);
+  const packages = (kind) => currentPackages(out, packageFormats, kind, config.version);
   const sign = (file) =>
     resignPackage(file, !flag("--no-updater"), () => {
       const key = signerKey(process.env);
@@ -198,12 +200,12 @@ if (process.platform === "linux") {
         { stdio: "inherit", env: key.env },
       );
     });
-  for (const file of packages("deb", ".deb")) {
+  for (const file of packages("deb")) {
     setDebDepends(file, wanted.deb.depends ?? []);
     sign(file);
     console.log(`deb Depends: ${debDepends(file).join(", ")}`);
   }
-  for (const file of packages("rpm", ".rpm")) {
+  for (const file of packages("rpm")) {
     const keep = new Set(wanted.rpm.depends ?? []);
     dropRpmRequires(file, (name) => !keep.has(name) && !name.startsWith("rpmlib("));
     const requires = rpmRequires(file).filter((name) => !name.startsWith("rpmlib("));

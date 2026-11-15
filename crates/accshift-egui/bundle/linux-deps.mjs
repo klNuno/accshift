@@ -287,22 +287,30 @@ export function dropRpmRequires(file, drop) {
 // --- what the rewrite touches and how it signs
 
 /**
- * Empties the deb and rpm folders this run builds (`kinds`, the --bundles
- * list) before the bundler runs: every package found there afterwards is
- * this run's, so none left by an earlier run is rewritten or signed with
- * this version. A format this run does not build keeps its folder.
+ * The package formats this run builds and rewrites: deb and rpm, as far as
+ * the --bundles list names them. Clearing and rewriting both follow it, so
+ * a format this run does not build is neither emptied nor touched.
  */
-export function clearPackageDirs(out, kinds) {
-  for (const kind of ["deb", "rpm"].filter((k) => kinds.includes(k))) {
-    rmSync(join(out, kind), { recursive: true, force: true });
-  }
+export function packageKinds(bundles) {
+  const listed = bundles.split(",").map((kind) => kind.trim());
+  return ["deb", "rpm"].filter((kind) => listed.includes(kind));
 }
 
-/** The packages of `version` in `dir`. */
-export function currentPackages(dir, suffix, version) {
-  if (!existsSync(dir)) return [];
+/**
+ * Empties the folders of `kinds` (packageKinds) before the bundler runs:
+ * every package found there afterwards is this run's, so none left by an
+ * earlier run is rewritten or signed with this version.
+ */
+export function clearPackageDirs(out, kinds) {
+  for (const kind of kinds) rmSync(join(out, kind), { recursive: true, force: true });
+}
+
+/** The `kind` packages of `version` in `out`, none when this run did not build `kind`. */
+export function currentPackages(out, kinds, kind, version) {
+  const dir = join(out, kind);
+  if (!kinds.includes(kind) || !existsSync(dir)) return [];
   return readdirSync(dir)
-    .filter((name) => name.endsWith(suffix))
+    .filter((name) => name.endsWith(`.${kind}`))
     .filter((name) => [`_${version}_`, `-${version}-`].some((part) => name.includes(part)))
     .map((name) => join(dir, name));
 }
