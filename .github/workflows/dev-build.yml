@@ -20,7 +20,9 @@ jobs:
             artifact_name: accshift-windows
             artifact_paths: |
               target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
-          - os: ubuntu-22.04
+          # Same container as release.yml: glibc 2.35 whatever the runner image.
+          - os: ubuntu-latest
+            container: ubuntu:22.04
             artifact_name: accshift-linux
             artifact_paths: |
               target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
@@ -32,18 +34,31 @@ jobs:
               target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
               target/aarch64-apple-darwin/release/bundle/macos/*.app.zip
     runs-on: ${{ matrix.os }}
+    # Empty on Windows and macOS: no container there.
+    container: ${{ matrix.container }}
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      # linuxdeploy is an AppImage and the container has no FUSE.
+      APPIMAGE_EXTRACT_AND_RUN: "1"
     steps:
+      # Checkout needs git in the container, else it falls back to a tarball.
+      - name: Install git
+        if: runner.os == 'Linux'
+        run: apt-get update && apt-get install -y --no-install-recommends ca-certificates git
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
 
+      # build-essential: the linker; curl, unzip, xz-utils: rustup and Node.
       # libxkbcommon-x11-0: bundle.mjs copies it into the AppImage.
       - name: Install Linux build deps
-        if: matrix.os == 'ubuntu-22.04'
+        if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential ca-certificates curl file unzip xz-utils \
             libgtk-3-dev \
             libxkbcommon-dev \
             libxkbcommon-x11-0 \
@@ -69,7 +84,7 @@ jobs:
 
       # Same floor as release.yml: a newer runner glibc breaks older distros.
       - name: Check the glibc floor
-        if: matrix.os == 'ubuntu-22.04'
+        if: runner.os == 'Linux'
         run: |
           floor="2.35"
           bin=target/x86_64-unknown-linux-gnu/release/accshift-gui
