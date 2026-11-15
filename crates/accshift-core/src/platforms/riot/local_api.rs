@@ -112,13 +112,15 @@ pub(super) fn detect_live_identity_with_access(
 
 pub(super) struct RiotLoginState {
     pub(super) logged_in: bool,
-    pub(super) persist: bool,
+    /// The "Stay signed in" box as the API states it; `None` when no route
+    /// gives a bool (a PSL client leaves the legacy `persist` null).
+    pub(super) persist: Option<bool>,
 }
 
 impl RiotLoginState {
     pub(super) const SIGNED_OUT: Self = Self {
         logged_in: false,
-        persist: false,
+        persist: None,
     };
 }
 
@@ -130,15 +132,12 @@ pub(super) fn login_state_from_rso_session(value: &Value) -> Option<RiotLoginSta
     let kind = value.get("type").and_then(Value::as_str)?;
     Some(RiotLoginState {
         logged_in: kind.eq_ignore_ascii_case("authenticated"),
-        persist: value
-            .get("persistLogin")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+        persist: value.get("persistLogin").and_then(Value::as_bool),
     })
 }
 
 /// The legacy `riot-login` status of older clients. A PSL client leaves its
-/// `persist` null, which reads as not persisted.
+/// `persist` null, which reads as `None`.
 pub(super) fn login_state_from_legacy_status(value: &Value) -> RiotLoginState {
     let phase = value
         .get("phase")
@@ -146,31 +145,37 @@ pub(super) fn login_state_from_legacy_status(value: &Value) -> RiotLoginState {
         .unwrap_or_default();
     RiotLoginState {
         logged_in: phase.eq_ignore_ascii_case("logged_in"),
-        persist: value
-            .get("persist")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+        persist: value.get("persist").and_then(Value::as_bool),
     }
 }
 
 /// Read the login from the RSO session, or from the legacy status when the
 /// RSO session is not there yet (404 "RSO is not yet initialized" while the
 /// client boots) or not at all (older clients). Any failure reads as signed
-/// out, and the setup poll asks again a second later.
+/// out, and the setup poll asks again a second later. A signed-in RSO session
+/// without `persistLogin` takes the legacy flag when that one is a bool.
 pub(super) fn read_riot_login_state(access: &RiotLocalApiAccess) -> RiotLoginState {
     crate::runtime::block_on(async {
-        if let Some(state) = fetch_local_json(access, "/rso-auth/v1/session")
+        let legacy = || async {
+            fetch_local_json(access, "/riot-login/v1/status")
+                .await
+                .map(|value| login_state_from_legacy_status(&value))
+                .ok()
+        };
+        let rso = fetch_local_json(access, "/rso-auth/v1/session")
             .await
             .ok()
             .as_ref()
-            .and_then(login_state_from_rso_session)
-        {
-            return state;
+            .and_then(login_state_from_rso_session);
+        match rso {
+            Some(mut state) => {
+                if state.logged_in && state.persist.is_none() {
+                    state.persist = legacy().await.and_then(|legacy| legacy.persist);
+                }
+                state
+            }
+            None => legacy().await.unwrap_or(RiotLoginState::SIGNED_OUT),
         }
-        fetch_local_json(access, "/riot-login/v1/status")
-            .await
-            .map(|value| login_state_from_legacy_status(&value))
-            .unwrap_or(RiotLoginState::SIGNED_OUT)
     })
 }
 

@@ -134,12 +134,17 @@ pub(super) fn relaunch_after_quit(
     work.and(launched)
 }
 
-/// The setup captures once the client is signed in, the login is kept
-/// ("Stay signed in"), and the settings file holds it. A PSL client leaves the
-/// legacy persist flag null, so its refresh token in the file also proves the
-/// login is kept.
+/// Whether the login is kept ("Stay signed in"). The API's bool decides when
+/// there is one, an explicit `false` included; without one (a PSL client
+/// leaves the legacy flag null) a PSL refresh token in the file proves it.
+pub(super) fn setup_login_persisted(login: &RiotLoginState, settings: RiotSettingsState) -> bool {
+    login.persist.unwrap_or(settings.psl_login)
+}
+
+/// The setup captures once the client is signed in, the login is kept and
+/// the settings file holds it.
 pub(super) fn setup_can_capture(login: &RiotLoginState, settings: RiotSettingsState) -> bool {
-    login.logged_in && (login.persist || settings.psl_login) && settings.has_tokens
+    login.logged_in && setup_login_persisted(login, settings) && settings.has_tokens
 }
 
 /// One setup poll's view of the client. Logged only when it changes.
@@ -148,7 +153,7 @@ pub(super) struct SetupPollObservation {
     pub(super) profile_id: String,
     pub(super) lockfile: bool,
     pub(super) logged_in: bool,
-    pub(super) persist: bool,
+    pub(super) persist: Option<bool>,
     pub(super) settings_ready: bool,
     pub(super) psl_login: bool,
     pub(super) identity: bool,
@@ -376,7 +381,7 @@ pub(super) fn get_profile_setup_status_internal(
     let settings =
         riot_settings_state(resolve_riot_install_dir(app_handle).as_deref()).unwrap_or_default();
     let settings_ready = settings.has_tokens;
-    let persisted = login_state.persist || settings.psl_login;
+    let persisted = setup_login_persisted(&login_state, settings);
     let can_capture = setup_can_capture(&login_state, settings);
 
     // The poll runs about once a second for up to ten minutes: log the view
@@ -398,7 +403,10 @@ pub(super) fn get_profile_setup_status_internal(
             "Riot setup poll",
             format!(
                 "lockfile={has_lockfile} logged_in={} persist={} settings_ready={settings_ready} psl_login={} identity={} can_capture={can_capture}",
-                login_state.logged_in, login_state.persist, settings.psl_login, identity.is_some()
+                login_state.logged_in,
+                login_state.persist.map_or("none", |p| if p { "true" } else { "false" }),
+                settings.psl_login,
+                identity.is_some()
             ),
         );
     }

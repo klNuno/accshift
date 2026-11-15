@@ -283,7 +283,7 @@ fn only_a_non_empty_refresh_token_under_top_level_psl_counts() {
 fn setup_capture_accepts_a_psl_login_without_the_legacy_persist_flag() {
     let signed_in_no_flag = RiotLoginState {
         logged_in: true,
-        persist: false,
+        persist: None,
     };
     let psl = RiotSettingsState::from_contents(PSL_SETTINGS);
     assert!(setup_can_capture(&signed_in_no_flag, psl));
@@ -294,7 +294,7 @@ fn setup_capture_accepts_a_psl_login_without_the_legacy_persist_flag() {
     assert!(!setup_can_capture(&signed_in_no_flag, device_only));
     let signed_out = RiotLoginState {
         logged_in: false,
-        persist: true,
+        persist: Some(true),
     };
     assert!(!setup_can_capture(&signed_out, psl));
 
@@ -303,7 +303,7 @@ fn setup_capture_accepts_a_psl_login_without_the_legacy_persist_flag() {
     assert!(!setup_can_capture(&signed_in_no_flag, legacy));
     let flagged = RiotLoginState {
         logged_in: true,
-        persist: true,
+        persist: Some(true),
     };
     assert!(setup_can_capture(&flagged, legacy));
 }

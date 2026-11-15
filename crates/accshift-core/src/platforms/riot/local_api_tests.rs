@@ -60,7 +60,7 @@ fn synthetic_api(routes: Vec<Route>) -> (RiotLocalApiAccess, Arc<Mutex<Vec<Strin
 const RSO_SESSION: &str = "/rso-auth/v1/session";
 const LEGACY_STATUS: &str = "/riot-login/v1/status";
 
-fn login(state: &RiotLoginState) -> (bool, bool) {
+fn login(state: &RiotLoginState) -> (bool, Option<bool>) {
     (state.logged_in, state.persist)
 }
 
@@ -73,7 +73,7 @@ fn psl_client_login_is_read_from_the_rso_session() {
         "200 OK",
         r#"{"type":"authenticated","persistLogin":true,"authenticationType":"RiotAuth"}"#,
     )]);
-    assert_eq!(login(&read_riot_login_state(&access)), (true, true));
+    assert_eq!(login(&read_riot_login_state(&access)), (true, Some(true)));
 }
 
 /// The legacy route may still answer on a PSL client, with `persist` left
@@ -92,7 +92,7 @@ fn rso_session_wins_over_a_null_legacy_persist_flag() {
             r#"{"phase":"logged_in","persist":null}"#,
         ),
     ]);
-    assert_eq!(login(&read_riot_login_state(&access)), (true, true));
+    assert_eq!(login(&read_riot_login_state(&access)), (true, Some(true)));
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn rso_session_without_stay_signed_in_is_not_persisted() {
         "200 OK",
         r#"{"type":"authenticated","persistLogin":false}"#,
     )]);
-    assert_eq!(login(&read_riot_login_state(&access)), (true, false));
+    assert_eq!(login(&read_riot_login_state(&access)), (true, Some(false)));
 }
 
 #[test]
@@ -140,7 +140,7 @@ fn legacy_status_is_the_fallback_when_the_rso_session_is_unavailable() {
             r#"{"phase":"logged_in","persist":true}"#,
         ),
     ]);
-    assert_eq!(login(&read_riot_login_state(&access)), (true, true));
+    assert_eq!(login(&read_riot_login_state(&access)), (true, Some(true)));
     assert_eq!(*seen.lock().unwrap(), [RSO_SESSION, LEGACY_STATUS]);
 
     let (access, _) = synthetic_api(vec![(
@@ -148,11 +148,59 @@ fn legacy_status_is_the_fallback_when_the_rso_session_is_unavailable() {
         "200 OK",
         r#"{"phase":"logged_in","persist":false}"#,
     )]);
-    assert_eq!(login(&read_riot_login_state(&access)), (true, false));
+    assert_eq!(login(&read_riot_login_state(&access)), (true, Some(false)));
 }
 
 #[test]
 fn no_usable_login_route_fails_closed() {
     let (access, _) = synthetic_api(vec![(RSO_SESSION, "200 OK", "not json")]);
-    assert_eq!(login(&read_riot_login_state(&access)), (false, false));
+    assert_eq!(login(&read_riot_login_state(&access)), (false, None));
+}
+
+/// Unticking "Stay signed in" is an explicit `persistLogin: false`: a PSL
+/// refresh token in the settings file must not override it.
+#[test]
+fn explicit_persist_login_false_never_captures_even_with_a_psl_token() {
+    let (access, _) = synthetic_api(vec![(
+        RSO_SESSION,
+        "200 OK",
+        r#"{"type":"authenticated","persistLogin":false}"#,
+    )]);
+    let psl = RiotSettingsState {
+        has_tokens: true,
+        psl_login: true,
+    };
+    assert!(!setup_can_capture(&read_riot_login_state(&access), psl));
+}
+
+/// No bool on either route reads as unknown; a bool on the legacy route
+/// fills a signed-in RSO session that has none.
+#[test]
+fn persist_is_none_only_when_no_route_gives_a_bool() {
+    let (access, _) = synthetic_api(vec![
+        (RSO_SESSION, "200 OK", r#"{"type":"authenticated"}"#),
+        (
+            LEGACY_STATUS,
+            "200 OK",
+            r#"{"phase":"logged_in","persist":null}"#,
+        ),
+    ]);
+    assert_eq!(login(&read_riot_login_state(&access)), (true, None));
+
+    let (access, _) = synthetic_api(vec![
+        (RSO_SESSION, "200 OK", r#"{"type":"authenticated"}"#),
+        (
+            LEGACY_STATUS,
+            "200 OK",
+            r#"{"phase":"logged_in","persist":true}"#,
+        ),
+    ]);
+    assert_eq!(login(&read_riot_login_state(&access)), (true, Some(true)));
+
+    let (access, _) = synthetic_api(vec![(
+        LEGACY_STATUS,
+        "200 OK",
+        r#"{"phase":"logged_in","persist":null}"#,
+    )]);
+    assert_eq!(login(&read_riot_login_state(&access)), (true, None));
 }
