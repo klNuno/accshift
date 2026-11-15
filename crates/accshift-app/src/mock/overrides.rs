@@ -15,6 +15,29 @@ impl MockBackend {
         state.latency_ms
     }
 
+    /// Keeps every call of `command` waiting, after its latency and before
+    /// its answer, until [`Self::release`]: a test holds a write or a read in
+    /// flight for as long as it needs, with no timing to race. Returns false
+    /// on the frozen scenario.
+    pub fn hold(&self, command: &str) -> bool {
+        if self.frozen() {
+            return false;
+        }
+        self.lock().held.insert(command.into());
+        true
+    }
+
+    /// Lets the held calls of `command` answer, and the next ones pass.
+    pub fn release(&self, command: &str) {
+        self.lock().held.remove(command);
+        self.released.notify_all();
+    }
+
+    /// How many calls of `command` wait at its hold now.
+    pub fn waiting(&self, command: &str) -> usize {
+        self.lock().waiting.get(command).copied().unwrap_or(0)
+    }
+
     /// `Some(message)` makes `command` fail with it, `None` clears that.
     /// Returns false on the frozen scenario, which keeps no override.
     pub fn fail(&self, command: &str, message: Option<&str>) -> bool {

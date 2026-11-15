@@ -140,25 +140,39 @@ fn native_external_storage_on_focus_refreshes_stores_and_accounts() {
     assert_eq!(b.accounts.loading.loader.current_account(), "external");
 }
 
+/// Waits until a call of `command` sits at its hold in the mock.
+fn wait_held(mock: &MockBackend, command: &str) {
+    let deadline = Instant::now() + std::time::Duration::from_secs(2);
+    while mock.waiting(command) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "{command} never reached the mock"
+        );
+        std::thread::yield_now();
+    }
+}
+
 #[test]
 fn native_external_storage_on_restore_preserves_dirty_local_values() {
     let ctx = Context::default();
     let (mut app, mock) = external_app(&ctx);
     frame(&mut app, &ctx, true, false);
-    // The restore frame polls the manifest read right after starting it: the
-    // latency keeps that poll waiting, so begin_refresh runs after the edit.
-    mock.latency(30);
+    // The manifest read and the store writes wait at the mock until the test
+    // releases them, so the order below holds on any runner: a latency only
+    // made it likely, and a slow runner finished the write before the assert.
+    assert!(mock.hold("get_storage_manifest"));
+    assert!(mock.hold("save_client_storage_store"));
     // Restoration must work even if the viewport still reports focus.
     frame(&mut app, &ctx, true, true);
     frame(&mut app, &ctx, true, false);
-    // Typed once the manifest read is under way. Typed before the frames
-    // above, a slow runner finished the write first, and the mock answers a
-    // write with no fingerprint: it read as an external change.
+    // Typed while the manifest read is under way, so before begin_refresh.
+    wait_held(&mock, "get_storage_manifest");
     app.booted
         .as_mut()
         .unwrap()
         .stores
         .set_account_card_note("external", "local draft");
+    mock.release("get_storage_manifest");
     // begin_refresh records the other targets: the boundary, as below.
     pump_until(&mut app, &ctx, |a| {
         a.booted()
@@ -170,14 +184,14 @@ fn native_external_storage_on_restore_preserves_dirty_local_values() {
             .get("app.config.local")
             .is_some_and(|v| v == "config-2")
     });
-    // A write still owed at the frame's end was owed when begin_refresh ran
-    // at its start: saves are polled later in the frame.
+    // The note's write, debounced or held at the mock, is still owed.
     assert!(app
         .booted()
         .unwrap()
         .stores
         .storage()
         .has_pending_save("client.account-card-notes"));
+    mock.release("save_client_storage_store");
     pump_until(&mut app, &ctx, |a| {
         a.booted().unwrap().stores.view_mode() == ViewMode::List
     });

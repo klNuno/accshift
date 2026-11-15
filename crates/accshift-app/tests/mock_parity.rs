@@ -278,6 +278,34 @@ fn fail_and_latency_overrides() {
 }
 
 #[test]
+fn a_held_command_waits_for_its_release() {
+    let mock = Arc::new(load("dev"));
+    assert!(mock.hold("get_runtime_os"));
+    let caller = {
+        let mock = mock.clone();
+        std::thread::spawn(move || mock.get_runtime_os())
+    };
+    // The call reaches the gate and stays there, however long it is given.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while mock.waiting("get_runtime_os") == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "get_runtime_os never reached the mock"
+        );
+        std::thread::yield_now();
+    }
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(!caller.is_finished());
+    // Other commands are not held.
+    assert!(mock.get_boot_payload().is_ok());
+    mock.release("get_runtime_os");
+    assert_eq!(caller.join().unwrap().unwrap(), "windows");
+    assert_eq!(mock.waiting("get_runtime_os"), 0);
+    // Released, the command answers at once.
+    assert_eq!(mock.get_runtime_os().unwrap(), "windows");
+}
+
+#[test]
 fn the_cs2_override_enables_the_bridge() {
     let mock = load("dev");
     assert!(!mock.cs2_bridge_get_settings().unwrap().enabled);
