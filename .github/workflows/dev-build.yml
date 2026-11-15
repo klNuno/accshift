@@ -74,6 +74,12 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable branch, pinned 2026-06-09
 
+      # The container has no system Node, so no corepack on PATH: it sits next
+      # to the Node binary setup-vp installed.
+      - name: Put corepack on PATH
+        if: matrix.container
+        run: dirname "$(node -p process.execPath)" >> "$GITHUB_PATH"
+
       - name: Install the bundler
         run: corepack pnpm install --frozen-lockfile
 
