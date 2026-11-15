@@ -21,6 +21,7 @@ mod paths;
 mod process;
 mod profiles;
 mod rollback;
+mod session;
 mod setup;
 mod snapshot;
 mod switch;
@@ -39,6 +40,8 @@ use self::profiles::*;
 #[allow(unused_imports)]
 use self::rollback::*;
 #[allow(unused_imports)]
+use self::session::*;
+#[allow(unused_imports)]
 use self::setup::*;
 #[allow(unused_imports)]
 use self::snapshot::*;
@@ -46,6 +49,7 @@ use self::snapshot::*;
 use self::yaml::*;
 
 pub use self::rollback::{sweep_rollback_dirs, RollbackSweepStats};
+pub use self::session::{expired_profile_ids, session_health, SessionHealth};
 pub use self::setup::{
     begin_profile_setup, cancel_profile_setup, capture_profile, get_profile_setup_status,
 };
@@ -356,6 +360,8 @@ impl PlatformService for RiotService {
 mod local_api_tests;
 #[cfg(test)]
 mod rollback_tests;
+#[cfg(test)]
+mod session_expiry_tests;
 #[cfg(test)]
 mod session_tests;
 #[cfg(test)]
