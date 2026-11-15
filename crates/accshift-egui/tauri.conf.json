@@ -50,17 +50,35 @@
     "linux": {
       "deb": {
         "depends": [
+          "libc6",
+          "libgcc-s1",
           "libdbus-1-3",
+          "libx11-6",
+          "libx11-xcb1",
+          "libxcursor1",
+          "libxi6",
+          "libxcb1",
           "libxkbcommon0",
-          "libxkbcommon-x11-0"
+          "libxkbcommon-x11-0",
+          "libwayland-client0",
+          "libwayland-cursor0"
         ],
         "section": "utils"
       },
       "rpm": {
         "depends": [
-          "dbus-libs",
-          "libxkbcommon",
-          "libxkbcommon-x11"
+          "libc.so.6()(64bit)",
+          "libgcc_s.so.1()(64bit)",
+          "libdbus-1.so.3()(64bit)",
+          "libX11.so.6()(64bit)",
+          "libX11-xcb.so.1()(64bit)",
+          "libXcursor.so.1()(64bit)",
+          "libXi.so.6()(64bit)",
+          "libxcb.so.1()(64bit)",
+          "libxkbcommon.so.0()(64bit)",
+          "libxkbcommon-x11.so.0()(64bit)",
+          "libwayland-client.so.0()(64bit)",
+          "libwayland-cursor.so.0()(64bit)"
         ],
         "epoch": 0
       },

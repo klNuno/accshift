@@ -32,6 +32,7 @@ import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { debDepends, dropRpmRequires, rpmRequires, setDebDepends } from "./linux-deps.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const crate = join(here, "..");
@@ -168,6 +169,47 @@ if (patching.length && !readFileSync(gui).equals(readFileSync(join(built, `accsh
 }
 
 const out = join(release, "bundle");
+
+// The deb and the rpm declare the libraries of tauri.conf.json alone: the
+// CLI appends WebKitGTK and GTK, which the egui app never loads
+// (linux-deps.mjs). The updater signatures the bundler wrote cover the old
+// bytes, so the rewritten packages are signed again.
+if (process.platform === "linux") {
+  const config = JSON.parse(readFileSync(join(crate, "tauri.conf.json"), "utf8"));
+  const wanted = config.bundle.linux;
+  const packages = (kind, suffix) =>
+    existsSync(join(out, kind))
+      ? readdirSync(join(out, kind))
+          .filter((name) => name.endsWith(suffix))
+          .map((name) => join(out, kind, name))
+      : [];
+  const sign = (file) => {
+    if (!existsSync(`${file}.sig`)) return;
+    rmSync(`${file}.sig`);
+    execFileSync(
+      process.execPath,
+      [tauri, "signer", "sign", "--app-version", config.version, file],
+      { stdio: "inherit" },
+    );
+    if (!existsSync(`${file}.sig`)) throw new Error(`no updater signature for ${file}`);
+  };
+  for (const file of packages("deb", ".deb")) {
+    setDebDepends(file, wanted.deb.depends ?? []);
+    sign(file);
+    console.log(`deb Depends: ${debDepends(file).join(", ")}`);
+  }
+  for (const file of packages("rpm", ".rpm")) {
+    const keep = new Set(wanted.rpm.depends ?? []);
+    dropRpmRequires(file, (name) => !keep.has(name) && !name.startsWith("rpmlib("));
+    const requires = rpmRequires(file).filter((name) => !name.startsWith("rpmlib("));
+    if (requires.toSorted().join(" ") !== [...keep].toSorted().join(" ")) {
+      throw new Error(`${file}: Requires is ${requires.join(", ")}`);
+    }
+    sign(file);
+    console.log(`rpm Requires: ${requires.join(", ")}`);
+  }
+}
+
 for (const kind of readdirSync(out)) {
   for (const name of readdirSync(join(out, kind))) console.log(`bundle: ${join(out, kind, name)}`);
 }
