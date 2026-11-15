@@ -33,6 +33,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  clearPackageDirs,
   currentPackages,
   debDepends,
   dropRpmRequires,
@@ -156,7 +157,7 @@ if (appimage) await seedAppRun();
 const patching = process.platform === "win32" ? ["--no-binary-patching"] : [];
 
 const tauri = createRequire(join(root, "package.json")).resolve("@tauri-apps/cli/tauri.js");
-const bundledAt = Date.now() - 2000;
+if (process.platform === "linux") clearPackageDirs(join(release, "bundle"));
 execFileSync(
   process.execPath,
   [
@@ -187,7 +188,7 @@ if (process.platform === "linux") {
   const config = JSON.parse(readFileSync(join(crate, "tauri.conf.json"), "utf8"));
   const wanted = config.bundle.linux;
   const packages = (kind, suffix) =>
-    currentPackages(join(out, kind), suffix, config.version, bundledAt);
+    currentPackages(join(out, kind), suffix, config.version);
   const sign = (file) =>
     resignPackage(file, !flag("--no-updater"), () => {
       const key = signerKey(process.env);

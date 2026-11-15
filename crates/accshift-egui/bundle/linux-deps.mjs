@@ -8,7 +8,7 @@
 // file of the deb and the require tags of the rpm change, the payloads are
 // the same bytes.
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 
@@ -287,17 +287,21 @@ export function dropRpmRequires(file, drop) {
 // --- what the rewrite touches and how it signs
 
 /**
- * The packages of `version` in `dir` written at or after `since` (ms): a
- * package left there by an earlier run, of this version or another, is
- * neither rewritten nor signed with this version.
+ * Empties the deb and rpm folders of the bundle output before the bundler
+ * runs: every package found there afterwards is this run's, so none left by
+ * an earlier run is rewritten or signed with this version.
  */
-export function currentPackages(dir, suffix, version, since) {
+export function clearPackageDirs(out) {
+  for (const kind of ["deb", "rpm"]) rmSync(join(out, kind), { recursive: true, force: true });
+}
+
+/** The packages of `version` in `dir`. */
+export function currentPackages(dir, suffix, version) {
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
     .filter((name) => name.endsWith(suffix))
     .filter((name) => [`_${version}_`, `-${version}-`].some((part) => name.includes(part)))
-    .map((name) => join(dir, name))
-    .filter((file) => statSync(file).mtimeMs >= since);
+    .map((name) => join(dir, name));
 }
 
 /**

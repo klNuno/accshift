@@ -1,29 +1,34 @@
 // node --test crates/accshift-egui/bundle/linux-deps.test.mjs
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { currentPackages, resignPackage, signerKey } from "./linux-deps.mjs";
+import { clearPackageDirs, currentPackages, resignPackage, signerKey } from "./linux-deps.mjs";
 
 const root = join(fileURLToPath(import.meta.url), "..", "..", "..", "..");
 
 test("only this run's packages of this version are rewritten", () => {
   const dir = mkdtempSync(join(tmpdir(), "accshift-deps-"));
   try {
-    const old = Date.now() / 1000 - 3600;
-    for (const name of ["accshift_1.0.5_amd64.deb", "accshift_1.0.6_amd64.deb", "accshift_1.0.6_amd64.deb.sig"]) {
-      writeFileSync(join(dir, name), "");
+    const deb = join(dir, "deb");
+    mkdirSync(deb);
+    mkdirSync(join(dir, "appimage"));
+    writeFileSync(join(deb, "accshift_1.0.5_amd64.deb"), "");
+    writeFileSync(join(deb, "accshift_1.0.5_amd64.deb.sig"), "");
+    clearPackageDirs(dir);
+    assert.equal(existsSync(deb), false);
+    assert.equal(existsSync(join(dir, "appimage")), true);
+
+    mkdirSync(deb);
+    for (const name of ["accshift_1.0.6_amd64.deb", "accshift_1.0.6_amd64.deb.sig", "accshift_1.0.60_amd64.deb"]) {
+      writeFileSync(join(deb, name), "");
     }
-    writeFileSync(join(dir, "accshift_1.0.60_amd64.deb"), "");
-    utimesSync(join(dir, "accshift_1.0.5_amd64.deb"), old, old);
-    const since = Date.now() - 60_000;
-    assert.deepEqual(currentPackages(dir, ".deb", "1.0.6", since), [join(dir, "accshift_1.0.6_amd64.deb")]);
-    assert.deepEqual(currentPackages(dir, ".deb", "1.0.5", since), []);
-    assert.deepEqual(currentPackages(join(dir, "none"), ".rpm", "1.0.6", since), []);
+    assert.deepEqual(currentPackages(deb, ".deb", "1.0.6"), [join(deb, "accshift_1.0.6_amd64.deb")]);
+    assert.deepEqual(currentPackages(join(dir, "rpm"), ".rpm", "1.0.6"), []);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
