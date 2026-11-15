@@ -32,7 +32,14 @@ import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { debDepends, dropRpmRequires, rpmRequires, setDebDepends } from "./linux-deps.mjs";
+import {
+  currentPackages,
+  debDepends,
+  dropRpmRequires,
+  rpmRequires,
+  setDebDepends,
+  signerKey,
+} from "./linux-deps.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const crate = join(here, "..");
@@ -148,6 +155,7 @@ if (appimage) await seedAppRun();
 const patching = process.platform === "win32" ? ["--no-binary-patching"] : [];
 
 const tauri = createRequire(join(root, "package.json")).resolve("@tauri-apps/cli/tauri.js");
+const bundledAt = Date.now() - 2000;
 execFileSync(
   process.execPath,
   [
@@ -178,20 +186,24 @@ if (process.platform === "linux") {
   const config = JSON.parse(readFileSync(join(crate, "tauri.conf.json"), "utf8"));
   const wanted = config.bundle.linux;
   const packages = (kind, suffix) =>
-    existsSync(join(out, kind))
-      ? readdirSync(join(out, kind))
-          .filter((name) => name.endsWith(suffix))
-          .map((name) => join(out, kind, name))
-      : [];
+    currentPackages(join(out, kind), suffix, config.version, bundledAt);
+  // --no-updater: the rewritten package has no signature, and one left by
+  // an earlier run would not match it.
   const sign = (file) => {
-    if (!existsSync(`${file}.sig`)) return;
-    rmSync(`${file}.sig`);
+    const sig = `${file}.sig`;
+    if (flag("--no-updater")) {
+      rmSync(sig, { force: true });
+      return;
+    }
+    if (!existsSync(sig)) return;
+    rmSync(sig);
+    const key = signerKey(process.env);
     execFileSync(
       process.execPath,
-      [tauri, "signer", "sign", "--app-version", config.version, file],
-      { stdio: "inherit" },
+      [tauri, "signer", "sign", ...key.args, "--app-version", config.version, file],
+      { stdio: "inherit", env: key.env },
     );
-    if (!existsSync(`${file}.sig`)) throw new Error(`no updater signature for ${file}`);
+    if (!existsSync(sig)) throw new Error(`no updater signature for ${file}`);
   };
   for (const file of packages("deb", ".deb")) {
     setDebDepends(file, wanted.deb.depends ?? []);

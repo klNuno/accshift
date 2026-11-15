@@ -8,7 +8,8 @@
 // file of the deb and the require tags of the rpm change, the payloads are
 // the same bytes.
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 
 // --- deb: an ar archive holding debian-binary, control.tar.gz, data.tar.*
@@ -281,4 +282,32 @@ export function dropRpmRequires(file, drop) {
     }
   }
   writeFileSync(file, Buffer.concat([buffer.subarray(0, headerAt), newHeader, payload]));
+}
+
+// --- what the rewrite touches and how it signs
+
+/**
+ * The packages of `version` in `dir` written at or after `since` (ms): a
+ * package left there by an earlier run, of this version or another, is
+ * neither rewritten nor signed with this version.
+ */
+export function currentPackages(dir, suffix, version, since) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((name) => name.endsWith(suffix))
+    .filter((name) => [`_${version}_`, `-${version}-`].some((part) => name.includes(part)))
+    .map((name) => join(dir, name))
+    .filter((file) => statSync(file).mtimeMs >= since);
+}
+
+/**
+ * The key arguments and environment of `tauri signer sign`. The bundler
+ * reads TAURI_SIGNING_PRIVATE_KEY as a file when it names one; the signer
+ * only takes the key itself there, so a path goes by --private-key-path.
+ */
+export function signerKey(env, exists = existsSync) {
+  const key = env.TAURI_SIGNING_PRIVATE_KEY;
+  if (!key || !exists(key)) return { args: [], env };
+  const { TAURI_SIGNING_PRIVATE_KEY: _path, ...rest } = env;
+  return { args: ["--private-key-path", key], env: rest };
 }
