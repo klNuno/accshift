@@ -287,12 +287,15 @@ export function dropRpmRequires(file, drop) {
 // --- what the rewrite touches and how it signs
 
 /**
- * Empties the deb and rpm folders of the bundle output before the bundler
- * runs: every package found there afterwards is this run's, so none left by
- * an earlier run is rewritten or signed with this version.
+ * Empties the deb and rpm folders this run builds (`kinds`, the --bundles
+ * list) before the bundler runs: every package found there afterwards is
+ * this run's, so none left by an earlier run is rewritten or signed with
+ * this version. A format this run does not build keeps its folder.
  */
-export function clearPackageDirs(out) {
-  for (const kind of ["deb", "rpm"]) rmSync(join(out, kind), { recursive: true, force: true });
+export function clearPackageDirs(out, kinds) {
+  for (const kind of ["deb", "rpm"].filter((k) => kinds.includes(k))) {
+    rmSync(join(out, kind), { recursive: true, force: true });
+  }
 }
 
 /** The packages of `version` in `dir`. */

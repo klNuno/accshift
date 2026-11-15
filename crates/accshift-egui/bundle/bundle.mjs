@@ -157,7 +157,7 @@ if (appimage) await seedAppRun();
 const patching = process.platform === "win32" ? ["--no-binary-patching"] : [];
 
 const tauri = createRequire(join(root, "package.json")).resolve("@tauri-apps/cli/tauri.js");
-if (process.platform === "linux") clearPackageDirs(join(release, "bundle"));
+if (process.platform === "linux") clearPackageDirs(join(release, "bundle"), bundles.split(","));
 execFileSync(
   process.execPath,
   [

@@ -19,7 +19,9 @@ test("only this run's packages of this version are rewritten", () => {
     mkdirSync(join(dir, "appimage"));
     writeFileSync(join(deb, "accshift_1.0.5_amd64.deb"), "");
     writeFileSync(join(deb, "accshift_1.0.5_amd64.deb.sig"), "");
-    clearPackageDirs(dir);
+    clearPackageDirs(dir, ["appimage"]);
+    assert.equal(existsSync(join(deb, "accshift_1.0.5_amd64.deb")), true);
+    clearPackageDirs(dir, ["appimage", "deb", "rpm"]);
     assert.equal(existsSync(deb), false);
     assert.equal(existsSync(join(dir, "appimage")), true);
 
