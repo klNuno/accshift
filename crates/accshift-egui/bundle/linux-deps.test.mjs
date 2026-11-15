@@ -1,7 +1,7 @@
 // node --test crates/accshift-egui/bundle/linux-deps.test.mjs
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,10 +12,26 @@ import {
   appImageFiles,
   clearPackageDirs,
   currentPackages,
+  debDepends,
+  dropRpmRequires,
   packageKinds,
   resignPackage,
+  rpmRequires,
+  setDebDepends,
   signerKey,
 } from "./linux-deps.mjs";
+import {
+  BIN,
+  header,
+  INT32,
+  makeDeb,
+  makeRpm,
+  readControlTar,
+  readDeb,
+  readRpm,
+  STRING,
+  STRING_ARRAY,
+} from "./linux-deps.fixtures.mjs";
 
 const root = join(fileURLToPath(import.meta.url), "..", "..", "..", "..");
 
@@ -126,4 +142,112 @@ test("the AppImage carries the libraries winit opens at run time, for the build 
   for (const name of ["libxkbcommon.so.0", "libxkbcommon-x11.so.0", "libwayland-client.so.0", "libwayland-cursor.so.0"]) {
     assert.ok(APPIMAGE_DLOPEN_LIBS.includes(name), name);
   }
+});
+
+// --- the deb and rpm rewrite, on fixtures (linux-deps.fixtures.mjs)
+
+const CONTROL = [
+  "Package: accshift",
+  "Version: 1.0.6",
+  "Architecture: amd64",
+  "Depends: libwebkit2gtk-4.1-0, libgtk-3-0, libc6",
+  "Description: Account switcher",
+  "",
+].join("\n");
+
+function withTemp(name, bytes, run) {
+  const dir = mkdtempSync(join(tmpdir(), "accshift-pkg-"));
+  try {
+    const file = join(dir, name);
+    writeFileSync(file, bytes);
+    run(file);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("setDebDepends rewrites Depends alone and keeps the payload bytes", () => {
+  const payload = Buffer.from("data.tar.gz bytes \u0000\u0001 kept as is");
+  withTemp("a.deb", makeDeb(CONTROL, payload), (file) => {
+    assert.deepEqual(debDepends(file), ["libwebkit2gtk-4.1-0", "libgtk-3-0", "libc6"]);
+    const before = readDeb(readFileSync(file));
+    setDebDepends(file, ["libc6", "ca-certificates"]);
+    const after = readDeb(readFileSync(file));
+    assert.deepEqual(debDepends(file), ["libc6", "ca-certificates"]);
+    assert.deepEqual(Object.keys(after), ["debian-binary", "control.tar.gz", "data.tar.gz"]);
+    assert.ok(after["data.tar.gz"].equals(payload));
+    assert.ok(after["debian-binary"].equals(before["debian-binary"]));
+    const control = readControlTar(after["control.tar.gz"]);
+    assert.equal(control["./control"], CONTROL.replace(/^Depends: .*$/m, "Depends: libc6, ca-certificates"));
+    assert.equal(control["./md5sums"], readControlTar(before["control.tar.gz"])["./md5sums"]);
+  });
+  // No Depends yet: the field goes before the description.
+  withTemp("b.deb", makeDeb(CONTROL.replace(/^Depends: .*\n/m, ""), payload), (file) => {
+    assert.deepEqual(debDepends(file), []);
+    setDebDepends(file, ["libc6"]);
+    assert.match(readControlTar(readDeb(readFileSync(file))["control.tar.gz"])["./control"], /Depends: libc6\nDescription:/);
+  });
+});
+
+const REQUIRES = ["libwebkit2gtk-4.1.so.0()(64bit)", "libc.so.6()(64bit)", "rpmlib(CompressedFileNames)", "libgtk-3.so.0()(64bit)", "ca-certificates"];
+const FLAGS = [0x4000, 0x4001, 0x1000008, 0x4002, 0x4003];
+const VERSIONS = ["", "", "3.0.4-1", "", ""];
+
+function mainHeader(overrides = {}) {
+  return header([
+    [100, STRING_ARRAY, ["C"]],
+    [1000, STRING, "accshift"],
+    [1001, STRING, "1.0.6"],
+    [1048, INT32, overrides.flags ?? FLAGS],
+    [1049, STRING_ARRAY, REQUIRES],
+    [1050, STRING_ARRAY, overrides.versions ?? VERSIONS],
+    [1124, STRING, "cpio"],
+  ]);
+}
+
+const dropWebview = (name) => name.includes("webkit") || name.includes("gtk");
+
+test("dropRpmRequires keeps the require arrays aligned and the digests and payload right", () => {
+  const payload = Buffer.from("cpio payload \u0000 bytes");
+  withTemp("a.rpm", makeRpm(mainHeader(), payload, [[62, BIN, Buffer.alloc(16, 7)]]), (file) => {
+    assert.deepEqual(rpmRequires(file), REQUIRES);
+    const before = readRpm(readFileSync(file));
+    assert.deepEqual(before.checks, { size: true, sha1: true, sha256: true, md5: true });
+    dropRpmRequires(file, dropWebview);
+    const after = readRpm(readFileSync(file));
+    assert.deepEqual(rpmRequires(file), ["libc.so.6()(64bit)", "rpmlib(CompressedFileNames)", "ca-certificates"]);
+    // Each kept name keeps its own flags and version.
+    assert.deepEqual(after.main[1049], ["libc.so.6()(64bit)", "rpmlib(CompressedFileNames)", "ca-certificates"]);
+    assert.deepEqual(after.main[1048], [0x4001, 0x1000008, 0x4003]);
+    assert.deepEqual(after.main[1050], ["", "3.0.4-1", ""]);
+    // Other tags, the payload and the signature header's size stay.
+    for (const tag of [100, 1000, 1001, 1124]) assert.deepEqual(after.main[tag], before.main[tag]);
+    assert.ok(after.payload.equals(payload));
+    assert.equal(after.sigBytes.length, before.sigBytes.length);
+    assert.ok(after.sig[62].equals(before.sig[62]));
+    assert.deepEqual(after.checks, { size: true, sha1: true, sha256: true, md5: true });
+  });
+});
+
+test("dropRpmRequires leaves the file alone when nothing is dropped", () => {
+  const bytes = makeRpm(mainHeader(), Buffer.from("payload"));
+  withTemp("a.rpm", bytes, (file) => {
+    dropRpmRequires(file, () => false);
+    assert.ok(readFileSync(file).equals(bytes));
+  });
+});
+
+test("dropRpmRequires refuses what it cannot rewrite, leaving the file alone", () => {
+  // An RSA signature (268) covers the header and cannot be computed again.
+  const signed = makeRpm(mainHeader(), Buffer.from("payload"), [[268, BIN, Buffer.alloc(32, 1)]]);
+  withTemp("signed.rpm", signed, (file) => {
+    assert.throws(() => dropRpmRequires(file, dropWebview), /signature tag 268 covers the header/);
+    assert.ok(readFileSync(file).equals(signed));
+  });
+  // A version array that does not match the names.
+  const skewed = makeRpm(mainHeader({ versions: ["", ""] }), Buffer.from("payload"));
+  withTemp("skewed.rpm", skewed, (file) => {
+    assert.throws(() => dropRpmRequires(file, dropWebview), /tag 1050 has 2 values, not 5/);
+    assert.ok(readFileSync(file).equals(skewed));
+  });
 });
