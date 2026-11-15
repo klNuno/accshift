@@ -286,7 +286,12 @@ fn a_held_command_waits_for_its_release() {
         std::thread::spawn(move || mock.get_runtime_os())
     };
     // The call reaches the gate and stays there, however long it is given.
+    let deadline = Instant::now() + Duration::from_secs(2);
     while mock.waiting("get_runtime_os") == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "get_runtime_os never reached the mock"
+        );
         std::thread::yield_now();
     }
     std::thread::sleep(Duration::from_millis(50));
