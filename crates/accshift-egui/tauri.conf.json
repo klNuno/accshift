@@ -50,6 +50,7 @@
     "linux": {
       "deb": {
         "depends": [
+          "ca-certificates",
           "libc6",
           "libgcc-s1",
           "libdbus-1-3",
@@ -67,6 +68,7 @@
       },
       "rpm": {
         "depends": [
+          "ca-certificates",
           "libc.so.6()(64bit)",
           "libgcc_s.so.1()(64bit)",
           "libdbus-1.so.3()(64bit)",
