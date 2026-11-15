@@ -32,6 +32,19 @@ import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  APPIMAGE_DLOPEN_LIBS,
+  appImageFiles,
+  clearPackageDirs,
+  currentPackages,
+  debDepends,
+  dropRpmRequires,
+  packageKinds,
+  resignPackage,
+  rpmRequires,
+  setDebDepends,
+  signerKey,
+} from "./linux-deps.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const crate = join(here, "..");
@@ -141,12 +154,24 @@ function checkAppImage(file) {
 
 if (appimage) await seedAppRun();
 
+// The libraries winit opens at run time ride in the image (linux-deps.mjs):
+// linuxdeploy does not see a dlopen.
+if (appimage) {
+  const ldconfig = execFileSync("ldconfig", ["-p"], { encoding: "utf8" });
+  const files = appImageFiles(APPIMAGE_DLOPEN_LIBS, triple, ldconfig);
+  for (const [to, from] of Object.entries(files)) console.log(`AppImage library: ${from} -> ${to}`);
+  configs.push(JSON.stringify({ bundle: { linux: { appimage: { files } } } }));
+}
+
 // The bundler writes the bundle kind into the executable, which breaks an
 // Authenticode signature made before it. Windows ships one kind (NSIS), so
 // the marker is not needed there: the updater falls back to windows-x86_64.
 const patching = process.platform === "win32" ? ["--no-binary-patching"] : [];
 
 const tauri = createRequire(join(root, "package.json")).resolve("@tauri-apps/cli/tauri.js");
+// The deb and rpm this run builds: the only ones cleared, rewritten and signed.
+const packageFormats = process.platform === "linux" ? packageKinds(bundles) : [];
+clearPackageDirs(join(release, "bundle"), packageFormats);
 execFileSync(
   process.execPath,
   [
@@ -168,6 +193,41 @@ if (patching.length && !readFileSync(gui).equals(readFileSync(join(built, `accsh
 }
 
 const out = join(release, "bundle");
+
+// The deb and the rpm declare the libraries of tauri.conf.json alone: the
+// CLI appends WebKitGTK and GTK, which the egui app never loads
+// (linux-deps.mjs). The updater signatures the bundler wrote cover the old
+// bytes, so the rewritten packages are signed again.
+if (process.platform === "linux") {
+  const config = JSON.parse(readFileSync(join(crate, "tauri.conf.json"), "utf8"));
+  const wanted = config.bundle.linux;
+  const packages = (kind) => currentPackages(out, packageFormats, kind, config.version);
+  const sign = (file) =>
+    resignPackage(file, !flag("--no-updater"), () => {
+      const key = signerKey(process.env);
+      execFileSync(
+        process.execPath,
+        [tauri, "signer", "sign", ...key.args, "--app-version", config.version, file],
+        { stdio: "inherit", env: key.env },
+      );
+    });
+  for (const file of packages("deb")) {
+    setDebDepends(file, wanted.deb.depends ?? []);
+    sign(file);
+    console.log(`deb Depends: ${debDepends(file).join(", ")}`);
+  }
+  for (const file of packages("rpm")) {
+    const keep = new Set(wanted.rpm.depends ?? []);
+    dropRpmRequires(file, (name) => !keep.has(name) && !name.startsWith("rpmlib("));
+    const requires = rpmRequires(file).filter((name) => !name.startsWith("rpmlib("));
+    if (requires.toSorted().join(" ") !== [...keep].toSorted().join(" ")) {
+      throw new Error(`${file}: Requires is ${requires.join(", ")}`);
+    }
+    sign(file);
+    console.log(`rpm Requires: ${requires.join(", ")}`);
+  }
+}
+
 for (const kind of readdirSync(out)) {
   for (const name of readdirSync(join(out, kind))) console.log(`bundle: ${join(out, kind, name)}`);
 }

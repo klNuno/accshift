@@ -155,10 +155,10 @@ pub fn wire_scheme_registration(
 /// Linux registration: a `{bin}-handler.desktop` file in
 /// `{data_dir}/applications` claiming `x-scheme-handler/{scheme}`, merged
 /// into an existing file, then `update-desktop-database` and `xdg-mime
-/// default`. Runs on every launch.
+/// default`. Runs on every launch. `Ok(Some(_))`: registered, with the cache
+/// refresh that could not run ([`run_registration_tools`]).
 #[cfg(target_os = "linux")]
-pub fn register_linux(scheme: &str, product_name: &str) -> Result<(), String> {
-    use std::process::Command;
+pub fn register_linux(scheme: &str, product_name: &str) -> Result<Option<String>, String> {
     let bin = std::fs::canonicalize(std::env::current_exe().map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     let file_name = format!(
@@ -178,15 +178,50 @@ pub fn register_linux(scheme: &str, product_name: &str) -> Result<(), String> {
     let mime_type = format!("x-scheme-handler/{scheme}");
 
     write_linux_desktop(&target_file, product_name, &qualified_exec, &mime_type)?;
-    Command::new("update-desktop-database")
-        .arg(&target)
-        .status()
-        .map_err(|e| e.to_string())?;
-    Command::new("xdg-mime")
-        .args(["default", &file_name, mime_type.as_str()])
-        .status()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    run_registration_tools(&mut run_tool, target.as_os_str(), &file_name, &mime_type)
+}
+
+/// Runs a program with its arguments and waits for it: `Err` when it could
+/// not start or exited with a failure (`xdg-mime` exits 4 when its action
+/// fails).
+pub fn run_tool(program: &str, args: &[&std::ffi::OsStr]) -> std::io::Result<()> {
+    let status = std::process::Command::new(program).args(args).status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(status.to_string()))
+    }
+}
+
+/// Runs a program with its arguments: `Err` when it could not start or
+/// failed.
+pub type ToolRunner<'a> = dyn FnMut(&str, &[&std::ffi::OsStr]) -> std::io::Result<()> + 'a;
+
+/// The system tools run after the handler file is written:
+/// `update-desktop-database` on the applications folder, then `xdg-mime
+/// default`. The first only refreshes the MIME cache and is missing on some
+/// systems (desktop-file-utils not installed): its failure comes back as
+/// `Ok(Some(details))`. `xdg-mime` sets the default handler and decides.
+pub fn run_registration_tools(
+    run: &mut ToolRunner<'_>,
+    applications: &std::ffi::OsStr,
+    file_name: &str,
+    mime_type: &str,
+) -> Result<Option<String>, String> {
+    use std::ffi::OsStr;
+    let skipped = run("update-desktop-database", &[applications])
+        .err()
+        .map(|e| format!("update-desktop-database: {e}"));
+    run(
+        "xdg-mime",
+        &[
+            OsStr::new("default"),
+            OsStr::new(file_name),
+            OsStr::new(mime_type),
+        ],
+    )
+    .map_err(|e| format!("xdg-mime: {e}"))?;
+    Ok(skipped)
 }
 
 /// Merge the handler's command and MIME type, without running system tools.

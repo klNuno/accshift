@@ -4,8 +4,8 @@
 
 use accshift_app::lifecycle::deep_link::{
     decode_uri_component, deep_link_log_shape, find_account, handle_cli_arguments, is_registered,
-    on_open_url, parse_deep_link, registered_command, registration_entries,
-    schemes_need_registration, second_launch, wire_scheme_registration, DeepLinkAction,
+    on_open_url, parse_deep_link, registered_command, registration_entries, run_registration_tools,
+    run_tool, schemes_need_registration, second_launch, wire_scheme_registration, DeepLinkAction,
     DeepLinkAnswer, DeepLinkController, DeepLinkSwitchRequest, DeepLinkView, RegistryValue,
     SchemeRegistry, BOOT_TIMEOUT, SCHEMES,
 };
@@ -302,6 +302,63 @@ fn registration_is_skipped_when_it_already_points_here() {
     assert_eq!(failure.source, "backend.deep-link");
     assert_eq!(failure.message, "Failed to register accshift:// scheme");
     assert_eq!(failure.details, "access denied");
+}
+
+/// Linux: `update-desktop-database` only refreshes a cache and some systems
+/// lack it (the Ubuntu runner); `xdg-mime default` alone claims the scheme.
+#[test]
+fn a_missing_update_desktop_database_still_registers_the_scheme() {
+    use std::ffi::OsStr;
+    let mut ran: Vec<String> = Vec::new();
+    let result = run_registration_tools(
+        &mut |program: &str, args: &[&OsStr]| {
+            if program == "update-desktop-database" {
+                return Err(std::io::Error::from(std::io::ErrorKind::NotFound));
+            }
+            let args: Vec<_> = args.iter().map(|a| a.to_string_lossy()).collect();
+            ran.push(format!("{program} {}", args.join(" ")));
+            Ok(())
+        },
+        OsStr::new("/home/u/.local/share/applications"),
+        "accshift-gui-handler.desktop",
+        "x-scheme-handler/accshift",
+    );
+    assert_eq!(
+        result,
+        Ok(Some(
+            "update-desktop-database: entity not found".to_string()
+        ))
+    );
+    assert_eq!(
+        ran,
+        ["xdg-mime default accshift-gui-handler.desktop x-scheme-handler/accshift"]
+    );
+}
+
+/// A tool that starts but fails (`xdg-mime` exits 4 when the action fails)
+/// is an error, so a failed `xdg-mime default` is never logged as success.
+#[test]
+fn a_tool_that_exits_non_zero_is_an_error() {
+    use std::ffi::OsStr;
+    let (shell, flag) = if cfg!(windows) {
+        ("cmd", "/C")
+    } else {
+        ("sh", "-c")
+    };
+    assert!(run_tool(shell, &[OsStr::new(flag), OsStr::new("exit 0")]).is_ok());
+    assert!(run_tool(shell, &[OsStr::new(flag), OsStr::new("exit 4")]).is_err());
+    let result = run_registration_tools(
+        &mut |program: &str, _: &[&OsStr]| {
+            if program == "xdg-mime" {
+                return Err(std::io::Error::other("exit status: 4"));
+            }
+            Ok(())
+        },
+        OsStr::new("/apps"),
+        "accshift-gui-handler.desktop",
+        "x-scheme-handler/accshift",
+    );
+    assert_eq!(result, Err("xdg-mime: exit status: 4".to_string()));
 }
 
 /// The real registry, with a throwaway scheme that is never `accshift`,
