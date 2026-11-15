@@ -417,6 +417,8 @@
   "session.expired": "Sesión caducada",
   "session.expiredTooltip": "Sesión caducada: vuelve a iniciar sesión",
   "session.expiredSwitchNotice": "Sesión caducada: el cliente te pedirá que inicies sesión.",
+  "session.passwordNeeded": "Contraseña necesaria",
+  "session.passwordNeededTooltip": "El launcher no recuerda este inicio de sesión: pedirá la contraseña",
   "roblox.cookiePasteTitle": "Añadir cuenta con cookie",
   "roblox.cookiePasteHint": "Pega una cookie .ROBLOSECURITY de tu navegador para añadir una cuenta directamente.",
   "settings.showRobloxLastLogin": "Mostrar última conexión",

@@ -169,6 +169,10 @@ pub trait Backend: Send + Sync {
     /// Riot profile ids whose saved session is past its restore window,
     /// read offline from the snapshots. Unreadable ones are left out.
     fn riot_check_sessions(&self) -> BackendResult<Vec<String>>;
+    /// A platform's session marks: after-the-fact ones the backend stored
+    /// and the offline "password needed" reads. Unreadable data marks nothing.
+    fn session_marks(&self, platform_id: &str)
+        -> BackendResult<Vec<crate::types::SessionMarkInfo>>;
     fn roblox_add_account_by_cookie(&self, cookie: &str) -> BackendResult<RobloxAccount>;
     fn roblox_get_profile_info(&self, user_id: &str) -> BackendResult<RobloxProfileInfo>;
     /// User ids whose stored session is dead.

@@ -417,6 +417,8 @@
   "session.expired": "Сессия истекла",
   "session.expiredTooltip": "Сессия истекла: войдите снова",
   "session.expiredSwitchNotice": "Сессия истекла: клиент попросит войти снова.",
+  "session.passwordNeeded": "Нужен пароль",
+  "session.passwordNeededTooltip": "Лаунчер не запоминает этот вход: он попросит пароль",
   "roblox.cookiePasteTitle": "Добавить аккаунт по cookie",
   "roblox.cookiePasteHint": "Вставьте cookie .ROBLOSECURITY из браузера, чтобы добавить аккаунт напрямую.",
   "settings.showRobloxLastLogin": "Показывать последний вход",

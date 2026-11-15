@@ -364,6 +364,26 @@ impl Backend for RealBackend {
     fn riot_check_sessions(&self) -> BackendResult<Vec<String>> {
         riot::check_sessions(self)
     }
+    fn session_marks(
+        &self,
+        platform_id: &str,
+    ) -> BackendResult<Vec<crate::types::SessionMarkInfo>> {
+        let marks =
+            accshift_core::platforms::session_marks::platform_marks(self.ctx.clone(), platform_id)?;
+        Ok(marks
+            .into_iter()
+            .map(|mark| crate::types::SessionMarkInfo {
+                account_id: mark.account_id,
+                state: match mark.state {
+                    accshift_core::platforms::session_marks::SessionState::Expired => "expired",
+                    accshift_core::platforms::session_marks::SessionState::PasswordNeeded => {
+                        "passwordNeeded"
+                    }
+                }
+                .to_string(),
+            })
+            .collect())
+    }
     fn roblox_add_account_by_cookie(&self, cookie: &str) -> BackendResult<RobloxAccount> {
         roblox::add_account_by_cookie(self, cookie)
     }

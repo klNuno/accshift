@@ -557,6 +557,16 @@ impl Backend for Scripted {
         }
         self.inner.riot_check_sessions()
     }
+    fn session_marks(
+        &self,
+        platform_id: &str,
+    ) -> BackendResult<Vec<accshift_app::types::SessionMarkInfo>> {
+        self.record("session_marks", platform_id.to_string());
+        if let Some(answer) = self.next("session_marks") {
+            return answer;
+        }
+        self.inner.session_marks(platform_id)
+    }
     fn roblox_add_account_by_cookie(&self, cookie: &str) -> BackendResult<RobloxAccount> {
         self.record("roblox_add_account_by_cookie", format!("{:?}", (&cookie,)));
         if let Some(answer) = self.next("roblox_add_account_by_cookie") {

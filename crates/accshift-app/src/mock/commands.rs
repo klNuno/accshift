@@ -287,6 +287,12 @@ impl Backend for MockBackend {
     fn riot_check_sessions(&self) -> BackendResult<Vec<String>> {
         self.call("riot_check_sessions", json!({}))
     }
+    fn session_marks(
+        &self,
+        platform_id: &str,
+    ) -> BackendResult<Vec<crate::types::SessionMarkInfo>> {
+        self.call("session_marks", json!({ "platformId": platform_id }))
+    }
     fn roblox_add_account_by_cookie(&self, cookie: &str) -> BackendResult<RobloxAccount> {
         self.call("roblox_add_account_by_cookie", json!({ "cookie": cookie }))
     }

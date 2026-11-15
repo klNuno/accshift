@@ -786,6 +786,23 @@
         ]
       }
     ],
+    "session_marks": [
+      {
+        "args": {
+          "platformId": "steam"
+        },
+        "result": [
+          {
+            "accountId": "76561198100000006",
+            "state": "passwordNeeded"
+          },
+          {
+            "accountId": "76561198100000007",
+            "state": "expired"
+          }
+        ]
+      }
+    ],
     "roblox_check_sessions": [
       {
         "args": {},

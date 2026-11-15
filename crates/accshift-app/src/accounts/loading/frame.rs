@@ -204,15 +204,16 @@ impl AccountLoading {
                 }
             }
             // Read with the account list, on the job pool: nothing to fetch.
-            "riot" => {
-                let load = WarningLoad {
-                    warnings: adapter.state().riot_sessions.warning_map(),
-                    outcome: None,
-                    toasts: Vec::new(),
-                };
-                self.land_warnings(&ticket, load, events);
+            _ => {
+                if let Some(warnings) = adapter.session_warning_states() {
+                    let load = WarningLoad {
+                        warnings,
+                        outcome: None,
+                        toasts: Vec::new(),
+                    };
+                    self.land_warnings(&ticket, load, events);
+                }
             }
-            _ => {}
         }
     }
 
