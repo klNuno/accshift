@@ -237,6 +237,41 @@ pub(super) fn clear_live_riot_state(install_dir: Option<&Path>) -> Result<(), St
     Ok(())
 }
 
+/// Top-level section of the settings file holding the trusted-device cookie
+/// (`tdid`). It names this PC, not an account; without it every setup login
+/// is a new device and Riot asks for an email code or 2FA again.
+const RIOT_DEVICE_SECTION: &str = "rso-authenticator";
+
+/// The `rso-authenticator` section of a settings file, with `\n` line ends,
+/// or `None` when the file has none.
+pub(super) fn riot_settings_device_block(contents: &str) -> Option<String> {
+    let mut block = String::new();
+    let mut inside = false;
+    for line in contents.lines() {
+        if let Some(key) = top_level_key(line) {
+            inside = key == RIOT_DEVICE_SECTION;
+        }
+        if inside && !line.trim().is_empty() {
+            block.push_str(line.trim_end_matches('\r'));
+            block.push('\n');
+        }
+    }
+    (!block.is_empty()).then_some(block)
+}
+
+/// Drop the login from a settings file before a setup, keeping only its
+/// trusted-device cookie. A file with no cookie, or one that cannot be read,
+/// is removed as before.
+pub(super) fn reset_riot_settings_file(path: &Path) -> Result<(), String> {
+    let kept = fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| riot_settings_device_block(&contents));
+    match kept {
+        Some(block) => crate::storage::write_bytes_atomic(path, block.as_bytes()),
+        None => remove_path_if_exists(path),
+    }
+}
+
 pub(super) fn clear_live_riot_setup_state(install_dir: Option<&Path>) -> Result<(), String> {
     for item in RIOT_SNAPSHOT_ITEMS {
         if !RIOT_SETUP_RESET_ITEMS.contains(&item.snapshot_name) {
@@ -245,7 +280,11 @@ pub(super) fn clear_live_riot_setup_state(install_dir: Option<&Path>) -> Result<
         let Some(path) = live_path_for(item, install_dir)? else {
             continue;
         };
-        remove_path_if_exists(&path)?;
+        if item.snapshot_name.ends_with("PrivateSettings.yaml") {
+            reset_riot_settings_file(&path)?;
+        } else {
+            remove_path_if_exists(&path)?;
+        }
     }
 
     Ok(())

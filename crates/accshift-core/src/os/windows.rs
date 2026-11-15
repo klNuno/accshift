@@ -537,3 +537,60 @@ mod dpapi_tests {
         assert_eq!(decrypt_secret(" ").unwrap(), "");
     }
 }
+
+/// Terminate `pid` through a handle that asks for `PROCESS_TERMINATE` only.
+/// sysinfo kills through `taskkill /F`, which is refused ("Access is
+/// denied") on the Riot Client's processes while Vanguard is loaded; this
+/// narrower handle is still granted there. False when the process cannot be
+/// opened or terminated.
+pub(super) fn terminate_pid(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
+    // SAFETY: the handle comes from OpenProcess, is checked for null, used
+    // once and closed before returning.
+    unsafe {
+        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let terminated = TerminateProcess(handle, 1) != 0;
+        CloseHandle(handle);
+        terminated
+    }
+}
+
+#[cfg(test)]
+mod terminate_tests {
+    use super::terminate_pid;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn terminate_pid_ends_a_process_it_may_open() {
+        // A child of this test only: never a process the test did not start.
+        let mut child = Command::new("ping")
+            .args(["-n", "60", "127.0.0.1"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("ping should start");
+        assert!(terminate_pid(child.id()));
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            assert!(Instant::now() < deadline, "terminated child still running");
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(status.code(), Some(1));
+    }
+
+    #[test]
+    fn terminate_pid_reports_a_process_it_cannot_open() {
+        // Pid 0 is the idle process: OpenProcess always refuses it.
+        assert!(!terminate_pid(0));
+    }
+}

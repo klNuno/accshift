@@ -231,6 +231,24 @@ fn matching_live_pids(process_name: &str) -> Vec<Pid> {
     })
 }
 
+/// Kill one process: sysinfo's kill first (`taskkill /F` on Windows), then
+/// the platform's own terminate when that was refused.
+fn kill_live_process(process: &sysinfo::Process) -> bool {
+    process.kill_with(Signal::Kill).unwrap_or(false)
+        || process.kill()
+        || terminate_pid(process.pid())
+}
+
+#[cfg(target_os = "windows")]
+fn terminate_pid(pid: Pid) -> bool {
+    super::imp::terminate_pid(pid.as_u32())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn terminate_pid(_pid: Pid) -> bool {
+    false
+}
+
 pub fn kill_process(process_name: &str) -> Result<(), AppError> {
     let matcher = NameMatcher::new(process_name);
     let any_failure = with_refreshed_system(|system| {
@@ -250,7 +268,7 @@ pub fn kill_process(process_name: &str) -> Result<(), AppError> {
         // below, even though the kill itself succeeded.
         let mut any_failure = false;
         for proc in &procs {
-            if !proc.kill_with(Signal::Kill).unwrap_or(false) && !proc.kill() {
+            if !kill_live_process(proc) {
                 any_failure = true;
             }
         }
@@ -295,9 +313,7 @@ pub fn quit_processes_and_wait(process_names: &[&str], timeout_ms: u32, settle: 
         let mut killed = false;
         for p in system.processes().values() {
             if is_live(p) && matchers.iter().any(|m| m.matches(p)) {
-                if !p.kill_with(Signal::Kill).unwrap_or(false) {
-                    let _ = p.kill();
-                }
+                kill_live_process(p);
                 killed = true;
             }
         }

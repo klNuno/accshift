@@ -1,4 +1,43 @@
-use super::{validate_riot_client_path, yaml_has_auth_tokens};
+use super::{
+    reset_riot_settings_file, riot_settings_device_block, setup_can_capture,
+    validate_riot_client_path, yaml_has_auth_tokens, yaml_has_psl_refresh_token, RiotLoginState,
+    RiotSettingsState,
+};
+
+/// Shaped like a Riot Client 137+ (PSL) settings file. Synthetic values only.
+const PSL_SETTINGS: &str = "\
+psl:
+  authorization:
+    riot-client:
+      claims: []
+      id_token: synthetic-id-token
+      is_dpop_bound: false
+      max_duration_between_restores: 39169575
+      refresh_token: synthetic-refresh-token
+      refresh_token_write_count: 3
+      scopes: [openid, link, ban, lol_region, lol, account]
+riot-login:
+  persist: null
+rso-authenticator:
+  tdid:
+    domain: riotgames.com
+    expiryTime: 1819599615
+    httpOnly: true
+    persistent: true
+    secureOnly: true
+    value: synthetic-device-cookie
+";
+
+const DEVICE_BLOCK: &str = "\
+rso-authenticator:
+  tdid:
+    domain: riotgames.com
+    expiryTime: 1819599615
+    httpOnly: true
+    persistent: true
+    secureOnly: true
+    value: synthetic-device-cookie
+";
 
 #[test]
 fn empty_private_and_sessions_are_not_ready() {
@@ -200,5 +239,117 @@ fn riot_path_override_must_name_riot_client_services() {
     assert!(validate_riot_client_path(&other).is_err());
     assert!(validate_riot_client_path(&root.join("missing.exe")).is_err());
     assert!(validate_riot_client_path(&client).is_ok());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// -- PSL settings file (Riot Client 137+) ------------------------------
+
+#[test]
+fn psl_refresh_token_is_a_persisted_login() {
+    assert!(yaml_has_auth_tokens(PSL_SETTINGS));
+    assert!(yaml_has_psl_refresh_token(PSL_SETTINGS));
+    assert_eq!(
+        RiotSettingsState::from_contents(PSL_SETTINGS),
+        RiotSettingsState {
+            has_tokens: true,
+            psl_login: true,
+        }
+    );
+}
+
+#[test]
+fn only_a_non_empty_refresh_token_under_top_level_psl_counts() {
+    assert!(!yaml_has_psl_refresh_token("refresh_token: zzz\n"));
+    assert!(!yaml_has_psl_refresh_token(
+        "psl: null\nriot-login:\n  persist: null\n"
+    ));
+    assert!(!yaml_has_psl_refresh_token(
+        "psl:\n  authorization:\n    riot-client:\n      refresh_token: ''\n"
+    ));
+    assert!(!yaml_has_psl_refresh_token(
+        "other:\n  psl:\n    refresh_token: not-under-top-level-psl\n"
+    ));
+    assert!(!yaml_has_psl_refresh_token(
+        "psl:\n  authorization: {}\nother:\n  refresh_token: belongs-to-other\n"
+    ));
+    assert!(yaml_has_psl_refresh_token(
+        "# header\npsl:\n  authorization:\n    riot-client:\n      refresh_token: \"tok\" # c\n"
+    ));
+}
+
+/// #111: on a PSL client the legacy `persist` flag is null even with "Stay
+/// signed in" ticked. The refresh token in the settings file proves it.
+#[test]
+fn setup_capture_accepts_a_psl_login_without_the_legacy_persist_flag() {
+    let signed_in_no_flag = RiotLoginState {
+        logged_in: true,
+        persist: None,
+    };
+    let psl = RiotSettingsState::from_contents(PSL_SETTINGS);
+    assert!(setup_can_capture(&signed_in_no_flag, psl));
+
+    // A device cookie alone is no login, and a signed-out client is not
+    // captured whatever the file holds.
+    let device_only = RiotSettingsState::from_contents(DEVICE_BLOCK);
+    assert!(!setup_can_capture(&signed_in_no_flag, device_only));
+    let signed_out = RiotLoginState {
+        logged_in: false,
+        persist: Some(true),
+    };
+    assert!(!setup_can_capture(&signed_out, psl));
+
+    // A legacy file without PSL still needs the API flag.
+    let legacy = RiotSettingsState::from_contents("private: legacy-blob\n");
+    assert!(!setup_can_capture(&signed_in_no_flag, legacy));
+    let flagged = RiotLoginState {
+        logged_in: true,
+        persist: Some(true),
+    };
+    assert!(setup_can_capture(&flagged, legacy));
+}
+
+// -- Setup clear keeps the trusted-device cookie -------------------------
+
+#[test]
+fn device_block_is_the_rso_authenticator_section_only() {
+    assert_eq!(
+        riot_settings_device_block(PSL_SETTINGS).as_deref(),
+        Some(DEVICE_BLOCK)
+    );
+    assert!(!yaml_has_auth_tokens(DEVICE_BLOCK));
+    assert_eq!(
+        riot_settings_device_block("private: blob\nsessions: {}\n"),
+        None
+    );
+    // CRLF line ends, and a section that is not the last one.
+    let crlf = "rso-authenticator:\r\n  tdid:\r\n    value: c\r\npsl:\r\n  authorization: {}\r\n";
+    assert_eq!(
+        riot_settings_device_block(crlf).as_deref(),
+        Some("rso-authenticator:\n  tdid:\n    value: c\n")
+    );
+}
+
+#[test]
+fn setup_reset_keeps_the_device_cookie_and_drops_the_login() {
+    let root = std::env::temp_dir().join(format!(
+        "accshift-riot-reset-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let file = root.join("RiotGamesPrivateSettings.yaml");
+
+    std::fs::write(&file, PSL_SETTINGS).unwrap();
+    reset_riot_settings_file(&file).unwrap();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), DEVICE_BLOCK);
+
+    // Nothing to keep: the file goes, as before.
+    std::fs::write(&file, "private: blob\nsessions: {}\n").unwrap();
+    reset_riot_settings_file(&file).unwrap();
+    assert!(!file.exists());
+
+    // Already gone is fine.
+    reset_riot_settings_file(&file).unwrap();
     let _ = std::fs::remove_dir_all(&root);
 }

@@ -669,8 +669,9 @@ fn the_setup_poll_logs_only_when_its_view_changes() {
         profile_id: "p".into(),
         lockfile: true,
         logged_in: false,
-        persist: false,
+        persist: None,
         settings_ready: false,
+        psl_login: false,
         identity: false,
         can_capture: false,
     };
