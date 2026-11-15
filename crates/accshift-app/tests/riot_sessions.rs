@@ -47,7 +47,10 @@ impl Harness {
         }
     }
 
-    fn with<R>(&mut self, run: impl FnOnce(&mut AccountLoading, &mut LoadingContext<'_>) -> R) -> R {
+    fn with<R>(
+        &mut self,
+        run: impl FnOnce(&mut AccountLoading, &mut LoadingContext<'_>) -> R,
+    ) -> R {
         let visible: Vec<String> = self
             .loading
             .loader
@@ -99,7 +102,12 @@ impl Harness {
     }
 
     fn expired_ids(&self) -> Vec<String> {
-        self.loading.loader.warning_states().keys().cloned().collect()
+        self.loading
+            .loader
+            .warning_states()
+            .keys()
+            .cloned()
+            .collect()
     }
 }
 

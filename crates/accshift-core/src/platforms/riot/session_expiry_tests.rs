@@ -75,7 +75,15 @@ fn missing_fields_read_as_unknown_never_expired() {
     let no_window = psl_settings(&CREATED_MS.to_string(), "", "tok");
     let no_token = psl_settings(&CREATED_MS.to_string(), &WINDOW_S.to_string(), "''");
     let garbage = psl_settings("not-a-number", &WINDOW_S.to_string(), "tok");
-    for body in [legacy, no_created, &no_window, &no_token, &garbage, "", "\u{0}\u{1}"] {
+    for body in [
+        legacy,
+        no_created,
+        &no_window,
+        &no_token,
+        &garbage,
+        "",
+        "\u{0}\u{1}",
+    ] {
         assert_eq!(
             session_health(body, far_future),
             SessionHealth::Unknown,
@@ -139,7 +147,11 @@ fn snapshots_on_disk_mark_only_ready_expired_profiles() {
     // Bytes that are not text: unknown.
     let dir = root.join("broken");
     fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("RiotGamesPrivateSettings.yaml"), [0xff, 0xfe, 0x00]).unwrap();
+    fs::write(
+        dir.join("RiotGamesPrivateSettings.yaml"),
+        [0xff, 0xfe, 0x00],
+    )
+    .unwrap();
     let now = DEADLINE_MS + 3 * DAY_MS;
     let profiles = [
         profile("old", "ready"),
@@ -148,9 +160,18 @@ fn snapshots_on_disk_mark_only_ready_expired_profiles() {
         profile("missing", "ready"),
         profile("pending", "awaiting_capture"),
     ];
-    assert_eq!(snapshot_session_health(&root, "missing", now), SessionHealth::Unknown);
-    assert_eq!(snapshot_session_health(&root, "broken", now), SessionHealth::Unknown);
-    assert_eq!(snapshot_session_health(&root, "../old", now), SessionHealth::Unknown);
+    assert_eq!(
+        snapshot_session_health(&root, "missing", now),
+        SessionHealth::Unknown
+    );
+    assert_eq!(
+        snapshot_session_health(&root, "broken", now),
+        SessionHealth::Unknown
+    );
+    assert_eq!(
+        snapshot_session_health(&root, "../old", now),
+        SessionHealth::Unknown
+    );
     assert_eq!(
         expired_profile_ids_in(&profiles, &root, now),
         vec!["old".to_string()]
