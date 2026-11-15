@@ -83,3 +83,11 @@ jobs:
 
       - name: Server tests
         run: corepack pnpm --dir server exec vitest run
+
+      # bundle.mjs helpers: package selection, re-signing, the signer's key
+      # forms (signs with a generated key through the pinned Tauri CLI).
+      - name: Install the bundler
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Bundle script tests
+        run: node --test crates/accshift-egui/bundle/linux-deps.test.mjs

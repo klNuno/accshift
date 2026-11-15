@@ -8,7 +8,7 @@
 // file of the deb and the require tags of the rpm change, the payloads are
 // the same bytes.
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 
@@ -310,4 +310,22 @@ export function signerKey(env, exists = existsSync) {
   if (!key || !exists(key)) return { args: [], env };
   const { TAURI_SIGNING_PRIVATE_KEY: _path, ...rest } = env;
   return { args: ["--private-key-path", key], env: rest };
+}
+
+/**
+ * Signs a rewritten package again for the updater through `sign(file)`, when
+ * the bundler had signed it. Without updater artifacts (`--no-updater`) the
+ * package keeps no signature: one left by an earlier run would not match
+ * it, and the signer, which needs a key, is never called.
+ */
+export function resignPackage(file, updater, sign) {
+  const sig = `${file}.sig`;
+  if (!updater) {
+    rmSync(sig, { force: true });
+    return;
+  }
+  if (!existsSync(sig)) return;
+  rmSync(sig);
+  sign(file);
+  if (!existsSync(sig)) throw new Error(`no updater signature for ${file}`);
 }

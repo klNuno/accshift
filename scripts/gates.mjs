@@ -25,6 +25,7 @@ const GATES = [
   { name: "rust", cmd: "cargo test --workspace --locked" },
   { name: "worker", cmd: `${node} node_modules/typescript/bin/tsc --noEmit`, cwd: "server" },
   { name: "worker-test", cmd: `${node} node_modules/vitest/vitest.mjs run`, cwd: "server" },
+  { name: "bundle", cmd: `${node} --test crates/accshift-egui/bundle/linux-deps.test.mjs` },
 ];
 
 function select(argv) {

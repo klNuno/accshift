@@ -36,6 +36,7 @@ import {
   currentPackages,
   debDepends,
   dropRpmRequires,
+  resignPackage,
   rpmRequires,
   setDebDepends,
   signerKey,
@@ -187,24 +188,15 @@ if (process.platform === "linux") {
   const wanted = config.bundle.linux;
   const packages = (kind, suffix) =>
     currentPackages(join(out, kind), suffix, config.version, bundledAt);
-  // --no-updater: the rewritten package has no signature, and one left by
-  // an earlier run would not match it.
-  const sign = (file) => {
-    const sig = `${file}.sig`;
-    if (flag("--no-updater")) {
-      rmSync(sig, { force: true });
-      return;
-    }
-    if (!existsSync(sig)) return;
-    rmSync(sig);
-    const key = signerKey(process.env);
-    execFileSync(
-      process.execPath,
-      [tauri, "signer", "sign", ...key.args, "--app-version", config.version, file],
-      { stdio: "inherit", env: key.env },
-    );
-    if (!existsSync(sig)) throw new Error(`no updater signature for ${file}`);
-  };
+  const sign = (file) =>
+    resignPackage(file, !flag("--no-updater"), () => {
+      const key = signerKey(process.env);
+      execFileSync(
+        process.execPath,
+        [tauri, "signer", "sign", ...key.args, "--app-version", config.version, file],
+        { stdio: "inherit", env: key.env },
+      );
+    });
   for (const file of packages("deb", ".deb")) {
     setDebDepends(file, wanted.deb.depends ?? []);
     sign(file);
