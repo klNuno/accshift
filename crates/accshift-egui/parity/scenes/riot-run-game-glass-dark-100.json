@@ -1,0 +1,140 @@
+{
+  "id": "riot-run-game-glass-dark-100",
+  "scenario": "dev",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "viewMode": "grid",
+      "animations": "off"
+    }
+  },
+  "steps": [
+    {
+      "wait": 800
+    },
+    {
+      "click": [
+        463,
+        18
+      ]
+    },
+    {
+      "move": [
+        250,
+        18
+      ]
+    },
+    {
+      "wait": 800
+    },
+    {
+      "rclick": [
+        95,
+        152
+      ]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "current"
+    },
+    {
+      "move": [
+        160,
+        172
+      ]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "current-games"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [
+        315,
+        140
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [
+        315,
+        140
+      ]
+    },
+    {
+      "move": [
+        600,
+        300
+      ]
+    },
+    {
+      "wait": 2000
+    },
+    {
+      "rclick": [
+        95,
+        152
+      ]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "switch"
+    },
+    {
+      "move": [
+        160,
+        172
+      ]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "switch-games"
+    },
+    {
+      "click": [
+        365,
+        177
+      ]
+    },
+    {
+      "move": [
+        600,
+        300
+      ]
+    },
+    {
+      "wait": 2000
+    },
+    {
+      "shot": "launched"
+    }
+  ]
+}
