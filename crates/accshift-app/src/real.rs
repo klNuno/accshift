@@ -361,6 +361,9 @@ impl Backend for RealBackend {
     fn riot_capture_profile(&self, profile_id: &str) -> BackendResult<()> {
         riot::capture_profile(self, profile_id)
     }
+    fn riot_check_sessions(&self) -> BackendResult<Vec<String>> {
+        riot::check_sessions(self)
+    }
     fn roblox_add_account_by_cookie(&self, cookie: &str) -> BackendResult<RobloxAccount> {
         roblox::add_account_by_cookie(self, cookie)
     }

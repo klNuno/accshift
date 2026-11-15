@@ -107,6 +107,13 @@ impl AccountLoading {
         let Some(ticket) = self.loader.begin_switch(account) else {
             return false;
         };
+        if adapter.session_expired(&account.id) {
+            // The switch still runs; the launcher will ask for a sign-in.
+            self.notices.push(Toast::new(
+                Text::key(crate::platforms::riot::SESSION_EXPIRED_NOTICE_KEY),
+                ToastKind::Info,
+            ));
+        }
         let settings = ctx.stores.settings().clone();
         let target = account.clone();
         let pending = ctx

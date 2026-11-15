@@ -610,6 +610,12 @@
             "label": "setup pending",
             "snapshot_state": "setup_pending",
             "last_used_at": null
+          },
+          {
+            "id": "riot-5",
+            "label": "expired",
+            "snapshot_state": "ready",
+            "last_used_at": 1760000000000
           }
         ]
       },
@@ -734,6 +740,12 @@
               "label": "setup pending",
               "snapshot_state": "setup_pending",
               "last_used_at": null
+            },
+            {
+              "id": "riot-5",
+              "label": "expired",
+              "snapshot_state": "ready",
+              "last_used_at": 1760000000000
             }
           ],
           "currentProfile": "riot-1"
@@ -764,6 +776,14 @@
           "skipped": [],
           "rejected": []
         }
+      }
+    ],
+    "riot_check_sessions": [
+      {
+        "args": {},
+        "result": [
+          "riot-5"
+        ]
       }
     ],
     "roblox_check_sessions": [

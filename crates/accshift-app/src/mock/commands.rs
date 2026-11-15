@@ -284,6 +284,9 @@ impl Backend for MockBackend {
     fn riot_capture_profile(&self, profile_id: &str) -> BackendResult<()> {
         self.call("riot_capture_profile", json!({ "profileId": profile_id }))
     }
+    fn riot_check_sessions(&self) -> BackendResult<Vec<String>> {
+        self.call("riot_check_sessions", json!({}))
+    }
     fn roblox_add_account_by_cookie(&self, cookie: &str) -> BackendResult<RobloxAccount> {
         self.call("roblox_add_account_by_cookie", json!({ "cookie": cookie }))
     }

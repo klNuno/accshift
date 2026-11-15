@@ -209,3 +209,50 @@ pub fn riot_context_menu_actions(
     ));
     actions
 }
+
+/// The Riot profiles whose saved session is past its restore window, read
+/// offline by the backend from each snapshot when the list loads and after
+/// each switch. A failed read keeps what was known: unknown is never expired.
+#[derive(Debug, Clone, Default)]
+pub struct RiotSessions {
+    expired: std::collections::BTreeSet<String>,
+}
+
+/// The warning of an expired session: orange chip and outline, never red.
+pub fn session_expired_presentation() -> super::warnings::WarningPresentation {
+    use super::warnings::{WarningChip, WarningPresentation, WarningTone};
+    WarningPresentation {
+        tooltip: Text::key("session.expiredTooltip"),
+        card_outline_tone: Some(WarningTone::Orange),
+        list_has_red: false,
+        list_has_orange: true,
+        chips: vec![WarningChip {
+            tone: WarningTone::Orange,
+            text: Text::key("session.expired"),
+        }],
+    }
+}
+
+/// The notice shown before switching to an expired profile.
+pub const SESSION_EXPIRED_NOTICE_KEY: &str = "session.expiredSwitchNotice";
+
+impl RiotSessions {
+    /// Stores the backend's answer; a failure keeps what was known.
+    pub fn finish_check(&mut self, result: crate::error::BackendResult<Vec<String>>) {
+        if let Ok(expired) = result {
+            self.expired = expired.into_iter().collect();
+        }
+    }
+
+    pub fn is_expired(&self, profile_id: &str) -> bool {
+        self.expired.contains(profile_id)
+    }
+
+    /// The known expired sessions as a warning map.
+    pub fn warning_map(&self) -> BTreeMap<String, super::warnings::WarningPresentation> {
+        self.expired
+            .iter()
+            .map(|id| (id.clone(), session_expired_presentation()))
+            .collect()
+    }
+}

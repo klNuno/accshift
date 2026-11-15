@@ -113,6 +113,10 @@ impl LoaderHooks for AdapterHooks<'_> {
     fn has_warnings(&self) -> bool {
         self.adapter.has_warnings()
     }
+
+    fn session_warning_states(&self) -> Option<BTreeMap<String, WarningPresentation>> {
+        self.adapter.session_warning_states()
+    }
 }
 
 /// What [`AccountLoading::poll`] and the handlers read from the app.
@@ -174,6 +178,8 @@ pub struct AccountLoading {
     deferred_runs: Vec<RefreshTicket>,
     /// The sticky `toast.banChecking` is up.
     ban_checking_toast: bool,
+    /// Toasts raised by a handler, sent with the next poll's events.
+    notices: Vec<Toast>,
 }
 
 impl AccountLoading {
@@ -192,6 +198,7 @@ impl AccountLoading {
             deferred_background: Vec::new(),
             deferred_runs: Vec::new(),
             ban_checking_toast: false,
+            notices: Vec::new(),
         }
     }
 

@@ -129,6 +129,7 @@ pub fn dispatch(
         "cs2_bridge_check" => json(b.cs2_bridge_check(&a.str("steamId"))),
         "cs2_bridge_test" => json(b.cs2_bridge_test()),
         "riot_capture_profile" => json(b.riot_capture_profile(&a.str("profileId"))),
+        "riot_check_sessions" => json(b.riot_check_sessions()),
         "roblox_add_account_by_cookie" => json(b.roblox_add_account_by_cookie(&a.str("cookie"))),
         "roblox_get_profile_info" => {
             json(b.roblox_get_profile_info(&a.str_any(&["userId", "accountId"])))
@@ -304,6 +305,7 @@ pub const COMMANDS: &[&str] = &[
     "cs2_bridge_check",
     "cs2_bridge_test",
     "riot_capture_profile",
+    "riot_check_sessions",
     "roblox_add_account_by_cookie",
     "roblox_get_profile_info",
     "roblox_check_sessions",

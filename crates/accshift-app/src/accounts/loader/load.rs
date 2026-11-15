@@ -43,6 +43,9 @@ impl AccountLoader {
         match result {
             Ok(snapshot) => {
                 self.set_accounts(snapshot.accounts);
+                if let Some(sessions) = hooks.session_warning_states() {
+                    self.replace_warning_states(sessions);
+                }
                 if ticket.epoch == self.current_account_epoch {
                     self.current_account = snapshot.current_account;
                 }

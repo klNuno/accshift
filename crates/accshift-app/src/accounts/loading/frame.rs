@@ -6,7 +6,10 @@ impl AccountLoading {
     /// Applies every finished job, runs the deferred work and the priming
     /// timer, then flushes the avatar states. Call once per frame.
     pub fn poll(&mut self, ctx: &mut LoadingContext<'_>) -> Vec<LoadingEvent> {
-        let mut events = Vec::new();
+        let mut events: Vec<LoadingEvent> = std::mem::take(&mut self.notices)
+            .into_iter()
+            .map(LoadingEvent::Toast)
+            .collect();
         self.run_deferred(ctx, &mut events);
         self.poll_loads(ctx, &mut events);
         self.poll_switches(ctx, &mut events);
@@ -199,6 +202,15 @@ impl AccountLoading {
                     let load = adapter.state().roblox_sessions.warning_map();
                     self.land_warnings(&ticket, load, events);
                 }
+            }
+            // Read with the account list, on the job pool: nothing to fetch.
+            "riot" => {
+                let load = WarningLoad {
+                    warnings: adapter.state().riot_sessions.warning_map(),
+                    outcome: None,
+                    toasts: Vec::new(),
+                };
+                self.land_warnings(&ticket, load, events);
             }
             _ => {}
         }

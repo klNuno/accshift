@@ -42,6 +42,9 @@ impl AccountLoader {
                 // switch landed: the epoch keeps it from clobbering ours.
                 self.current_account_epoch += 1;
                 self.current_account = account.id.clone();
+                if let Some(sessions) = hooks.session_warning_states() {
+                    self.replace_warning_states(sessions);
+                }
                 if ticket.platform_id == "steam" {
                     if let Some(previous) = &ticket.previous_account_id {
                         if previous != &account.id {

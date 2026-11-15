@@ -550,6 +550,13 @@ impl Backend for Scripted {
         }
         self.inner.riot_capture_profile(profile_id)
     }
+    fn riot_check_sessions(&self) -> BackendResult<Vec<String>> {
+        self.record("riot_check_sessions", String::new());
+        if let Some(answer) = self.next("riot_check_sessions") {
+            return answer;
+        }
+        self.inner.riot_check_sessions()
+    }
     fn roblox_add_account_by_cookie(&self, cookie: &str) -> BackendResult<RobloxAccount> {
         self.record("roblox_add_account_by_cookie", format!("{:?}", (&cookie,)));
         if let Some(answer) = self.next("roblox_add_account_by_cookie") {
