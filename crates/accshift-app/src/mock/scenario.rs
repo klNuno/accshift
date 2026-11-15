@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 
 #[derive(Deserialize)]
 struct ScenarioFile {
@@ -53,6 +53,8 @@ impl MockState {
             pin_unlocked: true,
             latency_ms: 0,
             failures: BTreeMap::new(),
+            held: Default::default(),
+            waiting: BTreeMap::new(),
             streaming: false,
             cs2: None,
             onboarding: false,
@@ -105,6 +107,7 @@ impl MockBackend {
             skipped: file.skipped,
             repo_root: repo_root.map(Path::to_path_buf),
             state: Mutex::new(MockState::new(&file.spec)),
+            released: Condvar::new(),
             spec: file.spec,
         };
         // The session starts locked when the scenario's settings carry a PIN.

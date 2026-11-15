@@ -1,5 +1,5 @@
-//! The call path of every command: scripted failure, latency, then the
-//! handler of a mocked command or the guard.
+//! The call path of every command: scripted failure, latency, hold, then
+//! the handler of a mocked command or the guard.
 
 use super::scenario::{arg_str, arg_strings, cs2_settings_from_fixture};
 use super::MockBackend;
@@ -47,6 +47,7 @@ impl MockBackend {
             if latency_ms > 0 {
                 std::thread::sleep(Duration::from_millis(latency_ms));
             }
+            self.wait_release(command);
             self.serve(command, &args)?
         } else if GUARDED_PREFIXES
             .iter()
@@ -61,6 +62,21 @@ impl MockBackend {
         };
         serde_json::from_value(value)
             .map_err(|e| BackendError::new(format!("mock data for {command} does not decode: {e}")))
+    }
+
+    /// Waits while `command` is held ([`MockBackend::hold`]).
+    fn wait_release(&self, command: &str) {
+        let mut state = self.lock();
+        if !state.held.contains(command) {
+            return;
+        }
+        *state.waiting.entry(command.to_string()).or_default() += 1;
+        while state.held.contains(command) {
+            state = self.released.wait(state).unwrap_or_else(|e| e.into_inner());
+        }
+        if let Some(count) = state.waiting.get_mut(command) {
+            *count -= 1;
+        }
     }
 
     /// The handler of a mocked command.

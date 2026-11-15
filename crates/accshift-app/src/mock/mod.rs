@@ -15,7 +15,8 @@
 //!   `cs2_bridge_`, `telemetry_`, `pin_`) the mock does not fake is refused
 //!   with `mock mode: <command> is not available`;
 //! - [`MockBackend::fail`] and [`MockBackend::latency`] script failures and
-//!   delays, ignored on the frozen `demo` scenario;
+//!   delays, and [`MockBackend::hold`] keeps a command's calls waiting until
+//!   [`MockBackend::release`], all ignored on the frozen `demo` scenario;
 //! - the scene overrides: [`MockBackend::set_streaming`] makes
 //!   `detect_streaming_software` answer true, [`MockBackend::set_cs2`] turns
 //!   the CS2 bridge on with the rows given, [`MockBackend::set_onboarding`]
@@ -42,9 +43,9 @@ pub use scenario::{cs2_settings_from_fixture, resolve_avatars};
 use accshift_core::pin::{PinLock, PinSettings};
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Condvar, Mutex, MutexGuard};
 
 /// The mock clock, in seconds: every invented date is relative to it.
 pub const NOW: u64 = 1_791_000_000;
@@ -92,6 +93,10 @@ struct MockState {
     pin_unlocked: bool,
     latency_ms: u64,
     failures: BTreeMap<String, String>,
+    /// Commands whose calls wait for [`MockBackend::release`].
+    held: BTreeSet<String>,
+    /// How many calls of each command wait at that gate now.
+    waiting: BTreeMap<String, usize>,
     /// Streaming software reads as running.
     streaming: bool,
     /// The CS2 bridge rows, `None` when the bridge is off.
@@ -116,6 +121,8 @@ pub struct MockBackend {
     skipped: BTreeMap<String, String>,
     repo_root: Option<PathBuf>,
     state: Mutex<MockState>,
+    /// Signalled when a held command is released.
+    released: Condvar,
 }
 
 impl MockBackend {
