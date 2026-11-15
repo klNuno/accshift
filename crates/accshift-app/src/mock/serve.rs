@@ -99,6 +99,12 @@ impl MockBackend {
                 self.switch(&platform, arg_str(args, &["accountId"]))?;
                 Value::Null
             }
+            // The switch with a game: the same PIN gate, delay and current
+            // profile; no game starts.
+            "riot_switch_profile_and_launch_game" => {
+                self.switch("riot", arg_str(args, &["profileId"]))?;
+                Value::Null
+            }
             "pin_unlock" => self.pin_unlock_value(&arg_str(args, &["code"]).unwrap_or_default()),
             "pin_lock" => {
                 self.lock().pin_unlocked = false;

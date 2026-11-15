@@ -1,13 +1,17 @@
 //! Riot: account mapping, the profile cache of the last load, profile info
 //! and menu entries.
 
+use super::api::log_app_event;
 use super::{PlatformAccount, PlatformProfileInfo, StartupSnapshot};
+use crate::backend::Backend;
+use crate::error::BackendResult;
 use crate::menu::platform::{build_platform_context_menu, ForgetConfig};
-use crate::menu::{MenuAction, MenuCommand, PlatformTask};
+use crate::menu::{MenuAction, MenuActionBody, MenuCommand, PlatformTask, SubmenuLoader};
 use crate::text::Text;
 use crate::time::unix_ms_to_seconds;
+use crate::types::RiotGame;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 /// A Riot profile. `snapshot_state` is `setup_pending`, `awaiting_capture`,
@@ -163,17 +167,46 @@ pub fn riot_profile_info(profile: Option<&RiotProfile>) -> Option<PlatformProfil
 /// The toast for a Riot tab with no profiles.
 pub const NO_ACCOUNTS_TOAST_KEY: &str = "toast.noRiotProfilesFound";
 
-/// Capture (or recapture), then forget. No copy entries.
+/// The "switch and run a game" entry of a ready profile: its submenu lists
+/// the installed games once open.
+fn run_game_item(account: &PlatformAccount, is_current: bool) -> MenuAction {
+    MenuAction {
+        id: format!("riot.switch.run.{}", account.id),
+        group: Some("platform.primary".to_string()),
+        label: Text::key(if is_current {
+            "riot.runPick"
+        } else {
+            "riot.switchAndRunPick"
+        }),
+        body: MenuActionBody::Item {
+            command: None,
+            submenu: None,
+            loader: Some(SubmenuLoader::RiotInstalledGames {
+                profile_id: account.id.clone(),
+            }),
+        },
+    }
+}
+
+/// Switch and run a game (ready profiles only), capture (or recapture),
+/// then forget. No copy entries.
 pub fn riot_context_menu_actions(
     account: &PlatformAccount,
     profile: Option<&RiotProfile>,
+    current_account_id: Option<&str>,
 ) -> Vec<MenuAction> {
-    let capture_label = if profile.is_some_and(|profile| profile.snapshot_state == "ready") {
+    let ready = profile.is_some_and(|profile| profile.snapshot_state == "ready");
+    let capture_label = if ready {
         "riot.recaptureSession"
     } else {
         "riot.captureSession"
     };
-    let mut actions = vec![MenuAction::item(
+    let mut actions = Vec::new();
+    if ready {
+        let is_current = current_account_id == Some(account.id.as_str());
+        actions.push(run_game_item(account, is_current));
+    }
+    actions.push(MenuAction::item(
         format!("riot.capture.{}", account.id),
         Some("platform.primary"),
         Text::key(capture_label),
@@ -181,7 +214,7 @@ pub fn riot_context_menu_actions(
             profile_id: account.id.clone(),
             display_name: account.display_name.clone(),
         }),
-    )];
+    ));
     let mut forget = ForgetConfig::keys(
         "riot.forgetConfirmTitle",
         "riot.forgetConfirmMessage",
@@ -208,4 +241,72 @@ pub fn riot_context_menu_actions(
         Some(display),
     ));
     actions
+}
+
+/// The run submenu, once the installed games are in: one entry per game, or
+/// a closing entry when none is installed.
+pub fn installed_games_submenu(profile_id: &str, games: &[RiotGame]) -> Vec<MenuAction> {
+    if games.is_empty() {
+        return vec![MenuAction::item(
+            format!("riot.switch.run.{profile_id}.empty"),
+            None,
+            Text::key("riot.noInstalledGames"),
+            MenuCommand::Close,
+        )];
+    }
+    games
+        .iter()
+        .map(|game| {
+            MenuAction::item(
+                format!("riot.switch.run.{profile_id}.{}", game.product_id),
+                None,
+                Text::raw(game.name.clone()),
+                MenuCommand::Task(PlatformTask::RiotRunGame {
+                    profile_id: profile_id.to_string(),
+                    product_id: game.product_id.clone(),
+                }),
+            )
+        })
+        .collect()
+}
+
+/// Switches to the profile and starts a game, logged before and after.
+pub fn switch_profile_and_launch_game(
+    backend: &dyn Backend,
+    profile_id: &str,
+    product_id: &str,
+) -> BackendResult<()> {
+    const SOURCE: &str = "frontend.riot.switch_and_launch_game";
+    let details = json!({ "profileId": profile_id, "productId": product_id });
+    log_app_event(
+        backend,
+        "info",
+        SOURCE,
+        "Switch+launch request started",
+        Some(&details),
+    );
+    match backend.riot_switch_profile_and_launch_game(profile_id, product_id) {
+        Ok(()) => {
+            log_app_event(
+                backend,
+                "info",
+                SOURCE,
+                "Switch+launch request completed",
+                Some(&details),
+            );
+            Ok(())
+        }
+        Err(error) => {
+            let mut failed = details.as_object().cloned().unwrap_or_default();
+            failed.insert("error".to_string(), Value::String(error.message.clone()));
+            log_app_event(
+                backend,
+                "error",
+                SOURCE,
+                "Switch+launch failed",
+                Some(&Value::Object(failed)),
+            );
+            Err(error)
+        }
+    }
 }

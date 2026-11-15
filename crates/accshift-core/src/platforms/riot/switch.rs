@@ -4,18 +4,40 @@
 use super::*;
 
 pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), String> {
-    log_platform_info(
+    run_switch(
         &app_handle,
+        &profile_id,
         "riot.switch_profile",
+        RIOT_CLIENT_PRODUCT,
+    )
+}
+
+/// The switch, logged under `source`, that ends by starting `product_id`
+/// (the bare client for a plain switch). A failed switch starts the bare
+/// client instead, so a game never opens on the previous account.
+pub(super) fn run_switch(
+    app_handle: &AppCtx,
+    profile_id: &str,
+    source: &'static str,
+    product_id: &str,
+) -> Result<(), String> {
+    let details = build_riot_switch_details(app_handle, Some(profile_id));
+    log_platform_info(
+        app_handle,
+        source,
         "Riot profile switch requested",
-        build_riot_switch_details(&app_handle, Some(&profile_id)),
+        if product_id == RIOT_CLIENT_PRODUCT {
+            details
+        } else {
+            format!("product={product_id}; state={details}")
+        },
     );
     ensure_no_riot_game_running("switching Riot account")?;
-    let client_path = resolve_riot_client_path(&app_handle)?;
-    let target_id = normalize_profile_id(&profile_id)?;
+    let client_path = resolve_riot_client_path(app_handle)?;
+    let target_id = normalize_profile_id(profile_id)?;
     let current_live_identity = detect_live_identity().ok();
-    let mut cfg = config::load_config(&app_handle);
-    cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
+    let mut cfg = config::load_config(app_handle);
+    cleanup_expired_pending_profiles(app_handle, &mut cfg)?;
     if find_profile(&cfg, &target_id).is_none() {
         return Err("Riot profile not found".into());
     }
@@ -30,12 +52,12 @@ pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Stri
     // session file is touched.
     if let Err(error) = graceful_riot_quit() {
         log_platform_error(
-            &app_handle,
-            "riot.switch_profile",
+            app_handle,
+            source,
             "Riot profile switch failed",
             format!(
                 "error={error}; state={}",
-                build_riot_switch_details(&app_handle, Some(&target_id))
+                build_riot_switch_details(app_handle, Some(&target_id))
             ),
         );
         return Err(error);
@@ -44,7 +66,7 @@ pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Stri
     // The client path is resolved once for the whole switch.
     let install_dir = client_path.parent();
     let work = switch_after_quit(
-        &app_handle,
+        app_handle,
         &mut cfg,
         &target_id,
         install_dir,
@@ -52,22 +74,23 @@ pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Stri
     );
     // Relaunch even when the work failed, so a failed switch never leaves the
     // client closed.
-    let result = relaunch_after_quit(work, || launch_riot_client(&client_path));
+    let launched_product = product_after_switch(work.is_ok(), product_id);
+    let result = relaunch_after_quit(work, || launch_riot_product(&client_path, launched_product));
 
     match &result {
         Ok(()) => log_platform_info(
-            &app_handle,
-            "riot.switch_profile",
+            app_handle,
+            source,
             "Riot profile switch completed",
-            build_riot_switch_details(&app_handle, Some(&target_id)),
+            build_riot_switch_details(app_handle, Some(&target_id)),
         ),
         Err(error) => log_platform_error(
-            &app_handle,
-            "riot.switch_profile",
+            app_handle,
+            source,
             "Riot profile switch failed",
             format!(
                 "error={error}; state={}",
-                build_riot_switch_details(&app_handle, Some(&target_id))
+                build_riot_switch_details(app_handle, Some(&target_id))
             ),
         ),
     }

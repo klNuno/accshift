@@ -772,6 +772,23 @@
         "result": []
       }
     ],
+    "riot_get_installed_games": [
+      {
+        "args": {},
+        "result": [
+          {
+            "productId": "valorant",
+            "patchline": "live",
+            "name": "VALORANT"
+          },
+          {
+            "productId": "league_of_legends",
+            "patchline": "live",
+            "name": "League of Legends"
+          }
+        ]
+      }
+    ],
     "roblox_get_profile_info": [],
     "save_client_storage_store": [
       {
@@ -1071,6 +1088,7 @@
   "skipped": {
     "pin_lock": "PIN session state",
     "pin_unlock": "PIN session state, reads the live settings store",
-    "platform_switch_account": "changes the current account after switchDelayMs; modelled from spec"
+    "platform_switch_account": "changes the current account after switchDelayMs; modelled from spec",
+    "riot_switch_profile_and_launch_game": "switches the Riot profile like platform_switch_account; starts no game"
   }
 }

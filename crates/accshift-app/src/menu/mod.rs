@@ -121,6 +121,11 @@ pub enum PlatformTask {
         profile_id: String,
         display_name: String,
     },
+    /// Switch to the Riot profile and start an installed game, then a reload.
+    RiotRunGame {
+        profile_id: String,
+        product_id: String,
+    },
     /// Forget the account, toast, remove it from the grid.
     Forget {
         platform_id: String,
@@ -145,6 +150,8 @@ pub enum SubmenuLoader {
         from_steam_id: String,
         to_steam_id: String,
     },
+    /// The Riot games installed on this machine, to switch and run one.
+    RiotInstalledGames { profile_id: String },
 }
 
 /// One colour swatch.
