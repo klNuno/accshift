@@ -142,6 +142,55 @@ fn read_json_dir(dir: &Path) -> BTreeMap<String, Value> {
     out
 }
 
+/// The user descriptors, read as the loader reads them: every file with a
+/// `.json` extension in any case and any name, in path order. One the
+/// loader accepts goes under the id it declares, the first file of an id
+/// winning as at load, so a restore writes it to `<id>.json` like an
+/// install; one it rejects keeps its own name when that is a safe id still
+/// free. A file that does not parse is left out.
+fn read_descriptor_dir(dir: &Path) -> BTreeMap<String, Value> {
+    let mut out = BTreeMap::new();
+    let Ok(entries) = fs::read_dir(dir) else {
+        return out;
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+        })
+        .collect();
+    files.sort();
+    let mut rejected = Vec::new();
+    for path in files {
+        let Ok(body) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<Value>(&body) else {
+            continue;
+        };
+        match crate::platforms::descriptor::Descriptor::parse("", &body) {
+            Ok(descriptor) => {
+                out.entry(descriptor.id).or_insert(value);
+            }
+            Err(_) => rejected.push((path, value)),
+        }
+    }
+    for (path, value) in rejected {
+        if let Some(stem) = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .filter(|s| is_safe_file_id(s))
+        {
+            out.entry(stem.to_string()).or_insert(value);
+        }
+    }
+    out
+}
+
 /// The settings without the fields of [`LOCAL_SETTINGS_FIELDS`].
 fn portable_settings(value: Value) -> Value {
     match value {
@@ -176,7 +225,7 @@ pub fn build_backup(app: &dyn AppContext, created_at: u64) -> Result<BackupFile,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         stores,
         themes: read_json_dir(&themes_dir(app)?),
-        descriptors: read_json_dir(&crate::platforms::descriptor::user_dir(app)?),
+        descriptors: read_descriptor_dir(&crate::platforms::descriptor::user_dir(app)?),
     })
 }
 
@@ -893,6 +942,61 @@ mod tests {
             store(&to, STORE_ACCOUNT_CARD_NOTES),
             Some(json!({"765": "main account"}))
         );
+    }
+
+    /// The user platforms the loader registers, first file of an id
+    /// winning, as `(id, name)` sorted by id.
+    fn loaded_platforms(app: &Ctx) -> Vec<(String, String)> {
+        let mut seen = HashSet::new();
+        let mut loaded: Vec<(String, String)> = crate::platforms::descriptor::load_user(app)
+            .0
+            .into_iter()
+            .filter(|(_, d)| seen.insert(d.id.clone()))
+            .map(|(_, d)| (d.id, d.name))
+            .collect();
+        loaded.sort();
+        loaded
+    }
+
+    /// Exports `from`, restores the file on a fresh install and answers the
+    /// platforms both load.
+    fn platforms_across_a_backup(
+        tag: &str,
+        files: &[(&str, &str, &str)],
+    ) -> [Vec<(String, String)>; 2] {
+        use crate::platforms::descriptor::test_support::{drop_in, fixture};
+        let from = ctx(&format!("{tag}-from"));
+        for (file, id, name) in files {
+            let body = fixture(id, &from.0).replace("Fixture Launcher", name);
+            drop_in(&from, file, &body);
+        }
+        let backup = from.0.join("backup.json");
+        export_backup(&from, &backup).unwrap();
+        let to = ctx(&format!("{tag}-to"));
+        restore_backup(&to, &backup).unwrap();
+        [loaded_platforms(&from), loaded_platforms(&to)]
+    }
+
+    #[test]
+    fn a_descriptor_with_an_upper_case_extension_is_backed_up() {
+        let [from, to] = platforms_across_a_backup("ext-case", &[("acme.JSON", "acme", "Acme")]);
+        assert_eq!(from, [("acme".to_string(), "Acme".to_string())]);
+        assert_eq!(to, from);
+    }
+
+    #[test]
+    fn a_descriptor_is_backed_up_whatever_its_file_name() {
+        let [from, to] = platforms_across_a_backup(
+            "stem",
+            &[
+                ("My Platform.json", "mine", "Mine"),
+                // Two files declare one id: the loader keeps the first.
+                ("a copy.json", "dup", "First"),
+                ("b.json", "dup", "Second"),
+            ],
+        );
+        assert_eq!(from.len(), 2, "{from:?}");
+        assert_eq!(to, from);
     }
 
     #[test]
