@@ -341,7 +341,8 @@ fn an_export_cancelled_in_the_dialog_holds_nothing() {
 }
 
 /// The restore replaced the files but the stores cannot be read back: the
-/// old stores in memory are never written over them.
+/// old stores in memory are never written over them, and the app asks for
+/// the restart that loads them.
 fn restored_but_unread(ctx: &Context) -> (AppModel, Arc<MockBackend>) {
     let (mut app, mock) = restore_app(ctx);
     frame(&mut app, ctx);
@@ -351,9 +352,7 @@ fn restored_but_unread(ctx: &Context) -> (AppModel, Arc<MockBackend>) {
     pump_until(&mut app, ctx, |_| mock.waiting("backup_restore") == 1);
     set_note(&mut app, "typed while restoring");
     mock.release("backup_restore");
-    pump_until(&mut app, ctx, |_| {
-        mock.seen("load_client_storage_snapshot") >= 2
-    });
+    pump_until(&mut app, ctx, |a| a.backup.restart_needed());
     for _ in 0..10 {
         frame(&mut app, ctx);
     }
@@ -367,22 +366,131 @@ fn restored_but_unread(ctx: &Context) -> (AppModel, Arc<MockBackend>) {
 }
 
 #[test]
-fn stores_not_read_back_are_held_then_adopted_once_read() {
+fn stores_not_read_back_lock_the_app_until_it_restarts() {
+    // Regression (LOCKED_EDIT, LOCKED_FOLDER): the app stayed editable on
+    // the old stores while it retried the read back; the edits it showed
+    // were dropped once the read back went through, or written over the
+    // restored files.
     let ctx = Context::default();
     let (mut app, mock) = restored_but_unread(&ctx);
-    let restart = translate(app.booted().unwrap().locale, "settings.backupRestartNeeded");
-    assert_eq!(app.backup.card.notice, restart);
-    assert!(mock.fail("load_client_storage_snapshot", None));
-    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
-    assert_eq!(note(&app), "restored note");
-    assert!(
-        app.backup.card.notice.contains("pre-restore-1"),
-        "{}",
-        app.backup.card.notice
+    let locale = app.booted().unwrap().locale;
+    assert_eq!(
+        app.backup.card.notice,
+        translate(locale, "settings.backupRestartNeeded")
     );
-    for _ in 0..5 {
-        frame(&mut app, &ctx);
+    let mode = app.booted().unwrap().stores.view_mode();
+    let next = if mode == ViewMode::List {
+        ViewMode::Grid
+    } else {
+        ViewMode::List
+    };
+    app.apply(&ctx, vec![Action::SetViewMode(next)]);
+    assert_eq!(
+        app.booted().unwrap().stores.view_mode(),
+        mode,
+        "LOCKED_EDIT: an edit applied on the old stores"
+    );
+    // A new folder, through the menu and its dialog.
+    let folders = app.booted().unwrap().stores.folders().folders.len();
+    app.apply(
+        &ctx,
+        vec![Action::ContextMenu(
+            MenuTarget::Background,
+            egui::pos2(200.0, 200.0),
+        )],
+    );
+    app.apply(
+        &ctx,
+        vec![Action::Menu(
+            app.menu_open_id,
+            crate::ui::components::context_menu::MenuEvent::Activate(
+                accshift_app::actions::dialogs::AppMenuCommand::NewFolder,
+            ),
+        )],
+    );
+    if let Some(input) = app.dialog_mounts().0 {
+        app.apply(
+            &ctx,
+            vec![
+                Action::InputDialog(input, DialogEvent::Input("Created after restore".into())),
+                Action::InputDialog(input, DialogEvent::Submit),
+            ],
+        );
     }
+    assert_eq!(
+        app.booted().unwrap().stores.folders().folders.len(),
+        folders,
+        "LOCKED_FOLDER: a folder created on the old stores"
+    );
+    // The stores read again: nothing retries, the app stays locked.
+    assert!(mock.fail("load_client_storage_snapshot", None));
+    let reads = mock.seen("load_client_storage_snapshot");
+    for _ in 0..20 {
+        frame(&mut app, &ctx);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(app.backup.restart_needed());
+    assert_eq!(mock.seen("load_client_storage_snapshot"), reads);
+    assert_eq!(mock.seen(SAVE), 0, "a restored file was written over");
+
+    // "Restart now": the last flush writes nothing, then the relaunch.
+    app.apply(&ctx, vec![Action::RestartAfterRestore]);
+    assert_eq!(app.updates.relaunch_requests(), 1);
+    assert_eq!(mock.seen(SAVE), 0, "the restart flush wrote the old stores");
+    assert!(app.backup.restart_needed());
+}
+
+#[test]
+fn the_restart_modal_is_drawn_over_the_app_and_its_button_restarts() {
+    let ctx = Context::default();
+    let (mut app, mock) = restored_but_unread(&ctx);
+    let locale = app.booted().unwrap().locale;
+    let id = egui::Id::unique(crate::ui::components::dialog::NOTICE_ID)
+        .with(0u64)
+        .with("ok");
+    let rect = ctx
+        .read_response(id)
+        .map(|r| r.rect)
+        .expect("the restart button is drawn");
+    assert!(!translate(locale, "settings.backupRestartNow").is_empty());
+    // Escape closes nothing: the modal stays.
+    let mut input = egui::RawInput::default();
+    input.events.push(egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    let mut output = ctx.run_ui(input, |ui| app.frame(ui));
+    output.textures_delta.clear();
+    assert!(app.backup.restart_needed());
+    assert_eq!(app.updates.relaunch_requests(), 0);
+    // A click on the button.
+    let at = rect.center();
+    for events in [
+        vec![egui::Event::PointerMoved(at)],
+        vec![egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        }],
+        vec![egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    ] {
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| app.frame(ui));
+        output.textures_delta.clear();
+    }
+    assert_eq!(app.updates.relaunch_requests(), 1);
     assert_eq!(mock.seen(SAVE), 0);
 }
 
@@ -392,7 +500,8 @@ fn closing_with_stores_not_read_back_writes_none_of_the_old_ones() {
     let (mut app, mock) = restored_but_unread(&ctx);
     app.flush_app_state().unwrap();
     assert_eq!(mock.seen(SAVE), 0, "the close flush wrote the old stores");
-    assert!(!app.backup.holds_writes());
+    // A close that does not end the process leaves the app as locked.
+    assert!(app.backup.restart_needed());
 }
 
 #[test]
@@ -505,18 +614,18 @@ fn descriptor_and_theme_writes_are_refused_while_a_backup_runs() {
 }
 
 #[test]
-fn an_update_install_waits_for_stores_not_read_back() {
+fn no_update_installs_while_a_restart_is_needed() {
     let ctx = Context::default();
     let (mut app, mock) = restored_but_unread(&ctx);
     app.updates.ready_for_test();
     app.apply_update(&ctx);
     // Refused before its flush: the boundary and the update both stay.
-    assert!(app.backup.holds_writes());
+    assert!(app.backup.restart_needed());
     assert!(app.updates.ready());
     assert_eq!(mock.seen(SAVE), 0);
-
-    // The app goes on: edits stay held, the read back keeps retrying.
-    set_note(&mut app, "typed after the update click");
+    // Through the title bar: the action is dropped under the modal.
+    app.apply(&ctx, vec![Action::ApplyUpdate]);
+    assert!(app.updates.ready());
     for _ in 0..10 {
         frame(&mut app, &ctx);
         std::thread::sleep(std::time::Duration::from_millis(5));
@@ -526,13 +635,7 @@ fn an_update_install_waits_for_stores_not_read_back() {
         0,
         "the old notes went over the restored ones"
     );
-    let reads = mock.seen("load_client_storage_snapshot");
-    pump_until(&mut app, &ctx, |_| {
-        mock.seen("load_client_storage_snapshot") > reads
-    });
-    assert!(mock.fail("load_client_storage_snapshot", None));
-    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
-    assert_eq!(note(&app), "restored note");
+    assert_ne!(note(&app), "restored note");
 }
 
 #[test]
@@ -608,7 +711,9 @@ fn a_write_failing_right_after_the_boundary_goes_up_cancels_the_restore() {
 }
 
 #[test]
-fn a_restore_whose_themes_cannot_be_read_keeps_its_custom_theme() {
+fn a_restore_whose_theme_cannot_be_read_keeps_it_selected_until_it_loads() {
+    // Regression: a theme file locked during the read back failed it, or
+    // the restored settings were sanitized to the default theme and saved.
     let ctx = Context::default();
     let theme = json!({"schemaVersion": 1, "id": "mine", "name": "Mine", "colorScheme": "dark", "tokens": {"bgCard": "#112233"}});
     let (mut app, mock) = restore_app_with(&ctx, |commands| {
@@ -616,44 +721,49 @@ fn a_restore_whose_themes_cannot_be_read_keeps_its_custom_theme() {
             ["themeId"] = json!("mine");
         commands["list_custom_themes"] = json!([{ "args": {}, "result": [theme] }]);
     });
-    frame(&mut app, &ctx);
-    assert!(mock.fail("list_custom_themes", Some("themes unreadable")));
+    focus(&mut app, &ctx, true);
+    let before = app.booted().unwrap().theme.vars.bg_card;
+    assert!(mock.fail("list_custom_themes", Some("theme file locked")));
     app.start_backup_restore("C:/b.json".into());
-    pump_until(&mut app, &ctx, |_| mock.seen("list_custom_themes") >= 1);
-    for _ in 0..10 {
-        frame(&mut app, &ctx);
-    }
-    // Not adopted while the themes the settings name are unknown.
-    assert!(
-        app.backup.holds_writes(),
-        "adopted with theme {}",
-        app.booted().unwrap().stores.settings().theme_id
-    );
-    assert_ne!(note(&app), "restored note");
-    // The read back retries at its pace, on a job: a list that keeps
-    // failing neither spins nor holds the frame.
-    let reads = mock.seen("list_custom_themes");
-    let started = Instant::now();
-    for _ in 0..40 {
-        let frame_started = Instant::now();
-        frame(&mut app, &ctx);
-        assert!(frame_started.elapsed() < std::time::Duration::from_millis(500));
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    let retries = mock.seen("list_custom_themes") - reads;
-    // READ_BACK_RETRY is 50 ms under test.
-    let paced = started.elapsed().as_millis() / 50 + 1;
-    assert!(
-        retries as u128 <= paced,
-        "{retries} reads in {paced} retry slots"
-    );
-    assert!(app.backup.holds_writes());
-    assert!(mock.fail("list_custom_themes", None));
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
-    assert_eq!(app.booted().unwrap().stores.settings().theme_id, "mine");
+    // Adopted: the restored stores, the theme they name kept.
+    assert!(!app.backup.restart_needed());
     assert_eq!(note(&app), "restored note");
+    let b = app.booted().unwrap();
+    assert_eq!(b.stores.settings().theme_id, "mine");
+    assert!(b.registry.document("mine").is_none());
     for _ in 0..5 {
         frame(&mut app, &ctx);
     }
+    assert_eq!(mock.seen(SAVE), 0, "the restored settings were rewritten");
+
+    // The file reads again: the next focus loads the theme.
+    assert!(mock.fail("list_custom_themes", None));
+    focus(&mut app, &ctx, false);
+    focus(&mut app, &ctx, true);
+    let deadline = Instant::now() + std::time::Duration::from_secs(3);
+    while app.booted().unwrap().registry.document("mine").is_none() {
+        assert!(Instant::now() < deadline, "the theme never loaded");
+        focus(&mut app, &ctx, true);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let b = app.booted().unwrap();
+    assert_eq!(b.stores.settings().theme_id, "mine");
+    assert_ne!(b.theme.vars.bg_card, before, "the theme does not draw");
     assert_eq!(mock.seen(SAVE), 0);
+}
+
+/// A frame with the window focused or not.
+fn focus(app: &mut AppModel, ctx: &Context, focused: bool) {
+    let mut input = egui::RawInput {
+        focused,
+        ..Default::default()
+    };
+    input
+        .viewports
+        .get_mut(&egui::ViewportId::ROOT)
+        .unwrap()
+        .focused = Some(focused);
+    let mut output = ctx.run_ui(input, |ui| app.frame(ui));
+    output.textures_delta.clear();
 }

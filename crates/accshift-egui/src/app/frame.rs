@@ -47,13 +47,20 @@ impl AppModel {
         self.track_drag(&ctx);
         self.update_accounts(&ctx);
         self.tick_personas(&ctx);
-        self.tick_deep_links(&ctx);
+        // The restart modal takes no shortcut and no link: the stores in
+        // memory are the ones the restore replaced.
+        let restart_needed = self.backup.restart_needed();
+        if !restart_needed {
+            self.tick_deep_links(&ctx);
+        }
         self.tick_updates(&ctx);
         self.tick_toasts(&ctx);
         // The window-level key handling, before any widget reads keys.
         self.track_card_focus(&ctx);
-        self.dispatch_keys(&ctx);
-        self.dispatch_mouse_back(&ctx);
+        if !restart_needed {
+            self.dispatch_keys(&ctx);
+            self.dispatch_mouse_back(&ctx);
+        }
         self.mount_dialogs();
         self.track_bulk_paint(&ctx);
         let actions = {

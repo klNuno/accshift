@@ -23,14 +23,16 @@
 //! app registers the restored descriptors first, so the settings that name a
 //! restored platform are sanitized against them, then adopts the whole
 //! snapshot, dropping the writes queued meanwhile, and only then lets writes
-//! and refreshes run again. When the stores or the custom themes cannot be
-//! read back, the boundary stays up and retries: the old stores in memory
-//! are never written over the restored files, not even on close, and the
-//! restored settings are never adopted without the custom theme they name.
+//! and refreshes run again. A custom theme file that cannot be read is left
+//! out without changing the theme the settings name, which applies once it
+//! reads. When the stores cannot be read back, the boundary stays up for
+//! good: a modal asks for the restart that loads them, no edit is taken
+//! meanwhile, and the old stores in memory are never written over the
+//! restored files, not even on close.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use accshift_app::actions::dialogs::ConfirmTicket;
 use accshift_app::backend::Backend;
@@ -44,10 +46,6 @@ use egui::Context;
 
 use super::settings_panel::{apply_report, restore_confirm, BackupState};
 use super::AppModel;
-
-/// How long a restore whose stores could not be read back waits before it
-/// reads them again.
-const READ_BACK_RETRY: Duration = Duration::from_millis(if cfg!(test) { 50 } else { 2000 });
 
 /// The descriptor and custom theme writes, which bypass the client-store
 /// queue. Each admitted job counts until its call returns, even when the
@@ -193,10 +191,11 @@ pub(super) struct Restored {
 }
 
 /// The stores and the custom themes as now on disk, read together: the
-/// restored settings may name a restored theme.
+/// restored settings may name a restored theme. `themes` is `None` when the
+/// themes folder cannot be listed: the themes loaded stay.
 pub(super) struct ReadBack {
     snapshot: ClientStorageSnapshot,
-    themes: Vec<CustomThemePayload>,
+    themes: Option<Vec<CustomThemePayload>>,
 }
 
 /// What a boundary is held for.
@@ -221,12 +220,11 @@ enum Stage {
     Exporting(Pending<BackendResult<BackupReport>>),
     Restoring(Pending<BackendResult<Restored>>),
     /// The files were restored but the stores could not be read back: the
-    /// memory still holds the old ones, which must never be written.
-    Unadopted {
-        /// The notice once the stores are read back.
-        done: String,
-        job: Option<Pending<BackendResult<ReadBack>>>,
-        retry_at: Instant,
+    /// memory still holds the old ones, which must never be written. Only a
+    /// restart leaves it.
+    RestartNeeded {
+        /// Why the last restart attempt failed.
+        failed: Option<String>,
     },
 }
 
@@ -252,6 +250,20 @@ impl BackupFlow {
     pub(super) fn save_failed(&mut self, error: &BackendError) {
         if let Stage::Draining { failed, .. } = &mut self.stage {
             failed.get_or_insert_with(|| error.message.clone());
+        }
+    }
+
+    /// The restored stores could not be read back: the app takes no edit
+    /// and shows the restart modal until it restarts.
+    pub(super) fn restart_needed(&self) -> bool {
+        matches!(self.stage, Stage::RestartNeeded { .. })
+    }
+
+    /// Why the last restart attempt failed, for the modal.
+    pub(super) fn restart_failure(&self) -> Option<&str> {
+        match &self.stage {
+            Stage::RestartNeeded { failed } => failed.as_deref(),
+            _ => None,
         }
     }
 
@@ -325,16 +337,17 @@ fn restore_job(b: &dyn Backend, path: &str) -> BackendResult<Restored> {
     })
 }
 
-/// The stores and the custom themes as now on disk; an error when either
-/// cannot be read.
+/// The stores and the custom themes as now on disk; an error when the
+/// stores cannot be read.
 fn read_back(b: &dyn Backend) -> BackendResult<ReadBack> {
     let snapshot = b.load_client_storage_snapshot()?;
-    let themes = b
-        .list_custom_themes()?
-        .iter()
-        .filter_map(|t| serde_json::to_value(t).ok())
-        .filter_map(|v| serde_json::from_value(v).ok())
-        .collect();
+    let themes = b.list_custom_themes().ok().map(|themes| {
+        themes
+            .iter()
+            .filter_map(|t| serde_json::to_value(t).ok())
+            .filter_map(|v| serde_json::from_value(v).ok())
+            .collect()
+    });
     Ok(ReadBack { snapshot, themes })
 }
 
@@ -371,7 +384,6 @@ impl AppModel {
         self.drain_boundary();
         self.poll_export();
         self.poll_restore(ctx);
-        self.poll_read_back(ctx);
         let busy = self.backup.busy();
         self.backup.card.busy = busy;
         if let Some(panel) = self.settings_panel.as_mut() {
@@ -555,50 +567,21 @@ impl AppModel {
         self.finish_restore(ctx, result);
     }
 
-    /// The restored stores read again after a failed read back: adopted
-    /// once read, retried until then.
-    fn poll_read_back(&mut self, ctx: &Context) {
-        let Stage::Unadopted { job, retry_at, .. } = &mut self.backup.stage else {
-            return;
-        };
-        let Some(pending) = job else {
-            let now = Instant::now();
-            if now < *retry_at {
-                ctx.request_repaint_after(retry_at.saturating_duration_since(now));
-                return;
-            }
-            *job = Some(self.jobs.run(read_back));
-            return;
-        };
-        let result = match pending.poll() {
-            Poll::Waiting => return,
-            Poll::Ready(result) => result,
-            Poll::Gone => Err(BackendError::new("job panicked")),
-        };
-        match result {
-            Ok(read) => {
-                let Stage::Unadopted { done, .. } = std::mem::take(&mut self.backup.stage) else {
-                    return;
-                };
-                self.backup.set_stage(Stage::Idle);
-                self.adopt_restored(ctx, read);
-                self.backup.set_notice(done, false);
-            }
-            Err(_) => {
-                *job = None;
-                *retry_at = Instant::now() + READ_BACK_RETRY;
-                ctx.request_repaint_after(READ_BACK_RETRY);
-            }
-        }
-    }
-
     /// On close: waits for an export or a restore job, so the restored
     /// stores are adopted before the last writes. Stores that cannot be
-    /// read back drop the writes queued for the old ones. A backup still
-    /// draining does not start. Teardown only: it lifts the boundary, so
-    /// the update install, the one flush that may leave the app open, is
-    /// refused while a backup holds the writes.
+    /// read back drop the writes queued for the old ones, and a restart
+    /// still needed keeps the boundary up: a restart that fails leaves the
+    /// app as locked as before. A backup still draining does not start.
+    /// Teardown only: it lifts any other boundary, so the update install,
+    /// the one flush that may leave the app open, is refused while a backup
+    /// holds the writes.
     pub(super) fn settle_backup_on_close(&mut self) {
+        if self.backup.restart_needed() {
+            if let Some(b) = self.booted.as_mut() {
+                b.stores.discard_pending_saves();
+            }
+            return;
+        }
         let snapshot = match std::mem::take(&mut self.backup.stage) {
             Stage::Idle | Stage::Draining { .. } => None,
             Stage::Exporting(job) => {
@@ -610,11 +593,7 @@ impl AppModel {
                 // The files were not replaced: the old stores stand.
                 _ => None,
             },
-            Stage::Unadopted { job, .. } => Some(
-                job.and_then(|job| job.wait())
-                    .unwrap_or_else(|| Err(BackendError::new("not read back")))
-                    .map(|read| read.snapshot),
-            ),
+            Stage::RestartNeeded { .. } => None,
         };
         self.backup.set_stage(Stage::Idle);
         let Some(snapshot) = snapshot else {
@@ -635,7 +614,9 @@ impl AppModel {
     /// Takes the restored themes, then the restored stores, which may name
     /// one of them, and refreshes what reads them.
     fn adopt_restored(&mut self, ctx: &Context, read: ReadBack) {
-        self.apply_theme_payloads(&read.themes);
+        if let Some(themes) = &read.themes {
+            self.apply_theme_payloads(themes);
+        }
         let changed = self
             .booted
             .as_mut()
@@ -687,16 +668,40 @@ impl AppModel {
                 self.backup.set_notice(done, false);
             }
             Err(_) => {
-                // The boundary stays up until the stores are read back.
+                // The old stores must never be written over the restored
+                // files: the boundary stays up until the restart, and the
+                // writes queued for them go.
                 self.backup
                     .set_notice(translate(locale, "settings.backupRestartNeeded"), false);
-                self.backup.set_stage(Stage::Unadopted {
-                    done,
-                    job: None,
-                    retry_at: Instant::now() + READ_BACK_RETRY,
-                });
-                ctx.request_repaint_after(READ_BACK_RETRY);
+                self.backup.set_stage(Stage::RestartNeeded { failed: None });
+                if let Some(b) = self.booted.as_mut() {
+                    b.stores.discard_pending_saves();
+                }
+                ctx.request_repaint();
             }
+        }
+    }
+
+    /// The restart modal's "Restart now": the last flush, which writes
+    /// nothing over the restored files, then accshift starts again and this
+    /// process exits. When no new process starts, the modal stays with the
+    /// error.
+    pub(super) fn restart_after_restore(&mut self, ctx: &Context) {
+        if !self.backup.restart_needed() {
+            return;
+        }
+        let result = self
+            .flush_app_state()
+            .and_then(|()| self.updates.relaunch(ctx));
+        if let Err(error) = result {
+            let text = with_one(
+                self.backup_locale(),
+                "settings.backupRestartFailed",
+                "error",
+                error,
+            );
+            self.backup
+                .set_stage(Stage::RestartNeeded { failed: Some(text) });
         }
     }
 }

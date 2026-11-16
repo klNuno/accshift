@@ -40,6 +40,11 @@ pub(super) struct Updates {
     running: Option<Receiver<Option<CommandResult>>>,
     /// [`InstallerHost::run_on_main_thread`] tasks, run by `tick_updates`.
     main_tasks: (Sender<MainTask>, Receiver<MainTask>),
+    /// A normal run: [`Self::relaunch`] starts accshift again. Mock and
+    /// scene runs only count the request.
+    relaunches: bool,
+    /// The relaunches asked for in a run that does not relaunch.
+    relaunch_requests: usize,
 }
 
 impl Updates {
@@ -51,6 +56,8 @@ impl Updates {
             due: None,
             running: None,
             main_tasks: mpsc::channel(),
+            relaunches: false,
+            relaunch_requests: 0,
         }
     }
 
@@ -64,7 +71,36 @@ impl Updates {
             due: Some(now + UPDATE_CHECK_DELAY),
             running: None,
             main_tasks: mpsc::channel(),
+            relaunches: true,
+            relaunch_requests: 0,
         }
+    }
+
+    /// Starts accshift again and exits, as the update relaunch does, the
+    /// window hidden first. Returns only when no new process started; the
+    /// app then stays open as the single instance. The caller flushed what
+    /// had to be written. A mock or scene run counts the request and stays.
+    pub(super) fn relaunch(&mut self, ctx: &Context) -> Result<(), String> {
+        if !self.relaunches {
+            self.relaunch_requests += 1;
+            return Ok(());
+        }
+        let args: Vec<_> = std::env::args_os().collect();
+        process::restart(
+            &process::SystemProcess,
+            process::current_binary(),
+            &process::relaunch_args(&args),
+            process::release_instance,
+            process::restore_instance,
+            || ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false)),
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    /// The relaunches a run that does not relaunch was asked for.
+    #[cfg(test)]
+    pub(super) fn relaunch_requests(&self) -> usize {
+        self.relaunch_requests
     }
 
     /// The title bar button: its label, its tooltip, and whether it is

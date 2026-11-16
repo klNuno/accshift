@@ -163,6 +163,9 @@ pub enum Action {
     Onboarding(onboarding::OnboardingEvent),
     /// The personas panel.
     Personas(personas::PersonasEvent),
+    /// The restart modal of a restore whose stores could not be read
+    /// back: "Restart now".
+    RestartAfterRestore,
 }
 
 /// What a right click opened the menu on.
