@@ -103,9 +103,11 @@ pub fn install_file(app: &dyn AppContext, path: &Path) -> Result<String, String>
 
     // The validated text is written rather than the file copied: the file the
     // user picked stays theirs, and a change to it after validation never
-    // reaches the descriptor folder. Through a temp file renamed into place,
-    // so a write that fails leaves the descriptor it replaces whole.
-    crate::storage::write_bytes_atomic(&target, body.as_bytes())?;
+    // reaches the descriptor folder. Through a synced temp file renamed over
+    // the descriptor, never copied over it: the loader reads no `.bak`, so
+    // when the write or the rename fails, the descriptor it would replace
+    // keeps every old byte and the error comes back.
+    crate::storage::write_bytes_replacing(&target, body.as_bytes())?;
     Ok(preview.file_name)
 }
 
@@ -333,6 +335,56 @@ mod tests {
             "the write went straight to the descriptor"
         );
         assert_eq!(std::fs::read(&target).unwrap(), before);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_install_whose_final_replace_fails_keeps_the_old_descriptor_everywhere() {
+        let _registry = super::super::test_support::registry_lock();
+        let root = scratch("install-replace-fails");
+        let ctx = TempCtx { root: root.clone() };
+        let first = write(&root, "one.json", &fixture("acme", &root));
+        install_file(&ctx, &first).unwrap();
+        let dir = user_dir(&ctx).unwrap();
+        let target = dir.join("acme.json");
+        let before = std::fs::read(&target).unwrap();
+        let second = write(
+            &root,
+            "two.json",
+            &fixture("acme", &root).replace("Fixture Launcher", "Renamed Launcher"),
+        );
+
+        // The temp file is written; renaming it over the descriptor fails.
+        crate::storage::force_rename_failures(true);
+        let result = install_file(&ctx, &second);
+        crate::storage::force_rename_failures(false);
+
+        assert!(result.is_err(), "the install claimed success: {result:?}");
+        // Disk: the old bytes, and nothing beside them.
+        assert_eq!(std::fs::read(&target).unwrap(), before);
+        let files: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(files, ["acme.json"]);
+        // Registry: the old platform loads.
+        let loaded: Vec<(String, String)> = crate::platforms::reload_user_platforms(&ctx)
+            .loaded
+            .into_iter()
+            .map(|d| (d.id, d.name))
+            .collect();
+        crate::platforms::reload_user_platforms(&TempCtx {
+            root: scratch("install-replace-fails-empty"),
+        });
+        assert_eq!(
+            loaded,
+            [("acme".to_string(), "Fixture Launcher".to_string())]
+        );
+        // Export: the old descriptor.
+        let backup = crate::storage::build_backup(&ctx, 1).unwrap();
+        assert_eq!(backup.descriptors.keys().collect::<Vec<_>>(), ["acme.json"]);
+        assert_eq!(backup.descriptors["acme.json"]["name"], "Fixture Launcher");
         let _ = std::fs::remove_dir_all(&root);
     }
 

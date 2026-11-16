@@ -15,7 +15,8 @@
 //! object is refused before anything is written. It then copies the current
 //! files and their `.bak` recovery copies to
 //! `user/backups/pre-restore-<timestamp>/`, writes each store atomically and
-//! puts the files it already replaced back when a later write fails. Stores
+//! puts the files it already replaced back when a later write fails, or says
+//! which of them it could not put back. Stores
 //! are replaced, bar the settings fields of this PC, which are never removed
 //! or replaced; themes are added or overwritten by id and descriptors by file
 //! name, and neither is ever deleted. Account ids the file names are kept as
@@ -24,10 +25,15 @@
 //! The descriptors are the files the loader reads, each under its own file
 //! name, with no choice made between two files that declare one id: after a
 //! restore the loader makes the same choice on each OS as before, and a
-//! restore on the same PC overwrites the file it was taken from. A file name
-//! that is not a plain `*.json` name refuses the whole backup before any
-//! write. A backup written before kept a descriptor under the id it declared:
-//! that key is restored as `<id>.json`, as then.
+//! restore on the same PC overwrites the file it was taken from. The export
+//! leaves out no file the loader reads: one it cannot read or name fails it,
+//! as does a backup too big for a restore to read. Before any write, the
+//! restore refuses the whole backup when a file name could leave the
+//! descriptor folder, cannot be written on this OS (a Linux name holding `:`
+//! restored on Windows), or names the same file as another one here (`A.json`
+//! and `a.json` on Windows or macOS). A descriptor replaces the file before
+//! it whole or not at all. A backup written before kept a descriptor under
+//! the id it declared: that key is restored as `<id>.json`, as then.
 
 #[allow(unused_imports)]
 use super::*;
@@ -127,14 +133,25 @@ fn is_safe_file_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// The `<id>.json` files of a folder that parse, by id. A missing folder is
-/// empty; a file that does not parse is left out.
-fn read_json_dir(dir: &Path) -> BTreeMap<String, Value> {
-    let mut out = BTreeMap::new();
-    let Ok(entries) = fs::read_dir(dir) else {
-        return out;
+/// The entries of `dir`; a folder that is not there has none. Any other
+/// error fails the export rather than leave files out.
+fn dir_entries(dir: &Path) -> Result<Vec<fs::DirEntry>, String> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("Could not read {}: {e}", dir.display())),
     };
-    for entry in entries.flatten() {
+    entries
+        .map(|entry| entry.map_err(|e| format!("Could not read {}: {e}", dir.display())))
+        .collect()
+}
+
+/// The `<id>.json` files of a folder that parse, by id. A missing folder is
+/// empty; a file that does not parse is left out, as the theme list leaves
+/// it out; a file that cannot be read fails the export.
+fn read_json_dir(dir: &Path) -> Result<BTreeMap<String, Value>, String> {
+    let mut out = BTreeMap::new();
+    for entry in dir_entries(dir)? {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
@@ -145,48 +162,103 @@ fn read_json_dir(dir: &Path) -> BTreeMap<String, Value> {
         if !is_safe_file_id(id) {
             continue;
         }
-        if let Ok(Some(value)) = read_json_if_exists::<Value>(&path) {
-            out.insert(id.to_string(), value);
+        match read_json_classified::<Value>(&path) {
+            Ok(Some(value)) => {
+                out.insert(id.to_string(), value);
+            }
+            Ok(None) | Err(JsonReadError::Corrupt(_)) => {}
+            Err(JsonReadError::Unreadable(message)) => return Err(message),
         }
     }
-    out
+    Ok(out)
 }
 
-/// Names Windows keeps for a device, whatever the extension.
-const RESERVED_NAMES: [&str; 22] = [
-    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
-    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
-];
-
-/// A descriptor file name a restore may write on any OS: one plain name
-/// ending in `.json` in any case, with no separator, drive, parent step,
-/// character Windows refuses or device name.
-fn is_safe_descriptor_name(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    let Some(stem) = lower.strip_suffix(".json") else {
+/// Whether Windows keeps `stem`, a file name up to its first dot, for a
+/// device, whatever the extension.
+fn is_windows_device(stem: &str) -> bool {
+    let stem = stem.trim_end_matches(' ').to_lowercase();
+    if matches!(
+        stem.as_str(),
+        "con" | "prn" | "aux" | "nul" | "conin$" | "conout$"
+    ) {
+        return true;
+    }
+    let Some(number) = stem
+        .strip_prefix("com")
+        .or_else(|| stem.strip_prefix("lpt"))
+    else {
         return false;
     };
-    let device = stem.split('.').next().unwrap_or(stem).trim_end();
-    !stem.is_empty()
-        && name.len() <= 255
-        && !name.contains("..")
-        && !name.chars().any(|c| {
-            c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
-        })
-        && !RESERVED_NAMES.contains(&device)
+    let mut chars = number.chars();
+    matches!(
+        (chars.next(), chars.next()),
+        (Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
+    )
+}
+
+/// A descriptor file name that stays in its folder: one name ending in
+/// `.json` in any case, with no separator, no drive or root, and not `.` or
+/// `..`. Any other dot is fine (`a..json`). Whether this OS can write it is
+/// [`unwritable_reason`]'s question.
+fn is_contained_descriptor_name(name: &str) -> bool {
+    name.to_ascii_lowercase()
+        .strip_suffix(".json")
+        .is_some_and(|stem| !stem.is_empty())
+        && !name.contains(['/', '\\'])
         && matches!(
             Path::new(name).components().collect::<Vec<_>>().as_slice(),
             [std::path::Component::Normal(only)] if *only == std::ffi::OsStr::new(name)
         )
 }
 
+/// Why a file `name` cannot be written on Windows (`windows`) or on another
+/// OS; `None` when it can.
+fn unwritable_reason(name: &str, windows: bool) -> Option<&'static str> {
+    if name.contains('\0') {
+        return Some("it holds a NUL character");
+    }
+    if !windows {
+        return None;
+    }
+    if name.chars().any(|c| (c as u32) < 0x20) {
+        return Some("it holds a control character");
+    }
+    if name.contains(['<', '>', ':', '"', '|', '?', '*']) {
+        return Some("it holds a character Windows refuses in a file name");
+    }
+    if name.ends_with(['.', ' ']) {
+        return Some("it ends with a dot or a space");
+    }
+    if is_windows_device(name.split('.').next().unwrap_or(name)) {
+        return Some("Windows keeps the name for a device");
+    }
+    None
+}
+
+/// What two file names that designate one file here have in common: the name
+/// itself on Linux, its case folded on Windows and macOS.
+fn destination_key(name: &str) -> String {
+    if !cfg!(any(windows, target_os = "macos")) {
+        return name.to_string();
+    }
+    name.chars()
+        .map(|c| {
+            let mut upper = c.to_uppercase();
+            match (upper.next(), upper.next()) {
+                (Some(one), None) => one,
+                _ => c,
+            }
+        })
+        .collect()
+}
+
 /// The file a descriptor key of a backup restores to: the key itself, or
 /// `<id>.json` for the id a backup written before used. `None` refuses it.
 fn descriptor_file_name(key: &str) -> Option<String> {
-    if is_safe_descriptor_name(key) {
+    if is_contained_descriptor_name(key) {
         Some(key.to_string())
     } else if is_safe_file_id(key) {
-        Some(format!("{key}.json")).filter(|name| is_safe_descriptor_name(name))
+        Some(format!("{key}.json")).filter(|name| is_contained_descriptor_name(name))
     } else {
         None
     }
@@ -194,15 +266,12 @@ fn descriptor_file_name(key: &str) -> Option<String> {
 
 /// The user descriptors, read as the loader reads them: every file with a
 /// `.json` extension in any case, each under its own file name, whatever id
-/// it declares and whether the loader accepts it. A file that does not
-/// parse as JSON is left out, and so is a name a restore could not write on
-/// every OS (a Linux name holding `:` or `\`).
-fn read_descriptor_dir(dir: &Path) -> BTreeMap<String, Value> {
+/// it declares and whether the loader accepts it. A file that is not JSON
+/// text loads nothing and is left out. A file that cannot be read, or whose
+/// name a backup cannot carry, fails the export rather than be left out.
+fn read_descriptor_dir(dir: &Path) -> Result<BTreeMap<String, Value>, String> {
     let mut out = BTreeMap::new();
-    let Ok(entries) = fs::read_dir(dir) else {
-        return out;
-    };
-    for entry in entries.flatten() {
+    for entry in dir_entries(dir)? {
         let path = entry.path();
         let is_json = path
             .extension()
@@ -213,18 +282,27 @@ fn read_descriptor_dir(dir: &Path) -> BTreeMap<String, Value> {
         let Some(name) = path
             .file_name()
             .and_then(|n| n.to_str())
-            .filter(|n| is_safe_descriptor_name(n))
+            .filter(|n| is_contained_descriptor_name(n))
         else {
-            continue;
+            return Err(format!(
+                "the descriptor file {} has a name a backup cannot carry",
+                path.display()
+            ));
         };
-        let Ok(body) = fs::read_to_string(&path) else {
+        let body = match fs::read(&path) {
+            Ok(body) => body,
+            // Removed since the folder was listed: no longer loaded either.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(format!("Could not read {}: {e}", path.display())),
+        };
+        let Ok(body) = String::from_utf8(body) else {
             continue;
         };
         if let Ok(value) = serde_json::from_str::<Value>(&body) {
             out.insert(name.to_string(), value);
         }
     }
-    out
+    Ok(out)
 }
 
 /// The settings without the fields of [`LOCAL_SETTINGS_FIELDS`].
@@ -260,8 +338,8 @@ pub fn build_backup(app: &dyn AppContext, created_at: u64) -> Result<BackupFile,
         created_at,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         stores,
-        themes: read_json_dir(&themes_dir(app)?),
-        descriptors: read_descriptor_dir(&crate::platforms::descriptor::user_dir(app)?),
+        themes: read_json_dir(&themes_dir(app)?)?,
+        descriptors: read_descriptor_dir(&crate::platforms::descriptor::user_dir(app)?)?,
     })
 }
 
@@ -270,6 +348,13 @@ pub fn export_backup(app: &dyn AppContext, target: &Path) -> Result<BackupReport
     let backup = build_backup(app, now_s())?;
     let body = serde_json::to_vec_pretty(&backup)
         .map_err(|e| format!("Could not encode the backup: {e}"))?;
+    // read_backup refuses a bigger file: it would export but never restore.
+    if body.len() as u64 > MAX_JSON_STORE_BYTES {
+        return Err(format!(
+            "The backup would be {} bytes, too big for a restore to read (limit {MAX_JSON_STORE_BYTES})",
+            body.len()
+        ));
+    }
     write_bytes_atomic(target, &body)?;
     Ok(BackupReport {
         preview: preview_of(&backup, target),
@@ -312,16 +397,22 @@ pub fn read_backup(path: &Path) -> Result<BackupFile, String> {
     if let Some(id) = backup.themes.keys().find(|id| !is_safe_file_id(id)) {
         return Err(format!("the backup names an unsafe file id `{id}`"));
     }
-    let mut names = HashSet::new();
+    // Every name is checked for this OS before anything is written.
+    let mut names: HashMap<String, String> = HashMap::new();
     for key in backup.descriptors.keys() {
         let Some(name) = descriptor_file_name(key) else {
             return Err(format!(
                 "the backup names an unsafe descriptor file `{key}`"
             ));
         };
-        if !names.insert(name.clone()) {
+        if let Some(reason) = unwritable_reason(&name, cfg!(windows)) {
             return Err(format!(
-                "the backup names the descriptor file `{name}` twice"
+                "the backup holds the descriptor file `{name}`, which this system cannot write: {reason}"
+            ));
+        }
+        if let Some(first) = names.insert(destination_key(&name), name.clone()) {
+            return Err(format!(
+                "the backup holds the descriptor files `{first}` and `{name}`, which are one file on this system"
             ));
         }
     }
@@ -383,6 +474,9 @@ struct PlannedWrite {
     /// Where the copy of `previous` goes under the pre-restore folder; the
     /// one of `previous_bak` goes next to it.
     copy_as: PathBuf,
+    /// A descriptor, which its loader reads without the `.bak` recovery:
+    /// replaced whole or not at all, never copied over.
+    whole: bool,
 }
 
 impl PlannedWrite {
@@ -400,7 +494,24 @@ impl PlannedWrite {
             bak_path,
             previous_bak,
             copy_as,
+            whole: false,
         })
+    }
+
+    fn whole(self) -> Self {
+        Self {
+            whole: true,
+            ..self
+        }
+    }
+
+    /// Writes `bytes` to the file, as its kind requires.
+    fn put(&self, bytes: &[u8]) -> Result<(), String> {
+        if self.whole {
+            write_bytes_replacing(&self.path, bytes)
+        } else {
+            write_bytes_atomic(&self.path, bytes)
+        }
     }
 }
 
@@ -476,11 +587,14 @@ fn plan_restore(app: &dyn AppContext, backup: &BackupFile) -> Result<Vec<Planned
                 "the backup names an unsafe descriptor file `{key}`"
             ));
         };
-        plan.push(PlannedWrite::new(
-            descriptors.join(&name),
-            Some(encode(value)?),
-            PathBuf::from("descriptors").join(&name),
-        )?);
+        plan.push(
+            PlannedWrite::new(
+                descriptors.join(&name),
+                Some(encode(value)?),
+                PathBuf::from("descriptors").join(&name),
+            )?
+            .whole(),
+        );
     }
     Ok(plan)
 }
@@ -498,16 +612,76 @@ pub fn pre_restore_dir(app: &dyn AppContext, now_s: u64) -> Result<PathBuf, Stri
     Ok(dir)
 }
 
-fn put_back(written: &[&PlannedWrite]) {
+/// A restore step a test can make fail.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Step {
+    Write,
+    PutBack,
+    RemoveBak,
+}
+
+#[cfg(test)]
+thread_local! {
+    static FAULTS: std::cell::RefCell<Vec<(Step, PathBuf)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Test seam: an error when a test made `step` on `path` fail.
+fn injected(step: Step, path: &Path) -> Result<(), String> {
+    #[cfg(test)]
+    if FAULTS.with(|f| f.borrow().iter().any(|(s, p)| *s == step && p == path)) {
+        return Err(format!("{step:?} of {} failed (test)", path.display()));
+    }
+    let _ = (step, path);
+    Ok(())
+}
+
+/// `fs::remove_file`, where a file already gone is removed.
+fn remove_if_there(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("Could not remove {}: {e}", path.display())),
+    }
+}
+
+/// Puts the files of `written` back as they were; answers each file it could
+/// not put back, with why.
+fn put_back(written: &[&PlannedWrite]) -> Vec<String> {
+    let mut failures = Vec::new();
     for write in written.iter().rev() {
-        let _ = match &write.previous {
-            Some(bytes) => write_bytes_atomic(&write.path, bytes),
-            None => fs::remove_file(&write.path).map_err(|e| e.to_string()),
-        };
+        let result = injected(Step::PutBack, &write.path).and_then(|()| match &write.previous {
+            Some(bytes) => write.put(bytes),
+            None => remove_if_there(&write.path),
+        });
+        if let Err(error) = result {
+            failures.push(format!("{} ({error})", write.path.display()));
+        }
         // Written last: the atomic write above drops a stale .bak.
         if let Some(bytes) = &write.previous_bak {
-            let _ = fs::write(&write.bak_path, bytes);
+            if let Err(error) = fs::write(&write.bak_path, bytes) {
+                failures.push(format!("{} ({error})", write.bak_path.display()));
+            }
         }
+    }
+    failures
+}
+
+/// The error of a restore that failed with `error` once `written` were
+/// replaced: they are put back, and the message says whether all were.
+fn failed_restore(error: String, written: &[&PlannedWrite], copy_dir: &Path) -> String {
+    let failures = put_back(written);
+    if failures.is_empty() {
+        format!(
+            "{error}; the files already replaced were put back, a copy is in {}",
+            copy_dir.display()
+        )
+    } else {
+        format!(
+            "{error}; these files already replaced could not be put back and may hold the restored setup: {}. A copy of the files from before the restore is in {}",
+            failures.join(", "),
+            copy_dir.display()
+        )
     }
 }
 
@@ -541,24 +715,23 @@ pub fn restore_backup_at(
 
     let mut written = Vec::new();
     for write in &plan {
-        let result = match &write.next {
-            Some(bytes) => write_bytes_atomic(&write.path, bytes),
-            None if write.path.exists() => fs::remove_file(&write.path)
-                .map_err(|e| format!("Could not remove {}: {e}", write.path.display())),
-            None => Ok(()),
-        };
+        let result = injected(Step::Write, &write.path).and_then(|()| match &write.next {
+            Some(bytes) => write.put(bytes),
+            None => remove_if_there(&write.path),
+        });
         if let Err(error) = result {
-            put_back(&written);
-            return Err(format!(
-                "{error}; the files already replaced were put back, a copy is in {}",
-                copy_dir.display()
-            ));
-        }
-        if write.next.is_none() {
-            // A stale .bak would bring the removed store back on the next read.
-            let _ = fs::remove_file(backup_path(&write.path));
+            return Err(failed_restore(error, &written, &copy_dir));
         }
         written.push(write);
+        if write.next.is_none() && write.bak_path != write.path {
+            // A stale .bak would bring the removed store back on the next
+            // read: one that stays fails the restore.
+            let removed = injected(Step::RemoveBak, &write.bak_path)
+                .and_then(|()| remove_if_there(&write.bak_path));
+            if let Err(error) = removed {
+                return Err(failed_restore(error, &written, &copy_dir));
+            }
+        }
     }
     Ok(BackupReport {
         preview: preview_of(&backup, path),
@@ -1161,12 +1334,13 @@ mod tests {
         seed(&app);
         let files = ctx("names-files");
         let before = tree(&app.0);
+        // Refused on every OS; the names only Windows refuses are in
+        // a_name_this_os_cannot_write_refuses_the_whole_restore.
         let refused = [
             "../evil.json",
             "..\\evil.json",
             "sub/x.json",
             "sub\\x.json",
-            "C:x.json",
             "C:\\x.json",
             "/abs.json",
             "\\\\server\\share\\x.json",
@@ -1174,11 +1348,8 @@ mod tests {
             "x.json.txt",
             ".json",
             "..",
-            "a..json",
-            "con.json",
-            "NUL.txt.json",
+            ".",
             "a\u{0}.json",
-            "a?.json",
             "",
         ];
         for (n, name) in refused.iter().enumerate() {
@@ -1187,10 +1358,18 @@ mod tests {
             assert!(restore_backup(&app, &file).is_err(), "{name:?}");
             assert_eq!(tree(&app.0), before, "{name:?}");
         }
-        // Plain names in any case, and the bare id of a backup from before.
-        for (n, name) in ["My Platform.json", "acme.JSON", "a-b_c.d.json", "acme"]
-            .iter()
-            .enumerate()
+        // Plain names in any case, any dot inside one, and the bare id of a
+        // backup from before.
+        for (n, name) in [
+            "My Platform.json",
+            "acme.JSON",
+            "a-b_c.d.json",
+            "a..json",
+            "..a.json",
+            "acme",
+        ]
+        .iter()
+        .enumerate()
         {
             let file = file_with_descriptor(&files.0, 100 + n, name);
             assert!(preview_backup(&file).is_ok(), "{name:?}");
@@ -1222,6 +1401,232 @@ mod tests {
         );
         assert!(themes_dir(&to).unwrap().join("midnight.json").exists());
         assert_eq!(store(&to, STORE_VIEW_MODE), Some(json!("list")));
+    }
+
+    #[test]
+    fn a_descriptor_whose_name_holds_two_dots_is_backed_up() {
+        let [from, to] = platforms_across_a_backup("two-dots", &[("a..json", "dotted", "Dotted")]);
+        assert_eq!(from, [("dotted".to_string(), "Dotted".to_string())]);
+        assert_eq!(
+            to,
+            from,
+            "SILENT_SKIP: before={} after={}",
+            from.len(),
+            to.len()
+        );
+    }
+
+    /// A backup file holding `descriptors` as they are.
+    fn file_with_descriptors(dir: &Path, tag: &str, descriptors: Value) -> PathBuf {
+        let file = dir.join(format!("descriptors-{tag}.json"));
+        let body = json!({
+            "kind": BACKUP_KIND, "format": 1, "createdAt": 1, "appVersion": "2.0.0",
+            "descriptors": descriptors
+        });
+        fs::write(&file, serde_json::to_vec(&body).unwrap()).unwrap();
+        file
+    }
+
+    #[test]
+    fn two_names_of_one_file_here_refuse_the_whole_restore() {
+        let case_blind = cfg!(any(windows, target_os = "macos"));
+        for (n, (one, two)) in [("A.json", "a.json"), ("acme", "ACME.json")]
+            .into_iter()
+            .enumerate()
+        {
+            let to = ctx(&format!("case-collision-{n}"));
+            let first: Value =
+                serde_json::from_str(&descriptor(&to, "first", "First", &EVERY_OS)).unwrap();
+            let second: Value =
+                serde_json::from_str(&descriptor(&to, "second", "Second", &EVERY_OS)).unwrap();
+            let file = file_with_descriptors(&to.0, "pair", json!({(one): first, (two): second}));
+            let before = tree(&to.0);
+            let result = restore_backup(&to, &file);
+            if case_blind {
+                let error = result.expect_err("CASE_COLLISION: the restore went through");
+                let one_file = descriptor_file_name(one).unwrap();
+                let two_file = descriptor_file_name(two).unwrap();
+                assert!(error.contains(&one_file), "{error}");
+                assert!(error.contains(&two_file), "{error}");
+                assert!(preview_backup(&file).is_err());
+                assert_eq!(tree(&to.0), before);
+            } else {
+                result.unwrap();
+                assert_eq!(descriptor_files(&to).len(), 2);
+                assert_eq!(
+                    loaded_platforms(&to),
+                    [
+                        ("first".to_string(), "First".to_string()),
+                        ("second".to_string(), "Second".to_string())
+                    ]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_name_this_os_cannot_write_refuses_the_whole_restore() {
+        let to = ctx("unwritable");
+        seed(&to);
+        let files = ctx("unwritable-files");
+        let named: Value =
+            serde_json::from_str(&descriptor(&to, "named", "Named", &EVERY_OS)).unwrap();
+        let before = tree(&to.0);
+        let windows_only = [
+            "a:b.json",
+            "C:x.json",
+            "a<b.json",
+            "a>b.json",
+            "a\"b.json",
+            "a|b.json",
+            "a?.json",
+            "a*.json",
+            "a\u{1}.json",
+            "con.json",
+            "NUL.txt.json",
+            "lpt1 .JSON",
+            "COM\u{b9}.json",
+        ];
+        for (n, name) in windows_only.iter().enumerate() {
+            let file = file_with_descriptors(
+                &files.0,
+                &n.to_string(),
+                json!({"ok.json": named.clone(), (*name): named.clone()}),
+            );
+            if cfg!(windows) {
+                let error = restore_backup(&to, &file).unwrap_err();
+                assert!(error.contains(name), "{name:?}: {error}");
+                assert!(preview_backup(&file).is_err(), "{name:?}");
+                assert_eq!(tree(&to.0), before, "{name:?}");
+            } else {
+                assert!(preview_backup(&file).is_ok(), "{name:?}");
+            }
+        }
+        #[cfg(unix)]
+        {
+            let file = file_with_descriptors(&files.0, "colon", json!({"a:b.json": named}));
+            restore_backup(&to, &file).unwrap();
+            assert!(descriptor_files(&to).contains(&"a:b.json".to_string()));
+        }
+    }
+
+    #[test]
+    fn what_windows_cannot_name_is_told_apart() {
+        for name in [
+            "a:b.json",
+            "a\u{1f}.json",
+            "AUX.json",
+            "conin$.json",
+            "lpt\u{b3}.json",
+            "x.",
+            "x ",
+            "a\u{0}.json",
+        ] {
+            assert!(unwritable_reason(name, true).is_some(), "{name:?}");
+        }
+        assert!(unwritable_reason("a\u{0}.json", false).is_some());
+        for name in [
+            "a..json",
+            "My Platform.json",
+            "console.json",
+            "com10.json",
+            "a.con.json",
+            "a\u{7f}.json",
+        ] {
+            assert_eq!(unwritable_reason(name, true), None, "{name:?}");
+        }
+        for name in ["a:b.json", "con.json", "a\u{1}.json", "x."] {
+            assert_eq!(unwritable_reason(name, false), None, "{name:?}");
+        }
+    }
+
+    #[test]
+    fn a_folder_the_export_cannot_read_fails_it() {
+        for which in ["descriptors", "themes"] {
+            let app = ctx(&format!("unreadable-{which}"));
+            seed(&app);
+            let dir = if which == "themes" {
+                themes_dir(&app).unwrap()
+            } else {
+                crate::platforms::descriptor::user_dir(&app).unwrap()
+            };
+            fs::remove_dir_all(&dir).unwrap();
+            fs::write(&dir, b"not a folder").unwrap();
+            let target = app.0.join("out.json");
+            let result = export_backup(&app, &target);
+            assert!(result.is_err(), "{which}: {result:?}");
+            assert!(!target.exists(), "{which}");
+        }
+        // A folder never created holds nothing.
+        let app = ctx("no-folders");
+        let report = export_backup(&app, &app.0.join("out.json")).unwrap();
+        assert_eq!((report.preview.themes, report.preview.descriptors), (0, 0));
+    }
+
+    #[test]
+    fn an_export_too_big_to_restore_is_refused_before_it_is_written() {
+        let app = ctx("oversized");
+        let dir = crate::platforms::descriptor::user_dir(&app).unwrap();
+        fs::create_dir_all(&dir).unwrap();
+        let pad = "x".repeat(12 * 1024 * 1024);
+        for n in 0..3 {
+            fs::write(
+                dir.join(format!("big-{n}.json")),
+                format!(r#"{{"pad":"{pad}"}}"#),
+            )
+            .unwrap();
+        }
+        let target = app.0.join("out.json");
+        let result = export_backup(&app, &target);
+        let exists = target.exists();
+        let _ = fs::remove_dir_all(&app.0);
+        let error = result.unwrap_err();
+        assert!(error.contains("too big"), "{error}");
+        assert!(!exists);
+    }
+
+    /// Runs `body` with `faults` injected on this thread.
+    fn with_faults<T>(faults: Vec<(Step, PathBuf)>, body: impl FnOnce() -> T) -> T {
+        FAULTS.with(|f| *f.borrow_mut() = faults);
+        let out = body();
+        FAULTS.with(|f| f.borrow_mut().clear());
+        out
+    }
+
+    #[test]
+    fn a_put_back_that_fails_is_reported_not_claimed() {
+        let (to, _) = locked_destination("put-back-fails");
+        let file = file_with_settings(&to.0, json!({"language": "fr"}));
+        let settings = client_store_path(&to, STORE_SETTINGS).unwrap();
+        let view = client_store_path(&to, STORE_VIEW_MODE).unwrap();
+        let error = with_faults(
+            vec![(Step::Write, view), (Step::PutBack, settings.clone())],
+            || restore_backup(&to, &file),
+        )
+        .unwrap_err();
+        assert!(!error.contains("were put back"), "{error}");
+        assert!(error.contains(&settings.display().to_string()), "{error}");
+        assert!(error.contains("pre-restore"), "{error}");
+    }
+
+    #[test]
+    fn a_recovery_copy_that_cannot_be_removed_fails_the_restore() {
+        let to = ctx("bak-stays");
+        save_client_store(&to, STORE_VIEW_MODE, &json!("grid")).unwrap();
+        let view = client_store_path(&to, STORE_VIEW_MODE).unwrap();
+        fs::write(backup_path(&view), br#""grid""#).unwrap();
+        let file = to.0.join("null-view.json");
+        let body = json!({
+            "kind": BACKUP_KIND, "format": 1, "createdAt": 1, "appVersion": "2.0.0",
+            "stores": {(STORE_VIEW_MODE): null}
+        });
+        fs::write(&file, serde_json::to_vec(&body).unwrap()).unwrap();
+        let result = with_faults(vec![(Step::RemoveBak, backup_path(&view))], || {
+            restore_backup(&to, &file)
+        });
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(store(&to, STORE_VIEW_MODE), Some(json!("grid")));
+        assert!(view.exists(), "the store was left removed");
     }
 
     #[test]
