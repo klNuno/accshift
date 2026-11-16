@@ -7,7 +7,8 @@ account, press it and accshift switches to that account.
 - Built on Elgato's Node SDK (`@elgato/streamdeck`, MIT) and packed with the
   Elgato CLI (`@elgato/cli`, MIT). Both licences allow redistribution; the
   bundled `bin/plugin.js` keeps their notices.
-- Needs Stream Deck 7.1 or later (Node.js 24 runtime), Windows 10 or macOS 12.
+- Needs Stream Deck 7.1 or later (Node.js 24 runtime) on Windows 10 or later.
+  Windows only for now: see [macOS](#macos).
 
 ## How it works
 
@@ -38,22 +39,31 @@ The CLI is looked up in this order:
    (`HKCU\Software\Classes\accshift\shell\open\command`), then
    `%LOCALAPPDATA%\Accshift\accshift.exe` (the installer's folder), then the
    `PATH`.
-3. macOS: `/Applications/Accshift.app/Contents/MacOS/accshift`, the same in
-   `~/Applications`, `/usr/local/bin`, `/opt/homebrew/bin`, then the `PATH`.
 
 When none is there, the key shows an alert and a short "No accshift" title,
 the inspector shows how to get accshift, and the plugin log gets
 `accshift is not installed: no accshift CLI at <places tried>`.
 
-macOS: the app bundle registers no `accshift://` scheme yet
-(`tauri.macos.conf.json`), so a key press there ends in an alert and a log
-line until it does.
+When opening the link or running the CLI fails, the plugin log gets the
+kind of failure and the exit code (`timeout, exit code none`), never the
+process's message or output: those can repeat the link, and the link holds
+the account id.
+
+### macOS
+
+Not supported yet, so the manifest declares Windows only. The macOS app
+registers no `accshift://` scheme (`tauri.macos.conf.json` sets
+`schemes: []`) and does not handle the Apple Events that open a URL, so a
+key press could not switch. Follow-up: register the scheme and receive the
+URL in the app (PIN lock and confirmation kept), then add `mac` back to the
+manifest's `OS` list. The plugin's macOS CLI lookup (`src/cli-locate.js`)
+and `open` command are kept for that.
 
 ## Develop
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm test        # unit tests, Node built-ins only
+pnpm test        # unit tests, then a start of the built bundle against a fake Stream Deck
 pnpm build       # writes bin/, ui/inspector.js, the locale files and the icon
 pnpm package     # build, streamdeck validate, streamdeck pack
 ```
