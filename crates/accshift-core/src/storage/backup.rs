@@ -18,22 +18,25 @@
 //! puts the files it already replaced back when a later write fails, or says
 //! which of them it could not put back. Stores
 //! are replaced, bar the settings fields of this PC, which are never removed
-//! or replaced; themes are added or overwritten by id and descriptors by file
-//! name, and neither is ever deleted. Account ids the file names are kept as
+//! or replaced; themes and descriptors are added or overwritten by file
+//! name, and never deleted. Account ids the file names are kept as
 //! they are, whether or not the account exists on this PC.
 //!
-//! The descriptors are the files the loader reads, each under its own file
-//! name, with no choice made between two files that declare one id: after a
-//! restore the loader makes the same choice on each OS as before, and a
-//! restore on the same PC overwrites the file it was taken from. The export
-//! leaves out no file the loader reads: one it cannot read or name fails it,
-//! as does a backup too big for a restore to read. Before any write, the
-//! restore refuses the whole backup when a file name could leave the
-//! descriptor folder, cannot be written on this OS (a Linux name holding `:`
-//! restored on Windows), or names the same file as another one here (`A.json`
-//! and `a.json` on Windows or macOS). A descriptor replaces the file before
-//! it whole or not at all. A backup written before kept a descriptor under
-//! the id it declared: that key is restored as `<id>.json`, as then.
+//! The descriptors and the themes are the files their loader reads, each
+//! under its own file name (`My Theme.json` too), with no choice made between
+//! two files that declare one id: after a restore the loader makes the same
+//! choice on each OS as before, and a restore on the same PC overwrites the
+//! file it was taken from. The export leaves out no file a loader reads: one
+//! it cannot list, stat, read or name fails it, as does a backup too big for
+//! a restore to read. Before any write, the restore refuses the whole backup
+//! when a file name could leave its folder, cannot be written on this OS (a
+//! Linux name holding `:` restored on Windows, a name too long), or
+//! may name the same file as another one in its folder (`A.json` and
+//! `a.json`, refused on every OS since a Linux folder can sit on a
+//! filesystem that ignores case). A descriptor replaces the file before it
+//! whole or not at all. A backup written before kept a descriptor under the
+//! id it declared and a theme under its id: such a key is restored as
+//! `<id>.json`, as then.
 
 #[allow(unused_imports)]
 use super::*;
@@ -73,7 +76,9 @@ pub struct BackupFile {
     /// Store id to its value; `null` for a store that was empty.
     #[serde(default)]
     pub stores: BTreeMap<String, Value>,
-    /// Custom theme id to the theme file's JSON.
+    /// Custom theme file name (`My Theme.json`) to the file's JSON. A
+    /// backup written before keyed it by its id (`mine`), which restores as
+    /// `mine.json`.
     #[serde(default)]
     pub themes: BTreeMap<String, Value>,
     /// User descriptor file name (`My Platform.json`) to the file's JSON.
@@ -146,33 +151,6 @@ fn dir_entries(dir: &Path) -> Result<Vec<fs::DirEntry>, String> {
         .collect()
 }
 
-/// The `<id>.json` files of a folder that parse, by id. A missing folder is
-/// empty; a file that does not parse is left out, as the theme list leaves
-/// it out; a file that cannot be read fails the export.
-fn read_json_dir(dir: &Path) -> Result<BTreeMap<String, Value>, String> {
-    let mut out = BTreeMap::new();
-    for entry in dir_entries(dir)? {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
-        }
-        let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if !is_safe_file_id(id) {
-            continue;
-        }
-        match read_json_classified::<Value>(&path) {
-            Ok(Some(value)) => {
-                out.insert(id.to_string(), value);
-            }
-            Ok(None) | Err(JsonReadError::Corrupt(_)) => {}
-            Err(JsonReadError::Unreadable(message)) => return Err(message),
-        }
-    }
-    Ok(out)
-}
-
 /// Whether Windows keeps `stem`, a file name up to its first dot, for a
 /// device, whatever the extension.
 fn is_windows_device(stem: &str) -> bool {
@@ -196,11 +174,11 @@ fn is_windows_device(stem: &str) -> bool {
     )
 }
 
-/// A descriptor file name that stays in its folder: one name ending in
-/// `.json` in any case, with no separator, no drive or root, and not `.` or
-/// `..`. Any other dot is fine (`a..json`). Whether this OS can write it is
-/// [`unwritable_reason`]'s question.
-fn is_contained_descriptor_name(name: &str) -> bool {
+/// A descriptor or theme file name that stays in its folder: one name
+/// ending in `.json` in any case, with no separator, no drive or root, and
+/// not `.` or `..`. Any other dot is fine (`a..json`). Whether this OS can
+/// write it is [`unwritable_reason`]'s question.
+fn is_contained_json_name(name: &str) -> bool {
     name.to_ascii_lowercase()
         .strip_suffix(".json")
         .is_some_and(|stem| !stem.is_empty())
@@ -216,6 +194,15 @@ fn is_contained_descriptor_name(name: &str) -> bool {
 fn unwritable_reason(name: &str, windows: bool) -> Option<&'static str> {
     if name.contains('\0') {
         return Some("it holds a NUL character");
+    }
+    // Windows counts UTF-16 units, Linux and macOS bytes.
+    let length = if windows {
+        name.encode_utf16().count()
+    } else {
+        name.len()
+    };
+    if length > 255 {
+        return Some("it is longer than a file name can be");
     }
     if !windows {
         return None;
@@ -235,12 +222,11 @@ fn unwritable_reason(name: &str, windows: bool) -> Option<&'static str> {
     None
 }
 
-/// What two file names that designate one file here have in common: the name
-/// itself on Linux, its case folded on Windows and macOS.
+/// What two file names that may designate one file have in common: the name
+/// with its case folded. Windows and macOS ignore case, and so can the
+/// filesystem a Linux folder sits on, so two such names are refused on every
+/// OS.
 fn destination_key(name: &str) -> String {
-    if !cfg!(any(windows, target_os = "macos")) {
-        return name.to_string();
-    }
     name.chars()
         .map(|c| {
             let mut upper = c.to_uppercase();
@@ -252,47 +238,80 @@ fn destination_key(name: &str) -> String {
         .collect()
 }
 
-/// The file a descriptor key of a backup restores to: the key itself, or
-/// `<id>.json` for the id a backup written before used. `None` refuses it.
-fn descriptor_file_name(key: &str) -> Option<String> {
-    if is_contained_descriptor_name(key) {
+/// The file a descriptor or theme key of a backup restores to: the key
+/// itself, or `<id>.json` for the id a backup written before used. `None`
+/// refuses it.
+fn file_name_of_key(key: &str) -> Option<String> {
+    if is_contained_json_name(key) {
         Some(key.to_string())
     } else if is_safe_file_id(key) {
-        Some(format!("{key}.json")).filter(|name| is_contained_descriptor_name(name))
+        Some(format!("{key}.json")).filter(|name| is_contained_json_name(name))
     } else {
         None
     }
 }
 
-/// The user descriptors, read as the loader reads them: every file with a
-/// `.json` extension in any case, each under its own file name, whatever id
-/// it declares and whether the loader accepts it. A file that is not JSON
-/// text loads nothing and is left out. A file that cannot be read, or whose
-/// name a backup cannot carry, fails the export rather than be left out.
-fn read_descriptor_dir(dir: &Path) -> Result<BTreeMap<String, Value>, String> {
+/// Which files of a folder its loader reads.
+#[derive(Clone, Copy)]
+enum Loader {
+    /// A `.json` extension in any case.
+    Descriptors,
+    /// A `.json` extension, lower case only.
+    Themes,
+}
+
+impl Loader {
+    fn kind(self) -> &'static str {
+        match self {
+            Self::Descriptors => "descriptor",
+            Self::Themes => "theme",
+        }
+    }
+
+    fn reads(self, path: &Path) -> bool {
+        let ext = path.extension();
+        match self {
+            Self::Descriptors => ext.is_some_and(|ext| ext.eq_ignore_ascii_case("json")),
+            Self::Themes => ext.and_then(|ext| ext.to_str()) == Some("json"),
+        }
+    }
+}
+
+/// The files of `dir` that `loader` reads, each under its own file name,
+/// whatever id it declares and whether the loader accepts it. A file that
+/// is not JSON text loads nothing and is left out, and so are a folder and
+/// a file gone since `dir` was listed. A file whose metadata or bytes cannot
+/// be read, or whose name a backup cannot carry, fails the export rather
+/// than be left out.
+fn read_loaded_dir(dir: &Path, loader: Loader) -> Result<BTreeMap<String, Value>, String> {
+    let gone = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
     let mut out = BTreeMap::new();
     for entry in dir_entries(dir)? {
         let path = entry.path();
-        let is_json = path
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"));
-        if !is_json || !path.is_file() {
+        if !loader.reads(&path) {
             continue;
+        }
+        match fs::metadata(&path) {
+            Ok(meta) if meta.is_file() => {}
+            Ok(_) => continue,
+            // Removed since the folder was listed: no longer loaded either.
+            Err(e) if gone(&e) => continue,
+            Err(e) => return Err(format!("Could not read {}: {e}", path.display())),
         }
         let Some(name) = path
             .file_name()
             .and_then(|n| n.to_str())
-            .filter(|n| is_contained_descriptor_name(n))
+            .filter(|n| is_contained_json_name(n))
         else {
             return Err(format!(
-                "the descriptor file {} has a name a backup cannot carry",
+                "the {} file {} has a name a backup cannot carry",
+                loader.kind(),
                 path.display()
             ));
         };
         let body = match fs::read(&path) {
             Ok(body) => body,
-            // Removed since the folder was listed: no longer loaded either.
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) if gone(&e) => continue,
             Err(e) => return Err(format!("Could not read {}: {e}", path.display())),
         };
         let Ok(body) = String::from_utf8(body) else {
@@ -338,8 +357,11 @@ pub fn build_backup(app: &dyn AppContext, created_at: u64) -> Result<BackupFile,
         created_at,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         stores,
-        themes: read_json_dir(&themes_dir(app)?)?,
-        descriptors: read_descriptor_dir(&crate::platforms::descriptor::user_dir(app)?)?,
+        themes: read_loaded_dir(&themes_dir(app)?, Loader::Themes)?,
+        descriptors: read_loaded_dir(
+            &crate::platforms::descriptor::user_dir(app)?,
+            Loader::Descriptors,
+        )?,
     })
 }
 
@@ -394,29 +416,37 @@ pub fn read_backup(path: &Path) -> Result<BackupFile, String> {
             ));
         }
     }
-    if let Some(id) = backup.themes.keys().find(|id| !is_safe_file_id(id)) {
-        return Err(format!("the backup names an unsafe file id `{id}`"));
-    }
     // Every name is checked for this OS before anything is written.
+    check_file_names(backup.themes.keys(), Loader::Themes)?;
+    check_file_names(backup.descriptors.keys(), Loader::Descriptors)?;
+    Ok(backup)
+}
+
+/// Refuses the backup when one of the `keys` of one folder names a file
+/// that could leave it, that this OS cannot write, or that may be the file
+/// another key names.
+fn check_file_names<'a>(
+    keys: impl Iterator<Item = &'a String>,
+    loader: Loader,
+) -> Result<(), String> {
+    let kind = loader.kind();
     let mut names: HashMap<String, String> = HashMap::new();
-    for key in backup.descriptors.keys() {
-        let Some(name) = descriptor_file_name(key) else {
-            return Err(format!(
-                "the backup names an unsafe descriptor file `{key}`"
-            ));
+    for key in keys {
+        let Some(name) = file_name_of_key(key) else {
+            return Err(format!("the backup names an unsafe {kind} file `{key}`"));
         };
         if let Some(reason) = unwritable_reason(&name, cfg!(windows)) {
             return Err(format!(
-                "the backup holds the descriptor file `{name}`, which this system cannot write: {reason}"
+                "the backup holds the {kind} file `{name}`, which this system cannot write: {reason}"
             ));
         }
         if let Some(first) = names.insert(destination_key(&name), name.clone()) {
             return Err(format!(
-                "the backup holds the descriptor files `{first}` and `{name}`, which are one file on this system"
+                "the backup holds the {kind} files `{first}` and `{name}`, which can be one file"
             ));
         }
     }
-    Ok(backup)
+    Ok(())
 }
 
 fn object_len(value: Option<&Value>) -> usize {
@@ -570,19 +600,21 @@ fn plan_restore(app: &dyn AppContext, backup: &BackupFile) -> Result<Vec<Planned
             PathBuf::from("user").join(name),
         )?);
     }
+    // Each file back under its own name, so the loader chooses as before.
     let themes = themes_dir(app)?;
-    for (id, value) in &backup.themes {
-        let name = format!("{id}.json");
+    for (key, value) in &backup.themes {
+        let Some(name) = file_name_of_key(key) else {
+            return Err(format!("the backup names an unsafe theme file `{key}`"));
+        };
         plan.push(PlannedWrite::new(
             themes.join(&name),
             Some(encode(value)?),
             PathBuf::from("themes").join(&name),
         )?);
     }
-    // Each file back under its own name, so the loader chooses as before.
     let descriptors = crate::platforms::descriptor::user_dir(app)?;
     for (key, value) in &backup.descriptors {
-        let Some(name) = descriptor_file_name(key) else {
+        let Some(name) = file_name_of_key(key) else {
             return Err(format!(
                 "the backup names an unsafe descriptor file `{key}`"
             ));
@@ -1377,16 +1409,16 @@ mod tests {
     }
 
     #[test]
-    fn a_backup_from_before_with_descriptors_keyed_by_id_still_restores() {
+    fn a_backup_from_before_with_files_keyed_by_id_still_restores() {
         use crate::platforms::descriptor::test_support::fixture;
         let to = ctx("legacy-to");
         let acme: Value = serde_json::from_str(&fixture("acme", &to.0)).unwrap();
         // The shape 98896e50 and 71648f17 wrote: a descriptor under the id
-        // it declares.
+        // it declares, a theme under its id.
         let body = json!({
             "kind": BACKUP_KIND, "format": 1, "createdAt": 1, "appVersion": "2.0.0",
             "stores": {(STORE_VIEW_MODE): "list"},
-            "themes": {"midnight": {"id": "midnight", "name": "Midnight"}},
+            "themes": {"midnight": {"id": "midnight", "name": "Midnight", "colorScheme": "dark", "tokens": {}}},
             "descriptors": {"acme": acme}
         });
         let file = to.0.join("old.json");
@@ -1399,7 +1431,8 @@ mod tests {
             loaded_platforms(&to),
             [("acme".to_string(), "Fixture Launcher".to_string())]
         );
-        assert!(themes_dir(&to).unwrap().join("midnight.json").exists());
+        assert_eq!(theme_files(&to), ["midnight.json"]);
+        assert_eq!(theme_ids(&to), ["midnight"]);
         assert_eq!(store(&to, STORE_VIEW_MODE), Some(json!("list")));
     }
 
@@ -1418,48 +1451,198 @@ mod tests {
 
     /// A backup file holding `descriptors` as they are.
     fn file_with_descriptors(dir: &Path, tag: &str, descriptors: Value) -> PathBuf {
-        let file = dir.join(format!("descriptors-{tag}.json"));
+        file_with_entries(dir, tag, "descriptors", descriptors)
+    }
+
+    /// A backup file holding `entries` as they are under `field`
+    /// (`descriptors` or `themes`).
+    fn file_with_entries(dir: &Path, tag: &str, field: &str, entries: Value) -> PathBuf {
+        let file = dir.join(format!("{field}-{tag}.json"));
         let body = json!({
             "kind": BACKUP_KIND, "format": 1, "createdAt": 1, "appVersion": "2.0.0",
-            "descriptors": descriptors
+            (field): entries
         });
         fs::write(&file, serde_json::to_vec(&body).unwrap()).unwrap();
         file
     }
 
+    /// The ids of the custom themes the real theme list loads.
+    fn theme_ids(app: &Ctx) -> Vec<String> {
+        crate::themes::list_custom_themes(app)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect()
+    }
+
+    /// The theme files the theme list would read, by name.
+    fn theme_files(app: &Ctx) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(themes_dir(app).unwrap())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".json"))
+            .collect();
+        names.sort();
+        names
+    }
+
+    const THEME: &str =
+        r#"{"schemaVersion":1,"id":"mine","name":"Mine","colorScheme":"dark","tokens":{}}"#;
+
     #[test]
-    fn two_names_of_one_file_here_refuse_the_whole_restore() {
-        let case_blind = cfg!(any(windows, target_os = "macos"));
-        for (n, (one, two)) in [("A.json", "a.json"), ("acme", "ACME.json")]
+    fn two_names_of_one_file_refuse_the_whole_restore_on_every_os() {
+        // Windows and macOS ignore case, and so can the filesystem a Linux
+        // folder sits on.
+        assert_eq!(destination_key("A.json"), destination_key("a.json"));
+        let theme: Value = serde_json::from_str(THEME).unwrap();
+        for field in ["descriptors", "themes"] {
+            for (n, (one, two, one_file, two_file)) in [
+                ("Acme", "acme", "Acme.json", "acme.json"),
+                ("A.json", "a.json", "A.json", "a.json"),
+                ("acme", "ACME.json", "acme.json", "ACME.json"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let to = ctx(&format!("case-collision-{field}-{n}"));
+                let value: Value = if field == "themes" {
+                    theme.clone()
+                } else {
+                    serde_json::from_str(&descriptor(&to, "first", "First", &EVERY_OS)).unwrap()
+                };
+                let file = file_with_entries(
+                    &to.0,
+                    "pair",
+                    field,
+                    json!({(one): value.clone(), (two): value}),
+                );
+                let before = tree(&to.0);
+                assert!(
+                    preview_backup(&file).is_err(),
+                    "CASE_COLLISION: {field} {one} and {two} pass the preview"
+                );
+                let error = restore_backup(&to, &file).unwrap_err();
+                assert!(error.contains(one_file), "{error}");
+                assert!(error.contains(two_file), "{error}");
+                assert_eq!(tree(&to.0), before, "{field} {one}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_theme_under_a_file_name_of_its_own_is_backed_up_and_restored_under_it() {
+        let from = ctx("theme-name-from");
+        let dir = themes_dir(&from).unwrap();
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("My Theme.json"), THEME).unwrap();
+        assert_eq!(theme_ids(&from), ["mine"]);
+        let file = from.0.join("b.json");
+        let exported = export_backup(&from, &file).unwrap();
+
+        let to = ctx("theme-name-to");
+        restore_backup(&to, &file).unwrap();
+        assert_eq!(
+            theme_ids(&to),
+            ["mine"],
+            "THEME_ALIAS_SKIP: exported={}",
+            exported.preview.themes
+        );
+        assert_eq!(theme_files(&to), ["My Theme.json"]);
+        // Restored on the PC it came from, it overwrites its own file.
+        restore_backup(&from, &file).unwrap();
+        assert_eq!(theme_files(&from), ["My Theme.json"]);
+        assert_eq!(theme_ids(&from), ["mine"]);
+    }
+
+    #[test]
+    fn an_entry_whose_metadata_cannot_be_read_fails_the_export() {
+        for which in ["descriptors", "themes"] {
+            let app = ctx(&format!("unstatable-{which}"));
+            seed(&app);
+            let dir = if which == "themes" {
+                themes_dir(&app).unwrap()
+            } else {
+                crate::platforms::descriptor::user_dir(&app).unwrap()
+            };
+            // Listed by its folder; its metadata fails with a loop error.
+            if !crate::test_fs::link_to_itself(&dir.join("loop.json")) {
+                return;
+            }
+            let target = app.0.join("out.json");
+            let result = export_backup(&app, &target);
+            let exists = target.exists();
+            let _ = fs::remove_dir_all(&app.0);
+            let error = result.expect_err(&format!("{which}: the export left loop.json out"));
+            assert!(error.contains("loop.json"), "{which}: {error}");
+            assert!(!exists, "{which}");
+        }
+    }
+
+    #[test]
+    fn a_name_too_long_for_a_file_refuses_the_whole_restore() {
+        let to = ctx("too-long");
+        seed(&to);
+        let files = ctx("too-long-files");
+        let before = tree(&to.0);
+        let long = format!("{}.json", "a".repeat(300));
+        for field in ["descriptors", "themes"] {
+            let file = file_with_entries(
+                &files.0,
+                "long",
+                field,
+                json!({"ok.json": {"id": "x"}, (long.as_str()): {"id": "x"}}),
+            );
+            assert!(
+                preview_backup(&file).is_err(),
+                "LONG_NAME: a {field} name of {} bytes passes the preview",
+                long.len()
+            );
+            let error = restore_backup(&to, &file).unwrap_err();
+            assert!(error.contains(&long), "{field}: {error}");
+            assert_eq!(tree(&to.0), before, "{field}");
+        }
+        // The limit as each OS counts it: bytes, or UTF-16 units on Windows.
+        let at_limit = format!("{}.json", "a".repeat(250));
+        let over = format!("{}.json", "a".repeat(251));
+        for windows in [false, true] {
+            assert_eq!(unwritable_reason(&at_limit, windows), None);
+            assert!(unwritable_reason(&over, windows).is_some());
+        }
+        // 600 bytes, 205 UTF-16 units.
+        let wide = format!("{}.json", "\u{65e5}".repeat(200));
+        assert_eq!(unwritable_reason(&wide, true), None);
+        assert!(unwritable_reason(&wide, false).is_some());
+    }
+
+    #[test]
+    fn a_theme_name_this_os_cannot_write_refuses_the_whole_restore() {
+        let to = ctx("theme-unwritable");
+        seed(&to);
+        let files = ctx("theme-unwritable-files");
+        let theme: Value = serde_json::from_str(THEME).unwrap();
+        let before = tree(&to.0);
+        for (n, (key, name)) in [("con", "con.json"), ("a:b.json", "a:b.json")]
             .into_iter()
             .enumerate()
         {
-            let to = ctx(&format!("case-collision-{n}"));
-            let first: Value =
-                serde_json::from_str(&descriptor(&to, "first", "First", &EVERY_OS)).unwrap();
-            let second: Value =
-                serde_json::from_str(&descriptor(&to, "second", "Second", &EVERY_OS)).unwrap();
-            let file = file_with_descriptors(&to.0, "pair", json!({(one): first, (two): second}));
-            let before = tree(&to.0);
-            let result = restore_backup(&to, &file);
-            if case_blind {
-                let error = result.expect_err("CASE_COLLISION: the restore went through");
-                let one_file = descriptor_file_name(one).unwrap();
-                let two_file = descriptor_file_name(two).unwrap();
-                assert!(error.contains(&one_file), "{error}");
-                assert!(error.contains(&two_file), "{error}");
-                assert!(preview_backup(&file).is_err());
-                assert_eq!(tree(&to.0), before);
-            } else {
-                result.unwrap();
-                assert_eq!(descriptor_files(&to).len(), 2);
-                assert_eq!(
-                    loaded_platforms(&to),
-                    [
-                        ("first".to_string(), "First".to_string()),
-                        ("second".to_string(), "Second".to_string())
-                    ]
+            let file = file_with_entries(
+                &files.0,
+                &n.to_string(),
+                "themes",
+                json!({"ok": theme.clone(), (key): theme.clone()}),
+            );
+            if cfg!(windows) {
+                assert!(
+                    preview_backup(&file).is_err(),
+                    "the theme {key:?} passes the preview"
                 );
+                let error = restore_backup(&to, &file).unwrap_err();
+                assert!(error.contains(name), "{key:?}: {error}");
+                assert_eq!(tree(&to.0), before, "{key:?}");
+            } else {
+                assert!(preview_backup(&file).is_ok(), "{key:?}");
             }
         }
     }
