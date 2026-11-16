@@ -323,8 +323,7 @@ mod tests {
         let before = std::fs::read(&target).unwrap();
 
         // The temp file the install writes first cannot be created.
-        let tmp = target.with_file_name(format!("acme.json.{}.tmp", std::process::id()));
-        std::fs::create_dir_all(&tmp).unwrap();
+        let _blocked = crate::storage::block_temp_file(&target);
         let second = write(
             &root,
             "two.json",

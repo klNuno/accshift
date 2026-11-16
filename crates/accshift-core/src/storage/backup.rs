@@ -498,7 +498,8 @@ struct PlannedWrite {
     next: Option<Vec<u8>>,
     previous: Option<Vec<u8>>,
     /// The `.bak` recovery copy next to `path` and its bytes: the store the
-    /// app reads when the primary is missing or corrupt.
+    /// app reads when the primary is missing or corrupt. `path` itself for
+    /// a descriptor, which has none.
     bak_path: PathBuf,
     previous_bak: Option<Vec<u8>>,
     /// Where the copy of `previous` goes under the pre-restore folder; the
@@ -511,7 +512,26 @@ struct PlannedWrite {
 
 impl PlannedWrite {
     fn new(path: PathBuf, next: Option<Vec<u8>>, copy_as: PathBuf) -> Result<Self, String> {
-        let bak_path = backup_path(&path);
+        Self::planned(path, next, copy_as, false)
+    }
+
+    /// A descriptor: replaced whole, with no `.bak` (`X.JSON` would name
+    /// one longer than a file name can be).
+    fn whole(path: PathBuf, next: Option<Vec<u8>>, copy_as: PathBuf) -> Result<Self, String> {
+        Self::planned(path, next, copy_as, true)
+    }
+
+    fn planned(
+        path: PathBuf,
+        next: Option<Vec<u8>>,
+        copy_as: PathBuf,
+        whole: bool,
+    ) -> Result<Self, String> {
+        let bak_path = if whole {
+            path.clone()
+        } else {
+            backup_path(&path)
+        };
         let previous_bak = if bak_path == path {
             None
         } else {
@@ -524,15 +544,8 @@ impl PlannedWrite {
             bak_path,
             previous_bak,
             copy_as,
-            whole: false,
+            whole,
         })
-    }
-
-    fn whole(self) -> Self {
-        Self {
-            whole: true,
-            ..self
-        }
     }
 
     /// Writes `bytes` to the file, as its kind requires.
@@ -619,14 +632,11 @@ fn plan_restore(app: &dyn AppContext, backup: &BackupFile) -> Result<Vec<Planned
                 "the backup names an unsafe descriptor file `{key}`"
             ));
         };
-        plan.push(
-            PlannedWrite::new(
-                descriptors.join(&name),
-                Some(encode(value)?),
-                PathBuf::from("descriptors").join(&name),
-            )?
-            .whole(),
-        );
+        plan.push(PlannedWrite::whole(
+            descriptors.join(&name),
+            Some(encode(value)?),
+            PathBuf::from("descriptors").join(&name),
+        )?);
     }
     Ok(plan)
 }
@@ -1614,6 +1624,56 @@ mod tests {
         let wide = format!("{}.json", "\u{65e5}".repeat(200));
         assert_eq!(unwritable_reason(&wide, true), None);
         assert!(unwritable_reason(&wide, false).is_some());
+    }
+
+    #[test]
+    fn a_name_as_long_as_a_file_name_can_be_round_trips() {
+        // Regression: the temp file of each write took the target's name
+        // plus `.<pid>.tmp`, longer than a file name can be, and the restore
+        // of a theme the loader read and the export carried failed.
+        let from = ctx("long-valid-from");
+        let theme_name = format!("{}.json", "x".repeat(250));
+        let descriptor_name = format!("{}.JSON", "y".repeat(250));
+        let themes = themes_dir(&from).unwrap();
+        fs::create_dir_all(&themes).unwrap();
+        fs::write(themes.join(&theme_name), THEME).unwrap();
+        let descriptors = crate::platforms::descriptor::user_dir(&from).unwrap();
+        fs::create_dir_all(&descriptors).unwrap();
+        fs::write(
+            descriptors.join(&descriptor_name),
+            descriptor(&from, "long", "Long", &EVERY_OS),
+        )
+        .unwrap();
+        assert_eq!(theme_ids(&from), ["mine"]);
+        let file = from.0.join("b.json");
+        let exported = export_backup(&from, &file).unwrap();
+        assert_eq!(
+            (exported.preview.themes, exported.preview.descriptors),
+            (1, 1)
+        );
+        preview_backup(&file).unwrap();
+
+        let to = ctx("long-valid-to");
+        let restored = restore_backup(&to, &file);
+        assert!(restored.is_ok(), "LONG_VALID_NAME: {restored:?}");
+        assert_eq!(theme_files(&to), std::slice::from_ref(&theme_name));
+        assert_eq!(theme_ids(&to), ["mine"]);
+        assert_eq!(
+            descriptor_files(&to),
+            std::slice::from_ref(&descriptor_name)
+        );
+        // Over the files it restored: the pre-restore copy keeps the long
+        // names too.
+        let again = restore_backup(&to, &file).unwrap();
+        let copy = PathBuf::from(&again.pre_restore_dir);
+        assert!(copy.join("themes").join(&theme_name).is_file());
+        assert!(copy.join("descriptors").join(&descriptor_name).is_file());
+        // No temp file is left behind.
+        let left: Vec<PathBuf> = tree(&to.0)
+            .into_keys()
+            .filter(|p| p.extension().is_some_and(|e| e == "tmp"))
+            .collect();
+        assert!(left.is_empty(), "{left:?}");
     }
 
     #[test]
