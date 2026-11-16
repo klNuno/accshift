@@ -103,9 +103,9 @@ pub fn install_file(app: &dyn AppContext, path: &Path) -> Result<String, String>
 
     // The validated text is written rather than the file copied: the file the
     // user picked stays theirs, and a change to it after validation never
-    // reaches the descriptor folder.
-    std::fs::write(&target, body.as_bytes())
-        .map_err(|e| format!("Could not write {}: {e}", target.display()))?;
+    // reaches the descriptor folder. Through a temp file renamed into place,
+    // so a write that fails leaves the descriptor it replaces whole.
+    crate::storage::write_bytes_atomic(&target, body.as_bytes())?;
     Ok(preview.file_name)
 }
 
@@ -308,6 +308,31 @@ mod tests {
         assert!(preview.replaces, "the caller can say replace, not add");
         let body = std::fs::read_to_string(user_dir(&ctx).unwrap().join("acme.json")).unwrap();
         assert!(body.contains("Renamed Launcher"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_install_that_fails_leaves_the_descriptor_it_replaces_whole() {
+        let root = scratch("install-fails");
+        let ctx = TempCtx { root: root.clone() };
+        let first = write(&root, "one.json", &fixture("acme", &root));
+        install_file(&ctx, &first).unwrap();
+        let target = user_dir(&ctx).unwrap().join("acme.json");
+        let before = std::fs::read(&target).unwrap();
+
+        // The temp file the install writes first cannot be created.
+        let tmp = target.with_file_name(format!("acme.json.{}.tmp", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let second = write(
+            &root,
+            "two.json",
+            &fixture("acme", &root).replace("Fixture Launcher", "Renamed Launcher"),
+        );
+        assert!(
+            install_file(&ctx, &second).is_err(),
+            "the write went straight to the descriptor"
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), before);
         let _ = std::fs::remove_dir_all(&root);
     }
 

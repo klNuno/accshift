@@ -8,10 +8,14 @@
 //! debounced ones it hands out itself, for an external refresh and for the
 //! descriptor and theme writes counted by [`WriteGate`], wherever they were
 //! started. Meanwhile no new store write, descriptor or theme write and no
-//! external refresh starts. A store write that failed there cancels the
-//! backup: its edit is only in memory. A descriptor or theme write that
-//! failed does not: the app takes its result only on success, so the files
-//! still hold the setup it runs.
+//! external refresh starts. Any of these writes that failed there cancels
+//! the backup. A store write's edit is then only in memory. A descriptor or
+//! theme write goes to a temp file renamed into place, so a failed one
+//! leaves the file it replaces whole, except when the rename keeps failing
+//! (an antivirus or the indexer holding the file): it then copies over the
+//! file, and a copy that fails midway can leave it partial, its old bytes in
+//! a `.bak` the descriptor loader does not read. The job itself records the
+//! failure, so it cancels the backup even once its panel is gone.
 //!
 //! The export then reads the files, all written. The restore replaces them,
 //! reloads the user descriptors and reads the stores and themes back. The
@@ -23,7 +27,7 @@
 //! over the restored files, not even on close.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use accshift_app::actions::dialogs::ConfirmTicket;
@@ -54,6 +58,8 @@ pub(super) struct WriteGate(Arc<GateState>);
 struct GateState {
     running: AtomicUsize,
     closed: AtomicBool,
+    /// The first write that failed while a backup held the boundary.
+    failed: Mutex<Option<String>>,
 }
 
 /// One admitted call, uncounted when dropped.
@@ -86,13 +92,50 @@ impl WriteGate {
         })
     }
 
+    /// [`Self::admit`] for a call that writes a file: when it fails while a
+    /// backup holds the boundary, the backup does not run, since the file
+    /// may be left changed.
+    pub(super) fn admit_write<R, E, F>(
+        &self,
+        call: F,
+    ) -> Option<impl FnOnce(&dyn Backend) -> Result<R, E> + Send + 'static>
+    where
+        R: Send + 'static,
+        E: std::fmt::Display + Send + 'static,
+        F: FnOnce(&dyn Backend) -> Result<R, E> + Send + 'static,
+    {
+        let state = Arc::clone(&self.0);
+        self.admit(move |b| {
+            let result = call(b);
+            if let Err(error) = &result {
+                if state.closed.load(Ordering::SeqCst) {
+                    let mut failed = state.failed.lock().unwrap_or_else(|p| p.into_inner());
+                    failed.get_or_insert_with(|| error.to_string());
+                }
+            }
+            result
+        })
+    }
+
     /// An admitted call has not returned yet.
     fn running(&self) -> bool {
         self.0.running.load(Ordering::SeqCst) > 0
     }
 
+    /// The write that failed since the boundary went up, taken.
+    fn take_failure(&self) -> Option<String> {
+        self.0
+            .failed
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+    }
+
     fn set_closed(&self, closed: bool) {
-        self.0.closed.store(closed, Ordering::SeqCst);
+        let was = self.0.closed.swap(closed, Ordering::SeqCst);
+        if closed && !was {
+            self.take_failure();
+        }
     }
 }
 
@@ -411,7 +454,7 @@ impl AppModel {
         else {
             return;
         };
-        if let Some(error) = failed {
+        if let Some(error) = failed.or_else(|| self.backup.gate.take_failure()) {
             self.backup.set_stage(Stage::Idle);
             let key = match purpose {
                 Purpose::Export => "settings.backupExportFailed",

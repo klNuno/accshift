@@ -13,6 +13,11 @@ const DESCRIPTOR: &str = include_str!("../../../../accshift-app/tests/data/real/
 /// The mock app, with a restore that brings back a note, a user platform
 /// and settings that enable it.
 fn restore_app(ctx: &Context) -> (AppModel, Arc<MockBackend>) {
+    restore_app_with(ctx, |_| {})
+}
+
+/// [`restore_app`] with `edit` applied to its mock commands.
+fn restore_app_with(ctx: &Context, edit: impl FnOnce(&mut Value)) -> (AppModel, Arc<MockBackend>) {
     let mut fixture: Value =
         serde_json::from_str(include_str!("../../../parity/data/empty.json")).unwrap();
     fixture["spec"]["switchDelayMs"] = json!(0);
@@ -51,6 +56,7 @@ fn restore_app(ctx: &Context) -> (AppModel, Arc<MockBackend>) {
         },
         "preRestoreDir": ""
     }}]);
+    edit(commands);
     let mock = Arc::new(MockBackend::from_json(&fixture.to_string(), None).unwrap());
     let mut app = AppModel::with_backend(ctx, mock.clone(), Some(mock.clone()), Clock::wall());
     app.wait_boot(ctx).unwrap();
@@ -417,6 +423,52 @@ fn a_descriptor_task_keeps_the_boundary_up_after_settings_close() {
     mock.release("reload_user_platforms");
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     assert_eq!(mock.seen("backup_restore"), 1);
+}
+
+#[test]
+fn a_descriptor_install_that_fails_while_the_restore_waits_cancels_it() {
+    let ctx = Context::default();
+    let (mut app, mock) = restore_app_with(&ctx, |commands| {
+        commands["descriptor_install_file"] = json!([{ "args": {}, "error": "disk full" }]);
+    });
+    frame(&mut app, &ctx);
+    app.toggle_settings_panel();
+    frame(&mut app, &ctx);
+    app.apply_settings(&ctx, SettingsAction::PickDescriptor);
+    // The panel's jobs only: a drawn frame would show the preview dialog.
+    let deadline = Instant::now() + std::time::Duration::from_secs(3);
+    while app
+        .settings_panel
+        .as_ref()
+        .is_some_and(|p| p.descriptor_preview.is_none())
+    {
+        assert!(Instant::now() < deadline, "the preview never came");
+        app.tick_settings_panel(&ctx, Instant::now());
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(mock.hold("descriptor_install_file"));
+    app.apply_settings(&ctx, SettingsAction::InstallDescriptor);
+    while mock.waiting("descriptor_install_file") == 0 {
+        assert!(Instant::now() < deadline, "the install never started");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    app.start_backup_restore("C:/b.json".into());
+    // The panel goes; the install still fails under the boundary.
+    app.toggle_settings_panel();
+    assert!(app.settings_panel.is_none());
+    mock.release("descriptor_install_file");
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert_eq!(
+        mock.seen("backup_restore"),
+        0,
+        "the restore ran after a failed descriptor write"
+    );
+    assert!(app.backup.card.error);
+    assert!(
+        app.backup.card.notice.contains("disk full"),
+        "{}",
+        app.backup.card.notice
+    );
 }
 
 #[test]

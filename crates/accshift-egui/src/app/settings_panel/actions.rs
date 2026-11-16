@@ -483,15 +483,25 @@ impl SettingsPanel {
         if self.descriptor_job.is_some() {
             return;
         }
-        // A backup under way holds the descriptor folder.
-        let Some(call) = gate.admit(call) else {
+        // A backup under way holds the descriptor folder; an install or a
+        // removal that fails while it drains cancels it.
+        let writes = matches!(
+            task,
+            DescriptorTask::Install { .. } | DescriptorTask::Remove { .. }
+        );
+        let job = if writes {
+            gate.admit_write(call).map(|call| jobs.run(call))
+        } else {
+            gate.admit(call).map(|call| jobs.run(call))
+        };
+        let Some(job) = job else {
             self.descriptor_notice.clear();
             self.descriptor_error = translate(self.draft.language, "settings.backupHoldsWrites");
             return;
         };
         self.descriptor_busy = true;
         self.descriptor_error.clear();
-        self.descriptor_job = Some((jobs.run(call), task));
+        self.descriptor_job = Some((job, task));
     }
 
     /// "Add from a file": picks a descriptor and reads its preview.

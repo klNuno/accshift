@@ -110,7 +110,7 @@ fn start_import(
         return None;
     };
     let payload = pending.payload.clone();
-    let Some(call) = gate.admit(move |backend| {
+    let Some(call) = gate.admit_write(move |backend| {
         let theme: accshift_app::types::CustomTheme = serde_json::to_value(&payload)
             .and_then(serde_json::from_value)
             .map_err(|e| e.to_string())?;
@@ -332,7 +332,7 @@ impl ThemeEditor {
         };
         let payload = pending.payload.clone();
         // A backup under way holds the theme folder: the save fails.
-        let Some(call) = gate.admit(move |backend| {
+        let Some(call) = gate.admit_write(move |backend| {
             let theme: accshift_app::types::CustomTheme = serde_json::to_value(&payload)
                 .and_then(serde_json::from_value)
                 .map_err(|e| e.to_string())?;
