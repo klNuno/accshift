@@ -257,3 +257,92 @@ fn a_new_capture_clears_the_profile_mark() {
     update_profile_state(&mut cfg, "r1", Some("ready"), Some(Some(10)), None, None).unwrap();
     assert!(cfg.session_marks.is_empty());
 }
+
+fn live(puuid: &str) -> RiotDetectedIdentity {
+    RiotDetectedIdentity {
+        account_name: "name".into(),
+        account_tag_line: "tag".into(),
+        account_puuid: puuid.into(),
+    }
+}
+
+struct MarksCtx(std::path::PathBuf);
+
+impl crate::context::AppContext for MarksCtx {
+    fn app_config_dir(&self) -> Result<std::path::PathBuf, String> {
+        Ok(self.0.clone())
+    }
+    fn app_data_dir(&self) -> Result<std::path::PathBuf, String> {
+        Ok(self.0.clone())
+    }
+    fn app_local_data_dir(&self) -> Result<std::path::PathBuf, String> {
+        Ok(self.0.clone())
+    }
+    fn app_cache_dir(&self) -> Result<std::path::PathBuf, String> {
+        Ok(self.0.clone())
+    }
+}
+
+#[test]
+fn only_the_target_account_signing_in_lifts_its_mark() {
+    use crate::platforms::session_marks::{
+        mark_after_switch, supersede_watch, SessionState, WatchStep, WatchVerdict,
+    };
+    let root = std::env::temp_dir().join(format!(
+        "accshift-riot-watch-identity-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let app = MarksCtx(root.clone());
+    let mut target = profile("r1", "ready");
+    target.account_puuid = "PUUID-A".into();
+    let marked = |app: &MarksCtx| {
+        config::load_config(app)
+            .session_marks
+            .get("riot")
+            .is_some_and(|marks| marks.contains_key("r1"))
+    };
+    // One watch on A: the login screen, then whoever signs in.
+    let run = |app: &MarksCtx, signed_in: Option<RiotDetectedIdentity>| {
+        let ticket = supersede_watch(app, "riot");
+        let mut reads = vec![
+            RiotSessionType::Booting,
+            RiotSessionType::NotAuthenticated,
+            RiotSessionType::Authenticated,
+        ]
+        .into_iter();
+        let verdict = ticket.watch(
+            app,
+            super::switch::SESSION_WATCH_ATTEMPTS,
+            || {
+                let session = reads.next().unwrap_or(RiotSessionType::Authenticated);
+                super::switch::session_watch_step(session, &target, || signed_in.clone())
+            },
+            || {},
+        );
+        ticket.apply(app, "r1", verdict).unwrap();
+        verdict
+    };
+    mark_after_switch(&app, "riot", "r1", SessionState::Expired).unwrap();
+
+    // B signs in by hand, no accshift operation in between: A keeps its mark.
+    assert_eq!(run(&app, Some(live("PUUID-B"))), WatchVerdict::Unknown);
+    assert!(marked(&app));
+    // The live account cannot be named: nothing lifts the mark either.
+    assert_eq!(run(&app, None), WatchVerdict::Unknown);
+    assert!(marked(&app));
+    // A target without a stored PUUID cannot be confirmed.
+    let unclaimed = profile("r1", "ready");
+    assert_eq!(
+        super::switch::session_watch_step(RiotSessionType::Authenticated, &unclaimed, || Some(
+            live("PUUID-A")
+        )),
+        WatchStep::Pending
+    );
+    // A itself signs in: the mark is lifted.
+    assert_eq!(run(&app, Some(live("puuid-a"))), WatchVerdict::SignedIn);
+    assert!(!marked(&app));
+    let _ = fs::remove_dir_all(&root);
+}
