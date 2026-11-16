@@ -82,15 +82,16 @@ pub fn read_entry(steam_path: &Path, account_name: &str) -> Option<LoginEntry> {
 
 /// One post-switch read. Steam signed the target in once its timestamp moved
 /// past the one before the switch; while Steam runs without that, the read
-/// says "not signed in". Steam closed or the entry gone reads as pending.
+/// says "not signed in". Steam closed, the entry gone or a timestamp missing
+/// reads as pending.
 pub fn watch_step(before: &LoginEntry, now: Option<&LoginEntry>, steam_running: bool) -> WatchStep {
     let Some(now) = now.filter(|now| now.steam_id == before.steam_id) else {
         return WatchStep::Pending;
     };
     let advanced = match (before.timestamp, now.timestamp) {
         (Some(before), Some(now)) => now > before,
-        (None, Some(_)) => true,
-        _ => false,
+        (None, Some(_)) if now.most_recent => true,
+        _ => return WatchStep::Pending,
     };
     if advanced && now.most_recent {
         WatchStep::SignedIn

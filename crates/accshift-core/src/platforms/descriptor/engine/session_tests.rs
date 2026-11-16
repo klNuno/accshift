@@ -78,6 +78,30 @@ fn ini_values_are_read_per_section_case_insensitively() {
 }
 
 #[test]
+fn padded_section_and_key_names_still_match() {
+    let text = "[RememberMe]
+Enable=False
+";
+    assert_eq!(
+        ini_value(text, " RememberMe ", " Enable ").as_deref(),
+        Some("False")
+    );
+    let dir = with_ini(
+        "padded",
+        b"[RememberMe]
+Enable=False
+",
+    );
+    let mut checks = epic_checks();
+    for check in &mut checks {
+        check.section = format!(" {} ", check.section);
+        check.key = format!("	{} ", check.key);
+    }
+    assert!(not_remembered_in(&dir, &checks));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn unsafe_account_ids_never_name_a_folder() {
     for id in ["", " ", ".", "..", "../x", "a\\b", "c:x"] {
         assert!(!safe_dir_name(id), "{id}");

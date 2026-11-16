@@ -202,10 +202,8 @@ fn epic_shows_password_needed_from_its_snapshot() {
 #[test]
 fn platforms_without_session_sources_ask_nothing() {
     let backend = support::scripted("dev");
-    for platform in ["gog", "discord", "ubisoft", "jagex", "roblox"] {
-        let Some(adapter) = PlatformAdapter::shipped(platform) else {
-            continue;
-        };
+    for platform in ["battle-net", "gog", "discord", "ubisoft", "jagex", "roblox"] {
+        let adapter = PlatformAdapter::shipped(platform).expect(platform);
         assert!(!adapter.has_session_marks(), "{platform}");
         assert!(adapter.session_warning_states().is_none(), "{platform}");
     }

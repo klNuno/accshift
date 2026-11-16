@@ -50,8 +50,10 @@ pub(crate) fn not_remembered_in(dir: &Path, checks: &[IniCheck]) -> bool {
 }
 
 /// The trimmed value of `key` in `[section]`, `None` when either is absent.
-/// Section and key names compare case-insensitively, the first match wins.
+/// Section and key names compare trimmed and case-insensitively, the first
+/// match wins.
 pub(crate) fn ini_value(text: &str, section: &str, key: &str) -> Option<String> {
+    let (section, key) = (section.trim(), key.trim());
     let mut in_section = false;
     for line in text.trim_start_matches('\u{feff}').lines() {
         let line = line.trim();

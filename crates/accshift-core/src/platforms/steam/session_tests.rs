@@ -118,3 +118,24 @@ fn steam_closed_or_the_entry_gone_reads_pending() {
     other.steam_id = "76561198000000009".into();
     assert_eq!(watch_step(&before, Some(&other), true), WatchStep::Pending);
 }
+
+#[test]
+fn a_missing_timestamp_reads_pending_and_never_counts_toward_a_mark() {
+    // The target lost its Timestamp, or never had one: nothing to compare.
+    assert_eq!(
+        watch_step(&entry(Some(100), false), Some(&entry(None, true)), true),
+        WatchStep::Pending
+    );
+    assert_eq!(
+        watch_step(&entry(None, false), Some(&entry(None, false)), true),
+        WatchStep::Pending
+    );
+    // No baseline and a new Timestamp that is not the most recent login.
+    assert_eq!(
+        watch_step(&entry(None, false), Some(&entry(Some(1), false)), true),
+        WatchStep::Pending
+    );
+    // The `odd` fixture entry has no Timestamp at all.
+    let odd = entry_for_account(LOGINUSERS, "odd").unwrap();
+    assert_eq!(watch_step(&odd, Some(&odd), true), WatchStep::Pending);
+}
