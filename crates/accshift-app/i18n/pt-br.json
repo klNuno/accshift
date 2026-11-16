@@ -170,6 +170,7 @@
   "settings.backupImportDialog": "Restaurar um backup do accshift",
   "settings.backupAllFiles": "Todos os arquivos",
   "settings.backupHoldsWrites": "Um backup está em andamento. Tente novamente quando ele terminar.",
+  "settings.backupUpdateInstalling": "Uma atualização está sendo instalada. Tente novamente se o app não reiniciar.",
   "settings.telemetryEnableFailed": "Não foi possível ativar as estatísticas avançadas",
   "settings.telemetryDisableFailed": "Não foi possível desativar as estatísticas avançadas",
   "settings.telemetryDeletePending": "As estatísticas avançadas estão desativadas; a exclusão no servidor vai precisar de outra tentativa",

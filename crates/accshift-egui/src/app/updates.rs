@@ -286,6 +286,14 @@ impl AppModel {
     }
 }
 
+impl Updates {
+    /// An install is under way: its relaunch may end the process at any
+    /// time, so no backup starts.
+    pub(super) fn installing(&self) -> bool {
+        self.flow.state() == update_flow::UpdateState::Applying
+    }
+}
+
 #[cfg(test)]
 impl Updates {
     /// Puts a downloaded update in place, as if the check and the download
@@ -316,6 +324,17 @@ impl Updates {
     /// The flow holds a downloaded update, not yet applied.
     pub(super) fn ready(&self) -> bool {
         self.flow.state() == update_flow::UpdateState::Ready
+    }
+
+    /// The install of the ready update starts, and is held there: the
+    /// command it asks for is not run.
+    pub(super) fn install_for_test(&mut self) {
+        let _ = self.flow.apply();
+    }
+
+    /// The install held by [`Self::install_for_test`] fails.
+    pub(super) fn install_failed_for_test(&mut self) {
+        let _ = self.flow.on_install_result(Err("install failed".into()));
     }
 }
 

@@ -459,3 +459,45 @@ fn an_update_install_waits_for_stores_not_read_back() {
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     assert_eq!(note(&app), "restored note");
 }
+
+#[test]
+fn no_backup_starts_while_an_update_installs() {
+    let ctx = Context::default();
+    let (mut app, mock) = restore_app(&ctx);
+    frame(&mut app, &ctx);
+    app.updates.ready_for_test();
+    app.updates.install_for_test();
+    assert!(app.updates.installing());
+    let refused = translate(
+        app.booted().unwrap().locale,
+        "settings.backupUpdateInstalling",
+    );
+
+    // A restore confirmed, or an export path picked, while it installs.
+    app.start_backup_restore("C:/b.json".into());
+    assert!(!app.backup.holds_writes());
+    assert!(app.backup.card.error);
+    assert_eq!(app.backup.card.notice, refused);
+    app.export_backup();
+    pump_until(&mut app, &ctx, |_| {
+        mock.seen("backup_select_export_path") == 1
+    });
+    for _ in 0..10 {
+        frame(&mut app, &ctx);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(!app.backup.holds_writes());
+    assert_eq!(app.backup.card.notice, refused);
+
+    // The install fails and the app stays: a backup runs again.
+    app.updates.install_failed_for_test();
+    assert!(!app.updates.installing());
+    for _ in 0..5 {
+        frame(&mut app, &ctx);
+    }
+    assert_eq!(mock.seen("backup_restore"), 0);
+    assert_eq!(mock.seen("backup_export"), 0);
+    app.start_backup_restore("C:/b.json".into());
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert_eq!(mock.seen("backup_restore"), 1);
+}

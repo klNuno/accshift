@@ -358,6 +358,13 @@ impl AppModel {
         if self.booted.is_none() {
             return;
         }
+        // An install under way ends in a relaunch that would cut the
+        // backup between two files: it waits for the install to fail.
+        if self.updates.installing() {
+            let text = translate(self.backup_locale(), "settings.backupUpdateInstalling");
+            self.backup.set_notice(text, true);
+            return;
+        }
         // The draft is part of the setup an export saves; written after a
         // restore, it would put the old setup back.
         self.flush_settings(Instant::now());
