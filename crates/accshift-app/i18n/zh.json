@@ -169,6 +169,7 @@
   "settings.backupExportDialog": "导出 accshift 配置",
   "settings.backupImportDialog": "恢复 accshift 备份",
   "settings.backupAllFiles": "所有文件",
+  "settings.backupHoldsWrites": "正在进行备份。请在备份结束后重试。",
   "settings.telemetryEnableFailed": "无法启用增强统计",
   "settings.telemetryDisableFailed": "无法关闭增强统计",
   "settings.telemetryDeletePending": "增强统计已关闭，服务器数据删除需要再试一次",

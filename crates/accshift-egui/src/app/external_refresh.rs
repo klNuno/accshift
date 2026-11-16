@@ -56,7 +56,7 @@ impl AppModel {
         // The pending stage is the web lifecycle's in-flight guard. A single
         // restoration can produce both focus and visibility notifications.
         // A restore replaces the files: no refresh starts until it is over.
-        if trigger && self.external_refresh.job.is_none() && !self.backup.restoring() {
+        if trigger && self.external_refresh.job.is_none() && !self.backup.holds_writes() {
             self.external_refresh.job = Some(RefreshJob::Manifest(
                 self.jobs.run(|backend| backend.get_storage_manifest()),
             ));

@@ -1,9 +1,11 @@
 //! The backup restore behind its boundary, on the mock backend: it waits for
 //! the writes already running, holds new ones, registers the restored
 //! platforms before the settings are read, and survives the settings panel
-//! closing under it.
+//! closing under it. An export waits behind the same boundary.
 
+use super::super::settings_panel::SettingsAction;
 use super::*;
+use accshift_app::i18n::translate;
 use serde_json::json;
 
 const DESCRIPTOR: &str = include_str!("../../../../accshift-app/tests/data/real/descriptor.json");
@@ -39,6 +41,15 @@ fn restore_app(ctx: &Context) -> (AppModel, Arc<MockBackend>) {
             "descriptors": 1, "hasSettings": true
         },
         "preRestoreDir": "C:/config/user/backups/pre-restore-1"
+    }}]);
+    commands["backup_select_export_path"] = json!([{ "args": {}, "result": "C:/out.json" }]);
+    commands["backup_export"] = json!([{ "args": {"path": "C:/out.json"}, "result": {
+        "preview": {
+            "path": "C:/out.json", "format": 1, "createdAt": 1, "appVersion": "2.0.0",
+            "folders": 0, "notes": 1, "colors": 0, "personas": 0, "themes": 0,
+            "descriptors": 0, "hasSettings": true
+        },
+        "preRestoreDir": ""
     }}]);
     let mock = Arc::new(MockBackend::from_json(&fixture.to_string(), None).unwrap());
     let mut app = AppModel::with_backend(ctx, mock.clone(), Some(mock.clone()), Clock::wall());
@@ -95,7 +106,7 @@ fn a_restore_waits_for_a_running_save_and_holds_new_writes() {
         frame(&mut app, &ctx);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert!(app.backup.restoring());
+    assert!(app.backup.holds_writes());
     assert_eq!(
         mock.seen("backup_restore"),
         0,
@@ -123,7 +134,7 @@ fn a_restore_waits_for_a_running_save_and_holds_new_writes() {
     }
     assert_eq!(mock.seen(SAVE), written, "a write ran during the restore");
     mock.release("backup_restore");
-    pump_until(&mut app, &ctx, |a| !a.backup.restoring());
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     assert_eq!(mock.seen("backup_restore"), 1);
     for _ in 0..5 {
         frame(&mut app, &ctx);
@@ -156,7 +167,7 @@ fn restored_settings_keep_the_restored_platform_they_enable() {
     }
     assert_ne!(app.booted().unwrap().stores.settings().language, Locale::Fr);
     mock.release("reload_user_platforms");
-    pump_until(&mut app, &ctx, |a| !a.backup.restoring());
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     let settings = app.booted().unwrap().stores.settings();
     assert_eq!(settings.language, Locale::Fr);
     assert_eq!(settings.enabled_platforms, ["steam", "egui-fixture"]);
@@ -194,7 +205,7 @@ fn closing_settings_during_a_restore_keeps_its_outcome() {
     app.toggle_settings_panel();
 
     mock.release("backup_restore");
-    pump_until(&mut app, &ctx, |a| !a.backup.restoring());
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     assert_eq!(mock.seen("backup_restore"), 1);
     assert_eq!(mock.seen("backup_select_import_file"), 0);
     assert_eq!(note(&app), "restored note");
@@ -213,7 +224,7 @@ fn a_write_that_fails_before_the_restore_cancels_it() {
     assert!(mock.fail(SAVE, Some("disk full")));
     set_note(&mut app, "typed before");
     app.start_backup_restore("C:/b.json".into());
-    pump_until(&mut app, &ctx, |a| !a.backup.restoring());
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     assert_eq!(mock.seen("backup_restore"), 0);
     assert!(app.backup.card.error);
     assert!(
@@ -239,4 +250,181 @@ fn the_backup_dialogs_are_titled_in_the_app_language() {
             assert_ne!(all_files, english.1, "{locale:?}");
         }
     }
+}
+
+#[test]
+fn an_export_waits_for_a_running_save_and_holds_new_writes() {
+    let ctx = Context::default();
+    let (mut app, mock) = restore_app(&ctx);
+    frame(&mut app, &ctx);
+    assert!(mock.hold(SAVE));
+    set_note(&mut app, "typed before");
+    pump_until(&mut app, &ctx, |_| mock.waiting(SAVE) == 1);
+
+    assert!(mock.hold("backup_export"));
+    app.export_backup();
+    pump_until(&mut app, &ctx, |a| a.backup.holds_writes());
+    for _ in 0..20 {
+        frame(&mut app, &ctx);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(
+        mock.seen("backup_export"),
+        0,
+        "the export read before the save ended"
+    );
+
+    // The save lands, then the export reads; a note typed while it reads
+    // waits for it.
+    mock.release(SAVE);
+    pump_until(&mut app, &ctx, |_| mock.waiting("backup_export") == 1);
+    assert_eq!(mock.seen(SAVE), 1);
+    set_note(&mut app, "typed while exporting");
+    for _ in 0..20 {
+        frame(&mut app, &ctx);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(mock.seen(SAVE), 1, "a write ran while the export read");
+    mock.release("backup_export");
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert!(!app.backup.card.error, "{}", app.backup.card.notice);
+    assert!(app.backup.card.notice.contains("C:/out.json"));
+    pump_until(&mut app, &ctx, |_| mock.seen(SAVE) == 2);
+}
+
+#[test]
+fn an_export_cancelled_in_the_dialog_holds_nothing() {
+    let ctx = Context::default();
+    let (mut app, mock) = restore_app(&ctx);
+    assert!(mock.fail("backup_select_export_path", Some("cancelled")));
+    app.export_backup();
+    pump_until(&mut app, &ctx, |_| {
+        mock.seen("backup_select_export_path") == 1
+    });
+    for _ in 0..10 {
+        frame(&mut app, &ctx);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(!app.backup.card.busy);
+    assert!(!app.backup.holds_writes());
+    assert_eq!(mock.seen("backup_export"), 0);
+    assert!(app.backup.card.notice.is_empty());
+}
+
+/// The restore replaced the files but the stores cannot be read back: the
+/// old stores in memory are never written over them.
+fn restored_but_unread(ctx: &Context) -> (AppModel, Arc<MockBackend>) {
+    let (mut app, mock) = restore_app(ctx);
+    frame(&mut app, ctx);
+    assert!(mock.hold("backup_restore"));
+    assert!(mock.fail("load_client_storage_snapshot", Some("manifest unreadable")));
+    app.start_backup_restore("C:/b.json".into());
+    pump_until(&mut app, ctx, |_| mock.waiting("backup_restore") == 1);
+    set_note(&mut app, "typed while restoring");
+    mock.release("backup_restore");
+    pump_until(&mut app, ctx, |_| {
+        mock.seen("load_client_storage_snapshot") >= 2
+    });
+    for _ in 0..10 {
+        frame(&mut app, ctx);
+    }
+    assert!(app.backup.holds_writes());
+    assert_eq!(
+        mock.seen(SAVE),
+        0,
+        "the old notes went over the restored ones"
+    );
+    (app, mock)
+}
+
+#[test]
+fn stores_not_read_back_are_held_then_adopted_once_read() {
+    let ctx = Context::default();
+    let (mut app, mock) = restored_but_unread(&ctx);
+    let restart = translate(app.booted().unwrap().locale, "settings.backupRestartNeeded");
+    assert_eq!(app.backup.card.notice, restart);
+    assert!(mock.fail("load_client_storage_snapshot", None));
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert_eq!(note(&app), "restored note");
+    assert!(
+        app.backup.card.notice.contains("pre-restore-1"),
+        "{}",
+        app.backup.card.notice
+    );
+    for _ in 0..5 {
+        frame(&mut app, &ctx);
+    }
+    assert_eq!(mock.seen(SAVE), 0);
+}
+
+#[test]
+fn closing_with_stores_not_read_back_writes_none_of_the_old_ones() {
+    let ctx = Context::default();
+    let (mut app, mock) = restored_but_unread(&ctx);
+    app.flush_app_state().unwrap();
+    assert_eq!(mock.seen(SAVE), 0, "the close flush wrote the old stores");
+    assert!(!app.backup.holds_writes());
+}
+
+#[test]
+fn a_descriptor_task_keeps_the_boundary_up_after_settings_close() {
+    let ctx = Context::default();
+    let (mut app, mock) = restore_app(&ctx);
+    frame(&mut app, &ctx);
+    app.toggle_settings_panel();
+    frame(&mut app, &ctx);
+    assert!(mock.hold("reload_user_platforms"));
+    app.apply_settings(&ctx, SettingsAction::ReloadDescriptors);
+    pump_until(&mut app, &ctx, |_| {
+        mock.waiting("reload_user_platforms") == 1
+    });
+    app.start_backup_restore("C:/b.json".into());
+    // The panel and its handle on the task go; the task still runs.
+    app.toggle_settings_panel();
+    assert!(app.settings_panel.is_none());
+    for _ in 0..20 {
+        frame(&mut app, &ctx);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(
+        mock.seen("backup_restore"),
+        0,
+        "the restore ran beside a descriptor task"
+    );
+    mock.release("reload_user_platforms");
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert_eq!(mock.seen("backup_restore"), 1);
+}
+
+#[test]
+fn descriptor_and_theme_writes_are_refused_while_a_backup_runs() {
+    let ctx = Context::default();
+    let (mut app, mock) = restore_app(&ctx);
+    frame(&mut app, &ctx);
+    app.toggle_settings_panel();
+    frame(&mut app, &ctx);
+    assert!(mock.hold("backup_restore"));
+    app.start_backup_restore("C:/b.json".into());
+    pump_until(&mut app, &ctx, |_| mock.waiting("backup_restore") == 1);
+
+    let reloads = mock.seen("reload_user_platforms");
+    app.apply_settings(&ctx, SettingsAction::ReloadDescriptors);
+    let panel = app.settings_panel.as_ref().unwrap();
+    assert!(!panel.descriptor_busy);
+    assert_eq!(
+        panel.descriptor_error,
+        translate(panel.draft.language, "settings.backupHoldsWrites")
+    );
+    assert!(
+        app.backup.gate.admit(|_| ()).is_none(),
+        "a theme save got through"
+    );
+    mock.release("backup_restore");
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert_eq!(mock.seen("reload_user_platforms"), reloads + 1);
+
+    // Once over, both run again.
+    assert!(app.backup.gate.admit(|_| ()).is_some());
+    app.apply_settings(&ctx, SettingsAction::ReloadDescriptors);
+    assert!(app.settings_panel.as_ref().unwrap().descriptor_busy);
 }

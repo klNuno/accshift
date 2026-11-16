@@ -169,6 +169,7 @@
   "settings.backupExportDialog": "Exportar la configuración de accshift",
   "settings.backupImportDialog": "Restaurar una copia de seguridad de accshift",
   "settings.backupAllFiles": "Todos los archivos",
+  "settings.backupHoldsWrites": "Hay una copia de seguridad en curso. Inténtalo de nuevo cuando termine.",
   "settings.telemetryEnableFailed": "No se pudieron activar las estadísticas ampliadas",
   "settings.telemetryDisableFailed": "No se pudieron desactivar las estadísticas ampliadas",
   "settings.telemetryDeletePending": "Las estadísticas ampliadas están desactivadas; el borrado en el servidor necesitará otro intento",

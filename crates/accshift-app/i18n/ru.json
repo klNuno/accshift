@@ -169,6 +169,7 @@
   "settings.backupExportDialog": "Экспорт настроек accshift",
   "settings.backupImportDialog": "Восстановление резервной копии accshift",
   "settings.backupAllFiles": "Все файлы",
+  "settings.backupHoldsWrites": "Идёт резервное копирование. Повторите попытку после его завершения.",
   "settings.telemetryEnableFailed": "Не удалось включить расширенную статистику",
   "settings.telemetryDisableFailed": "Не удалось отключить расширенную статистику",
   "settings.telemetryDeletePending": "Расширенная статистика отключена; удаление на сервере потребует ещё одной попытки",

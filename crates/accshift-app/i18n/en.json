@@ -169,6 +169,7 @@
   "settings.backupExportDialog": "Export the accshift setup",
   "settings.backupImportDialog": "Restore an accshift backup",
   "settings.backupAllFiles": "All files",
+  "settings.backupHoldsWrites": "A backup is under way. Try again once it is over.",
   "settings.telemetryEnableFailed": "Could not enable enhanced stats",
   "settings.telemetryDisableFailed": "Could not disable enhanced stats",
   "settings.telemetryDeletePending": "Enhanced stats are off; server deletion will need another attempt",

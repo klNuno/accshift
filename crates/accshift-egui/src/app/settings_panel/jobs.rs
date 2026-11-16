@@ -459,7 +459,7 @@ impl AppModel {
         panel.queue_save(now);
         panel.ensure_active_tab_visible(&b.platforms);
         // A restore under way adopts the stored settings first.
-        if !self.backup.restoring() && panel.take_due_save(now) {
+        if !self.backup.holds_writes() && panel.take_due_save(now) {
             self.persist_settings(now);
         }
         if account_added {

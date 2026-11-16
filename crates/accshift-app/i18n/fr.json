@@ -169,6 +169,7 @@
   "settings.backupExportDialog": "Exporter la configuration d'accshift",
   "settings.backupImportDialog": "Restaurer une sauvegarde d'accshift",
   "settings.backupAllFiles": "Tous les fichiers",
+  "settings.backupHoldsWrites": "Une sauvegarde est en cours. Réessayez une fois qu'elle est terminée.",
   "settings.telemetryEnableFailed": "Impossible d'activer les stats avancées",
   "settings.telemetryDisableFailed": "Impossible de désactiver les stats avancées",
   "settings.telemetryDeletePending": "Les stats avancées sont désactivées ; il faudra réessayer l'effacement serveur",

@@ -16,7 +16,7 @@ impl AppModel {
     pub fn flush_app_state(&mut self) -> Result<(), String> {
         self.flush_ui_scale();
         self.flush_settings(Instant::now());
-        self.settle_restore_on_close();
+        self.settle_backup_on_close();
         let Some(b) = self.booted.as_mut() else {
             return Ok(());
         };
@@ -77,8 +77,8 @@ impl AppModel {
         if let Some(due) = next {
             ctx.request_repaint_after(due.saturating_duration_since(now));
         }
-        // A restore under way holds every new write until it is over.
-        let due = if self.backup.restoring() {
+        // A backup under way holds every new write until it is over.
+        let due = if self.backup.holds_writes() {
             Vec::new()
         } else {
             b.stores.take_due_saves(now)

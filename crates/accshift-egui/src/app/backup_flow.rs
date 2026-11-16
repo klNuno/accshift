@@ -1,20 +1,27 @@
 //! The config backup: export, import with its preview and confirm, and the
 //! restore, owned by the app rather than the settings panel so closing the
-//! panel never drops a restore under way.
+//! panel never drops a backup under way.
 //!
-//! A restore runs behind a boundary. Once confirmed, the panel's draft goes
-//! to the stores and the restore waits: for the store writes already
-//! running, for the debounced ones it hands out itself, for an external
-//! refresh and a descriptor task in flight. Meanwhile no new store write and
-//! no external refresh starts. A write that failed there cancels the
-//! restore. The restore job then replaces the files, reloads the user
-//! descriptors and reads the stores and themes back. The app registers the
-//! restored descriptors first, so the settings that name a restored platform
-//! are sanitized against it, then adopts the whole snapshot, dropping the
-//! writes queued meanwhile, and only then lets writes and refreshes run
-//! again.
+//! An export and a restore both run behind a boundary. Once the export path
+//! is picked or the restore confirmed, the panel's draft goes to the stores
+//! and the boundary waits: for the store writes already running, for the
+//! debounced ones it hands out itself, for an external refresh and for the
+//! descriptor and theme writes counted by [`WriteGate`], wherever they were
+//! started. Meanwhile no new store write, descriptor or theme write and no
+//! external refresh starts. A write that failed there cancels the backup.
+//!
+//! The export then reads the files, all written. The restore replaces them,
+//! reloads the user descriptors and reads the stores and themes back. The
+//! app registers the restored descriptors first, so the settings that name a
+//! restored platform are sanitized against them, then adopts the whole
+//! snapshot, dropping the writes queued meanwhile, and only then lets writes
+//! and refreshes run again. When the stores cannot be read back, the
+//! boundary stays up and retries: the old stores in memory are never written
+//! over the restored files, not even on close.
 
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use accshift_app::actions::dialogs::ConfirmTicket;
 use accshift_app::backend::Backend;
@@ -29,10 +36,68 @@ use egui::Context;
 use super::settings_panel::{apply_report, restore_confirm, BackupState};
 use super::AppModel;
 
+/// How long a restore whose stores could not be read back waits before it
+/// reads them again.
+const READ_BACK_RETRY: Duration = Duration::from_millis(if cfg!(test) { 50 } else { 2000 });
+
+/// The descriptor and custom theme writes, which bypass the client-store
+/// queue. Each admitted job counts until its call returns, even when the
+/// panel that started it is gone; none is admitted while a backup holds the
+/// boundary.
+#[derive(Clone, Default)]
+pub(super) struct WriteGate(Arc<GateState>);
+
+#[derive(Default)]
+struct GateState {
+    running: AtomicUsize,
+    closed: AtomicBool,
+}
+
+/// One admitted call, uncounted when dropped.
+struct Admitted(Arc<GateState>);
+
+impl Drop for Admitted {
+    fn drop(&mut self) {
+        self.0.running.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+impl WriteGate {
+    /// `call`, counted until it returns; `None` while a backup holds writes.
+    pub(super) fn admit<T, F>(
+        &self,
+        call: F,
+    ) -> Option<impl FnOnce(&dyn Backend) -> T + Send + 'static>
+    where
+        T: Send + 'static,
+        F: FnOnce(&dyn Backend) -> T + Send + 'static,
+    {
+        if self.0.closed.load(Ordering::SeqCst) {
+            return None;
+        }
+        self.0.running.fetch_add(1, Ordering::SeqCst);
+        let admitted = Admitted(Arc::clone(&self.0));
+        Some(move |b: &dyn Backend| {
+            let _admitted = admitted;
+            call(b)
+        })
+    }
+
+    /// An admitted call has not returned yet.
+    fn running(&self) -> bool {
+        self.0.running.load(Ordering::SeqCst) > 0
+    }
+
+    fn set_closed(&self, closed: bool) {
+        self.0.closed.store(closed, Ordering::SeqCst);
+    }
+}
+
 /// What an export or an import job answered.
 pub(super) enum BackupDone {
-    Exported(BackupReport),
-    /// The picked file and what it holds; `None` when the picker was
+    /// The export path the save dialog returned.
+    ExportTo(String),
+    /// The picked file and what it holds; `None` when a picker was
     /// cancelled.
     Picked(Option<(String, BackupPreview)>),
 }
@@ -55,46 +120,69 @@ pub(super) struct Restored {
     themes: Option<Vec<CustomThemePayload>>,
 }
 
-/// Where a confirmed restore is.
+/// What a boundary is held for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Purpose {
+    Export,
+    Restore,
+}
+
+/// Where a backup behind the boundary is.
 #[derive(Default)]
-enum RestoreStage {
+enum Stage {
     #[default]
     Idle,
     /// Waiting for the writes and reads already running.
     Draining {
         path: String,
-        /// A write that failed while draining: the restore does not run.
+        purpose: Purpose,
+        /// A write that failed while draining: the backup does not run.
         failed: Option<String>,
     },
-    Running(Pending<BackendResult<Restored>>),
+    Exporting(Pending<BackendResult<BackupReport>>),
+    Restoring(Pending<BackendResult<Restored>>),
+    /// The files were restored but the stores could not be read back: the
+    /// memory still holds the old ones, which must never be written.
+    Unadopted {
+        /// The notice once the stores are read back.
+        done: String,
+        job: Option<Pending<BackendResult<ClientStorageSnapshot>>>,
+        retry_at: Instant,
+    },
 }
 
-/// The backup card's jobs and the restore's stage.
+/// The backup card's jobs and the boundary's stage.
 #[derive(Default)]
 pub(super) struct BackupFlow {
     pub(super) card: BackupState,
+    pub(super) gate: WriteGate,
     job: Option<(Pending<BackendResult<BackupDone>>, BackupStep)>,
     /// The previewed file the confirm is about, and its ticket.
     pending_restore: Option<(String, ConfirmTicket)>,
-    restore: RestoreStage,
+    stage: Stage,
 }
 
 impl BackupFlow {
-    /// A confirmed restore is under way: store writes and external
-    /// refreshes wait.
-    pub(super) fn restoring(&self) -> bool {
-        !matches!(self.restore, RestoreStage::Idle)
+    /// A backup holds the boundary: store, descriptor and theme writes and
+    /// external refreshes wait.
+    pub(super) fn holds_writes(&self) -> bool {
+        !matches!(self.stage, Stage::Idle)
     }
 
-    /// A store write ended with `error` while the restore drains.
+    /// A store write ended with `error` while the boundary drains.
     pub(super) fn save_failed(&mut self, error: &BackendError) {
-        if let RestoreStage::Draining { failed, .. } = &mut self.restore {
+        if let Stage::Draining { failed, .. } = &mut self.stage {
             failed.get_or_insert_with(|| error.message.clone());
         }
     }
 
     fn busy(&self) -> bool {
-        self.job.is_some() || self.pending_restore.is_some() || self.restoring()
+        self.job.is_some() || self.pending_restore.is_some() || self.holds_writes()
+    }
+
+    fn set_stage(&mut self, stage: Stage) {
+        self.stage = stage;
+        self.gate.set_closed(self.holds_writes());
     }
 
     fn start(
@@ -115,13 +203,14 @@ impl BackupFlow {
         self.card.error = error;
     }
 
-    /// "Export setup": the save dialog, then the export.
+    /// "Export setup": the save dialog; the export itself runs behind the
+    /// boundary.
     pub(super) fn export(&mut self, jobs: &Jobs, title: String, all_files: String) {
         self.start(jobs, BackupStep::Export, move |b| {
-            let Ok(path) = b.backup_select_export_path(&title, &all_files) else {
-                return Ok(BackupDone::Picked(None));
-            };
-            b.backup_export(&path).map(BackupDone::Exported)
+            match b.backup_select_export_path(&title, &all_files) {
+                Ok(path) if !path.is_empty() => Ok(BackupDone::ExportTo(path)),
+                _ => Ok(BackupDone::Picked(None)),
+            }
         });
     }
 
@@ -193,11 +282,13 @@ impl AppModel {
     }
 
     /// Once per frame, panel open or not: the export and import jobs, the
-    /// restore's stages, then the card the panel draws.
+    /// boundary's stages, then the card the panel draws.
     pub(super) fn tick_backup(&mut self, ctx: &Context) {
         self.poll_backup_job(ctx);
-        self.drain_for_restore();
+        self.drain_boundary();
+        self.poll_export();
         self.poll_restore(ctx);
+        self.poll_read_back(ctx);
         let busy = self.backup.busy();
         self.backup.card.busy = busy;
         if let Some(panel) = self.settings_panel.as_mut() {
@@ -227,15 +318,7 @@ impl AppModel {
                 self.backup.set_notice(text, true);
             }
             Ok(BackupDone::Picked(None)) => {}
-            Ok(BackupDone::Exported(report)) => {
-                let text = with_one(
-                    locale,
-                    "settings.backupExported",
-                    "path",
-                    report.preview.path,
-                );
-                self.backup.set_notice(text, false);
-            }
+            Ok(BackupDone::ExportTo(path)) => self.hold_boundary(path, Purpose::Export),
             Ok(BackupDone::Picked(Some((path, preview)))) => {
                 let mut effects = Vec::new();
                 let ticket = self
@@ -264,20 +347,33 @@ impl AppModel {
 
     /// Starts the restore of `path` behind the boundary.
     pub(super) fn start_backup_restore(&mut self, path: String) {
-        if self.backup.restoring() || self.booted.is_none() {
+        if self.backup.holds_writes() {
             return;
         }
-        // Written after the restore, the draft would put the old setup back.
+        self.hold_boundary(path, Purpose::Restore);
+    }
+
+    /// Raises the boundary for an export to, or a restore from, `path`.
+    fn hold_boundary(&mut self, path: String, purpose: Purpose) {
+        if self.booted.is_none() {
+            return;
+        }
+        // The draft is part of the setup an export saves; written after a
+        // restore, it would put the old setup back.
         self.flush_settings(Instant::now());
         self.backup.set_notice(String::new(), false);
-        self.backup.restore = RestoreStage::Draining { path, failed: None };
+        self.backup.set_stage(Stage::Draining {
+            path,
+            purpose,
+            failed: None,
+        });
     }
 
     /// The boundary: hands out the debounced writes, then waits until no
-    /// write, refresh or descriptor task is running before the restore job
-    /// starts.
-    fn drain_for_restore(&mut self) {
-        if !matches!(self.backup.restore, RestoreStage::Draining { .. }) {
+    /// store, descriptor or theme write and no refresh is running before
+    /// the export or restore job starts.
+    fn drain_boundary(&mut self) {
+        if !matches!(self.backup.stage, Stage::Draining { .. }) {
             return;
         }
         let Some(b) = self.booted.as_mut() else {
@@ -290,36 +386,40 @@ impl AppModel {
                 .run(move |backend| backend.save_client_storage_store(store_id, &save.value));
             self.saves.push((store_id, pending));
         }
-        let descriptor_running = self
-            .settings_panel
-            .as_ref()
-            .is_some_and(|p| p.descriptor_busy);
         if !self.saves.is_empty()
             || b.stores.storage().has_unsaved()
             || self.external_refresh.running()
-            || descriptor_running
+            || self.backup.gate.running()
         {
             return;
         }
-        let RestoreStage::Draining { path, failed } = std::mem::take(&mut self.backup.restore)
+        let Stage::Draining {
+            path,
+            purpose,
+            failed,
+        } = std::mem::take(&mut self.backup.stage)
         else {
             return;
         };
         if let Some(error) = failed {
-            let text = with_one(
-                self.backup_locale(),
-                "settings.backupRestoreFailed",
-                "error",
-                error,
-            );
+            self.backup.set_stage(Stage::Idle);
+            let key = match purpose {
+                Purpose::Export => "settings.backupExportFailed",
+                Purpose::Restore => "settings.backupRestoreFailed",
+            };
+            let text = with_one(self.backup_locale(), key, "error", error);
             self.backup.set_notice(text, true);
             return;
         }
-        self.backup.restore = RestoreStage::Running(self.jobs.run(move |b| restore_job(b, &path)));
+        let stage = match purpose {
+            Purpose::Export => Stage::Exporting(self.jobs.run(move |b| b.backup_export(&path))),
+            Purpose::Restore => Stage::Restoring(self.jobs.run(move |b| restore_job(b, &path))),
+        };
+        self.backup.set_stage(stage);
     }
 
-    fn poll_restore(&mut self, ctx: &Context) {
-        let RestoreStage::Running(job) = &mut self.backup.restore else {
+    fn poll_export(&mut self) {
+        let Stage::Exporting(job) = &mut self.backup.stage else {
             return;
         };
         let result = match job.poll() {
@@ -327,22 +427,126 @@ impl AppModel {
             Poll::Ready(result) => result,
             Poll::Gone => Err(BackendError::new("job panicked")),
         };
-        self.backup.restore = RestoreStage::Idle;
+        self.backup.set_stage(Stage::Idle);
+        let locale = self.backup_locale();
+        let (text, error) = match result {
+            Ok(report) => (
+                with_one(
+                    locale,
+                    "settings.backupExported",
+                    "path",
+                    report.preview.path,
+                ),
+                false,
+            ),
+            Err(error) => (
+                with_one(
+                    locale,
+                    "settings.backupExportFailed",
+                    "error",
+                    error.message,
+                ),
+                true,
+            ),
+        };
+        self.backup.set_notice(text, error);
+    }
+
+    fn poll_restore(&mut self, ctx: &Context) {
+        let Stage::Restoring(job) = &mut self.backup.stage else {
+            return;
+        };
+        let result = match job.poll() {
+            Poll::Waiting => return,
+            Poll::Ready(result) => result,
+            Poll::Gone => Err(BackendError::new("job panicked")),
+        };
+        self.backup.set_stage(Stage::Idle);
         self.finish_restore(ctx, result);
     }
 
-    /// Waits for a restore job on close, so the restored stores are adopted
-    /// before the last writes; a restore still draining does not start.
-    pub(super) fn settle_restore_on_close(&mut self) {
-        let RestoreStage::Running(job) = std::mem::take(&mut self.backup.restore) else {
+    /// The restored stores read again after a failed read back: adopted
+    /// once read, retried until then.
+    fn poll_read_back(&mut self, ctx: &Context) {
+        let Stage::Unadopted { job, retry_at, .. } = &mut self.backup.stage else {
             return;
         };
-        let Some(Ok(restored)) = job.wait() else {
+        let Some(pending) = job else {
+            let now = Instant::now();
+            if now < *retry_at {
+                ctx.request_repaint_after(retry_at.saturating_duration_since(now));
+                return;
+            }
+            *job = Some(self.jobs.run(|b| b.load_client_storage_snapshot()));
             return;
         };
-        if let (Ok(snapshot), Some(b)) = (restored.snapshot, self.booted.as_mut()) {
-            b.stores.adopt_snapshot(snapshot);
+        let result = match pending.poll() {
+            Poll::Waiting => return,
+            Poll::Ready(result) => result,
+            Poll::Gone => Err(BackendError::new("job panicked")),
+        };
+        match result {
+            Ok(snapshot) => {
+                let Stage::Unadopted { done, .. } = std::mem::take(&mut self.backup.stage) else {
+                    return;
+                };
+                self.backup.set_stage(Stage::Idle);
+                self.adopt_restored(ctx, snapshot);
+                self.backup.set_notice(done, false);
+            }
+            Err(_) => {
+                *job = None;
+                *retry_at = Instant::now() + READ_BACK_RETRY;
+                ctx.request_repaint_after(READ_BACK_RETRY);
+            }
         }
+    }
+
+    /// On close: waits for an export or a restore job, so the restored
+    /// stores are adopted before the last writes. Stores that cannot be
+    /// read back drop the writes queued for the old ones. A backup still
+    /// draining does not start.
+    pub(super) fn settle_backup_on_close(&mut self) {
+        let snapshot = match std::mem::take(&mut self.backup.stage) {
+            Stage::Idle | Stage::Draining { .. } => None,
+            Stage::Exporting(job) => {
+                let _ = job.wait();
+                None
+            }
+            Stage::Restoring(job) => match job.wait() {
+                Some(Ok(restored)) => Some(restored.snapshot),
+                // The files were not replaced: the old stores stand.
+                _ => None,
+            },
+            Stage::Unadopted { job, .. } => Some(
+                job.and_then(|job| job.wait())
+                    .unwrap_or_else(|| Err(BackendError::new("not read back"))),
+            ),
+        };
+        self.backup.set_stage(Stage::Idle);
+        let Some(snapshot) = snapshot else {
+            return;
+        };
+        let snapshot = snapshot.or_else(|_| self.backend.load_client_storage_snapshot());
+        let Some(b) = self.booted.as_mut() else {
+            return;
+        };
+        match snapshot {
+            Ok(snapshot) => {
+                b.stores.adopt_snapshot(snapshot);
+            }
+            Err(_) => b.stores.discard_pending_saves(),
+        }
+    }
+
+    /// Takes the restored stores and refreshes what reads them.
+    fn adopt_restored(&mut self, ctx: &Context, snapshot: ClientStorageSnapshot) {
+        let changed = self
+            .booted
+            .as_mut()
+            .map(|b| b.stores.adopt_snapshot(snapshot))
+            .unwrap_or_default();
+        self.apply_external_refresh(ctx, &changed);
     }
 
     /// A restore job ended: on success the restored descriptors are
@@ -375,28 +579,32 @@ impl AppModel {
         if let Some(themes) = &restored.themes {
             self.apply_theme_payloads(themes);
         }
-        let Ok(snapshot) = restored.snapshot else {
-            self.backup
-                .set_notice(translate(locale, "settings.backupRestartNeeded"), false);
-            return;
+        let done = if platforms_read {
+            with_one(
+                locale,
+                "settings.backupRestored",
+                "path",
+                restored.report.pre_restore_dir,
+            )
+        } else {
+            translate(locale, "settings.backupRestartNeeded")
         };
-        let changed = self
-            .booted
-            .as_mut()
-            .map(|b| b.stores.adopt_snapshot(snapshot))
-            .unwrap_or_default();
-        self.apply_external_refresh(ctx, &changed);
-        if !platforms_read {
-            self.backup
-                .set_notice(translate(locale, "settings.backupRestartNeeded"), false);
-            return;
+        match restored.snapshot {
+            Ok(snapshot) => {
+                self.adopt_restored(ctx, snapshot);
+                self.backup.set_notice(done, false);
+            }
+            Err(_) => {
+                // The boundary stays up until the stores are read back.
+                self.backup
+                    .set_notice(translate(locale, "settings.backupRestartNeeded"), false);
+                self.backup.set_stage(Stage::Unadopted {
+                    done,
+                    job: None,
+                    retry_at: Instant::now() + READ_BACK_RETRY,
+                });
+                ctx.request_repaint_after(READ_BACK_RETRY);
+            }
         }
-        let text = with_one(
-            locale,
-            "settings.backupRestored",
-            "path",
-            restored.report.pre_restore_dir,
-        );
-        self.backup.set_notice(text, false);
     }
 }

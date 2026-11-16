@@ -478,6 +478,12 @@ impl ClientStores {
         self.storage.begin_refresh(next)
     }
 
+    /// Drops the debounced writes not handed out yet: after a restore whose
+    /// files could not be read back, they would put the old setup back.
+    pub fn discard_pending_saves(&mut self) {
+        self.storage.discard_pending_saves();
+    }
+
     /// Takes a whole snapshot read after a restore: every store and the
     /// manifest, the debounced writes dropped, the typed stores rebuilt
     /// with the current context. Returns every client store id.
