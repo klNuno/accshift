@@ -171,13 +171,22 @@ pub const NO_ACCOUNTS_TOAST_KEY: &str = "toast.noRiotProfilesFound";
 /// it could not confirm (`RIOT_ACCOUNT_UNCONFIRMED` in the core).
 pub const ACCOUNT_UNCONFIRMED_PATTERN: &str = "riot account not confirmed";
 
+/// Start of the backend's refusal to adopt the signed-in account on a profile
+/// with a saved session but no recorded account
+/// (`RIOT_PROFILE_WITHOUT_ACCOUNT` in the core).
+pub const PROFILE_WITHOUT_ACCOUNT_PATTERN: &str = "riot profile has no recorded account";
+
 /// The dedicated toast for a failed switch or game launch, `None` for the
 /// generic one.
 pub fn switch_error_toast(message: &str) -> Option<Text> {
-    message
-        .to_lowercase()
-        .starts_with(ACCOUNT_UNCONFIRMED_PATTERN)
-        .then(|| Text::key("riot.accountNotConfirmed"))
+    let message = message.to_lowercase();
+    if message.starts_with(ACCOUNT_UNCONFIRMED_PATTERN) {
+        Some(Text::key("riot.accountNotConfirmed"))
+    } else if message.starts_with(PROFILE_WITHOUT_ACCOUNT_PATTERN) {
+        Some(Text::key("riot.profileWithoutAccount"))
+    } else {
+        None
+    }
 }
 
 /// The "switch and run a game" entry of a ready profile: its submenu lists

@@ -109,6 +109,35 @@ pub(super) fn run_switch(
 /// client could not be confirmed. The app matches it to show its own toast.
 pub(super) const RIOT_ACCOUNT_UNCONFIRMED: &str = "Riot account not confirmed";
 
+/// Start of the error a switch to the current profile returns when that
+/// profile has a saved session but no recorded account. The app matches it.
+pub(super) const RIOT_PROFILE_WITHOUT_ACCOUNT: &str = "Riot profile has no recorded account";
+
+/// A profile with a saved session but no recorded account (possible since
+/// 1.0.5) cannot tell its own session from another account's: adopting the
+/// signed-in account would replace its snapshot with that account's files.
+/// Refuses before anything is touched; a recapture records the account.
+pub(super) fn refuse_unrecorded_account(
+    app_handle: &dyn AppContext,
+    profile: &RiotProfileConfig,
+    live: Option<&RiotDetectedIdentity>,
+) -> Result<(), String> {
+    if check_live_identity(profile, live) != IdentityCheck::Unclaimed
+        || !snapshot_has_settings(&profile_snapshot_path(app_handle, &profile.id)?)
+    {
+        return Ok(());
+    }
+    log_platform_info(
+        app_handle,
+        "riot.switch_profile",
+        "Refused to adopt the signed-in account: the profile has a saved session but no recorded account",
+        format!("profile={}", crate::platforms::redact_id(&profile.id)),
+    );
+    Err(format!(
+        "{RIOT_PROFILE_WITHOUT_ACCOUNT}: its saved session cannot be told apart from the signed-in one; nothing was changed. Recapture the profile's session."
+    ))
+}
+
 /// What `switch_after_quit` left live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SwitchWork {
@@ -206,6 +235,8 @@ fn resolve_unconfirmed(
         }
         return (io.launch)(product_id);
     }
+    // Checked before the quit: the client stays open on the session it has.
+    refuse_unrecorded_account(app_handle, &profile, Some(&identity))?;
     // Another account, or an account a profile without one can adopt: the
     // regular switch knows what to do now that the identity is known.
     (io.quit)()?;
@@ -266,6 +297,11 @@ pub(super) fn switch_after_quit(
         // 484-byte file that has no auth tokens. Checked after the quit so the
         // freshly flushed file is what gates the backup.
         let has_live_tokens = riot_settings_file_ready(install_dir).unwrap_or(false);
+        if current_id == target_id && has_live_tokens {
+            if let Some(profile) = find_profile(cfg, target_id) {
+                refuse_unrecorded_account(app_handle, profile, live_identity)?;
+            }
+        }
         let plan = plan_outgoing_backup(
             find_profile(cfg, &current_id),
             SWITCH_BACKUP_STATES,

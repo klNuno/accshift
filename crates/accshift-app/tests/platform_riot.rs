@@ -277,3 +277,20 @@ fn a_plain_switch_on_an_unconfirmed_account_toasts_the_same_text() {
     );
     assert_eq!(adapter.switch_error_toast("Riot profile not found"), None);
 }
+
+#[test]
+fn a_profile_without_a_recorded_account_asks_for_a_recapture() {
+    let message = "Riot profile has no recorded account: its saved session cannot be told apart from the signed-in one; nothing was changed. Recapture the profile's session.";
+    let adapter = PlatformAdapter::shipped("riot").unwrap();
+    assert_eq!(
+        adapter.switch_error_toast(message),
+        Some(Text::key("riot.profileWithoutAccount"))
+    );
+    let backend = support::scripted("dev");
+    backend.push("riot_switch_profile_and_launch_game", Err(message));
+    let outcome = adapter.run_task(&run_task("riot-2", "valorant"), &backend, &settings());
+    assert_eq!(
+        outcome.effects,
+        vec![TaskEffect::Toast(Text::key("riot.profileWithoutAccount"))]
+    );
+}

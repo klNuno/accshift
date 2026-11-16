@@ -365,6 +365,7 @@
   "riot.runPick": "Jogar um jogo",
   "riot.noInstalledGames": "Nenhum jogo da Riot instalado encontrado",
   "riot.accountNotConfirmed": "O accshift não conseguiu confirmar qual conta está conectada no Riot Client, então nada foi alterado. Confira a conta no Riot Client e tente de novo.",
+  "riot.profileWithoutAccount": "Este perfil da Riot não tem uma conta registrada, então o accshift não consegue distinguir a sessão salva da conectada. Nada foi alterado. Entre na conta deste perfil no Riot Client e use \"Recapturar sessão\".",
   "riot.capturedSession": "Sessão capturada para {profile}",
   "riot.setupPendingLabel": "Conta Riot",
   "riot.setupWaitingForClient": "Aguardando o Riot Client...",
