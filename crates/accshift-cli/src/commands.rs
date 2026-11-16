@@ -40,36 +40,6 @@ fn unknown_platform(format: Format, tr: Tr, command: &str, platform: &str) -> u8
     exit::PLATFORM_UNAVAILABLE
 }
 
-/// Platforms whose account rows `output::extract_row` reads field by field.
-/// Any other platform (a user descriptor) shows its `label`.
-fn has_known_layout(platform: &str) -> bool {
-    matches!(
-        platform,
-        "steam"
-            | "roblox"
-            | "riot"
-            | "battle-net"
-            | "ubisoft"
-            | "epic"
-            | "gog"
-            | "jagex"
-            | "discord"
-    )
-}
-
-/// The name a person knows an account by: the persona name, battletag or
-/// label of the row.
-fn display_name(platform: &str, account: &Value, row: &output::AccountRow) -> String {
-    if has_known_layout(platform) {
-        return row.primary.clone();
-    }
-    ["label", "display_name", "displayName", "name"]
-        .iter()
-        .find_map(|key| account.get(*key).and_then(Value::as_str))
-        .unwrap_or_default()
-        .to_string()
-}
-
 // ---------------------------------------------------------------- folders
 
 /// `list --folder`: the account ids (as the folder store keys them) the
@@ -245,8 +215,8 @@ pub fn current_entry(
         .flatten()
         .find_map(|account| {
             let row = output::extract_row(platform, account)?;
-            (row.id.eq_ignore_ascii_case(current) || row.folder_id == current)
-                .then(|| (row.id.clone(), display_name(platform, account, &row)))
+            (row.switch_id.eq_ignore_ascii_case(current) || row.storage_id == current)
+                .then_some((row.switch_id, row.primary))
         });
     let (account_id, name) = match found {
         Some((id, name)) => (id, Some(name).filter(|n| !n.is_empty())),
@@ -380,10 +350,13 @@ pub fn search_platform(
         .flatten()
         .filter_map(|account| {
             let row = output::extract_row(platform, account)?;
-            let name = display_name(platform, account, &row);
-            let note = notes.get(&row.folder_id).filter(|n| !n.is_empty()).cloned();
+            let name = row.primary.clone();
+            let note = notes
+                .get(&row.storage_id)
+                .filter(|n| !n.is_empty())
+                .cloned();
             let hit = [
-                Some(row.id.as_str()),
+                Some(row.switch_id.as_str()),
                 Some(name.as_str()),
                 Some(row.secondary.as_str()),
                 note.as_deref(),
@@ -393,7 +366,7 @@ pub fn search_platform(
             .any(|field| field.to_lowercase().contains(&needle));
             hit.then(|| SearchHit {
                 platform: platform.to_string(),
-                account_id: row.id.clone(),
+                account_id: row.switch_id.clone(),
                 name,
                 note,
             })
@@ -571,10 +544,22 @@ pub fn run_steps(
     report
 }
 
+/// The id `switch_account` takes for the account a persona stores under
+/// `stored_id` (the GUI's account id: Steam ID for Steam), read from the
+/// platform's account list. `None` when the account is not listed.
+pub fn switch_target(platform: &str, accounts: &Value, stored_id: &str) -> Option<String> {
+    accounts
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|a| output::extract_row(platform, a))
+        .find(|row| row.storage_id == stored_id)
+        .map(|row| row.switch_id)
+}
+
 /// One step through the platform switch `accshift switch` uses, with the
-/// GUI's settings: the account is found by the id the persona stores (the
-/// folder-store id, Steam ID for Steam) and switched by the id the platform
-/// takes (the account name for Steam), as the app's adapter does.
+/// GUI's settings: the account is found by the id the persona stores and
+/// switched by the id the platform takes, as the app's adapter does.
 fn switch_step(ctx: &AppCtx, params: &Value, tr: Tr, step: &Assignment) -> Result<(), StepFailure> {
     let fail = |code: &str, message: String, exit: u8| StepFailure {
         platform_id: step.platform_id.clone(),
@@ -595,20 +580,8 @@ fn switch_step(ctx: &AppCtx, params: &Value, tr: Tr, step: &Assignment) -> Resul
         let (code, status) = classify(&e, &message);
         fail(code, message, status)
     })?;
-    let target = accounts
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|a| output::extract_row(&step.platform_id, a))
-        .find(|row| row.folder_id == step.account_id)
-        .map(|row| {
-            if step.platform_id == "steam" {
-                row.id
-            } else {
-                row.folder_id
-            }
-        })
-        .ok_or_else(|| {
+    let target =
+        switch_target(&step.platform_id, &accounts, &step.account_id).ok_or_else(|| {
             fail(
                 "unknown_account",
                 tr.t(

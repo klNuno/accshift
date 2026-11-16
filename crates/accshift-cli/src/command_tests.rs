@@ -318,7 +318,9 @@ fn search_matches_name_display_name_and_note_without_case() {
 
 #[test]
 fn search_reads_a_user_platform_label_not_its_raw_json() {
-    let accounts = json!([{ "id": "u1", "label": "Work" }]);
+    let accounts = json!([
+        { "accountId": "u1", "label": "Work", "lastUsedAt": null, "snapshotSaved": true }
+    ]);
     let notes = HashMap::new();
     assert_eq!(
         commands::search_platform("my-launcher", &accounts, &notes, "work").len(),
@@ -326,6 +328,226 @@ fn search_reads_a_user_platform_label_not_its_raw_json() {
     );
     // "label" is a key of the raw JSON, not a value a person typed.
     assert!(commands::search_platform("my-launcher", &accounts, &notes, "label").is_empty());
+}
+
+// ------------------------------------------------- real platform payloads
+
+/// One account as its platform service serializes it, from the core's own
+/// DTO, with the ids and the name the CLI must read out of it.
+struct RealPayload {
+    platform: &'static str,
+    accounts: Value,
+    /// The id `accshift switch` takes.
+    switch_id: &'static str,
+    /// The id the GUI stores (folders, notes, personas).
+    storage_id: &'static str,
+    name: &'static str,
+    /// Text that only a field other than the switch id holds.
+    searchable: &'static str,
+}
+
+fn descriptor_payload(account_id: &str, label: &str) -> Value {
+    use accshift_core::platforms::descriptor::engine::DescriptorAccount;
+    serde_json::to_value(vec![DescriptorAccount {
+        account_id: account_id.to_string(),
+        label: label.to_string(),
+        last_used_at: Some(1_700_000_000_000),
+        snapshot_saved: true,
+    }])
+    .expect("serialize descriptor account")
+}
+
+fn real_payloads() -> Vec<RealPayload> {
+    use accshift_core::platforms::steam::accounts::SteamAccount;
+    let mut out = vec![RealPayload {
+        platform: "steam",
+        accounts: serde_json::to_value(vec![SteamAccount {
+            steam_id: "76561190000000001".to_string(),
+            account_name: "alice".to_string(),
+            persona_name: "Sniper Queen".to_string(),
+            last_login_at: Some(1_700_000_000),
+        }])
+        .expect("serialize steam account"),
+        switch_id: "alice",
+        storage_id: "76561190000000001",
+        name: "Sniper Queen",
+        searchable: "sniper",
+    }];
+    for (platform, id, label, searchable) in [
+        ("epic", "e1", "Epic Main", "epic main"),
+        ("gog", "g1", "Gog Main", "gog main"),
+        ("jagex", "j1", "Jagex Main", "jagex"),
+        ("discord", "d1", "Discord Main", "discord"),
+        (
+            "ubisoft",
+            "0f0e0d0c-0000-4000-8000-000000000001",
+            "Uplay Main",
+            "uplay",
+        ),
+        // A user platform runs on the same descriptor engine.
+        ("my-launcher", "u1", "Work Laptop", "laptop"),
+    ] {
+        out.push(RealPayload {
+            platform,
+            accounts: descriptor_payload(id, label),
+            switch_id: id,
+            storage_id: id,
+            name: label,
+            searchable,
+        });
+    }
+    #[cfg(windows)]
+    {
+        use accshift_core::config::RiotProfileConfig;
+        use accshift_core::platforms::roblox::RobloxAccount;
+        out.push(RealPayload {
+            platform: "roblox",
+            accounts: serde_json::to_value(vec![RobloxAccount {
+                user_id: "9001".to_string(),
+                username: "builder".to_string(),
+                display_name: "Builder Bob".to_string(),
+                last_login_at: Some(1_700_000_000_000),
+            }])
+            .expect("serialize roblox account"),
+            switch_id: "9001",
+            storage_id: "9001",
+            name: "Builder Bob",
+            searchable: "builder",
+        });
+        out.push(RealPayload {
+            platform: "riot",
+            accounts: serde_json::to_value(vec![RiotProfileConfig {
+                id: "r1".to_string(),
+                label: "Riot Main".to_string(),
+                account_name: "Ranger".to_string(),
+                account_tag_line: "EUW".to_string(),
+                ..Default::default()
+            }])
+            .expect("serialize riot profile"),
+            switch_id: "r1",
+            storage_id: "r1",
+            name: "Riot Main",
+            searchable: "ranger#euw",
+        });
+    }
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        use accshift_core::platforms::battle_net::BattleNetAccount;
+        out.push(RealPayload {
+            platform: "battle-net",
+            accounts: serde_json::to_value(vec![BattleNetAccount {
+                email: "player@example.com".to_string(),
+                battle_tag: "Player#1234".to_string(),
+                last_login_at: Some(1_700_000_000_000),
+            }])
+            .expect("serialize battle.net account"),
+            switch_id: "player@example.com",
+            storage_id: "player@example.com",
+            name: "Player#1234",
+            searchable: "player#12",
+        });
+    }
+    out
+}
+
+#[test]
+fn list_reads_every_platform_payload_and_filters_folders_by_stored_id() {
+    for case in real_payloads() {
+        let accounts = case.accounts.as_array().expect("array");
+        let rows = crate::output::account_rows(case.platform, accounts, None);
+        assert_eq!(rows.len(), 1, "{}: the account is listed", case.platform);
+        let row = &rows[0];
+        assert_eq!(row.switch_id, case.switch_id, "{}", case.platform);
+        assert_eq!(row.storage_id, case.storage_id, "{}", case.platform);
+        assert_eq!(row.primary, case.name, "{}", case.platform);
+        // `--folder` holds the GUI's stored ids.
+        let folder = [case.storage_id.to_string()].into_iter().collect();
+        assert_eq!(
+            crate::output::account_rows(case.platform, accounts, Some(&folder)).len(),
+            1,
+            "{}: kept by its folder",
+            case.platform
+        );
+        let other = ["elsewhere".to_string()].into_iter().collect();
+        assert!(
+            crate::output::account_rows(case.platform, accounts, Some(&other)).is_empty(),
+            "{}: dropped by another folder",
+            case.platform
+        );
+    }
+}
+
+#[test]
+fn search_finds_every_platform_payload_by_name_and_by_its_note() {
+    for case in real_payloads() {
+        let notes: HashMap<String, String> =
+            [(case.storage_id.to_string(), "Tournament SMURF".to_string())]
+                .into_iter()
+                .collect();
+        let hits =
+            commands::search_platform(case.platform, &case.accounts, &notes, case.searchable);
+        assert_eq!(
+            hits.len(),
+            1,
+            "{}: found by {}",
+            case.platform,
+            case.searchable
+        );
+        assert_eq!(hits[0].account_id, case.switch_id, "{}", case.platform);
+        assert_eq!(hits[0].name, case.name, "{}", case.platform);
+        let by_note = commands::search_platform(case.platform, &case.accounts, &notes, "smurf");
+        assert_eq!(by_note.len(), 1, "{}: found by its note", case.platform);
+        assert_eq!(by_note[0].note.as_deref(), Some("Tournament SMURF"));
+    }
+}
+
+#[test]
+fn current_names_every_platform_payload() {
+    for case in real_payloads() {
+        for detected in [case.switch_id, case.storage_id] {
+            let entry =
+                commands::current_entry(case.platform, Some(detected), Some(&case.accounts));
+            assert_eq!(entry.status, "known");
+            assert_eq!(
+                entry.account_id.as_deref(),
+                Some(case.switch_id),
+                "{}: detected as {detected}",
+                case.platform
+            );
+            assert_eq!(entry.name.as_deref(), Some(case.name), "{}", case.platform);
+        }
+    }
+}
+
+#[test]
+fn a_persona_step_switches_every_platform_payload_by_the_id_switch_takes() {
+    for case in real_payloads() {
+        assert_eq!(
+            commands::switch_target(case.platform, &case.accounts, case.storage_id).as_deref(),
+            Some(case.switch_id),
+            "{}",
+            case.platform
+        );
+        assert_eq!(
+            commands::switch_target(case.platform, &case.accounts, "not-listed"),
+            None,
+            "{}",
+            case.platform
+        );
+    }
+    // A persona stores the Steam ID, never the account name.
+    let steam = &real_payloads()[0];
+    assert_eq!(
+        commands::switch_target("steam", &steam.accounts, "alice"),
+        None
+    );
+}
+
+#[test]
+fn a_descriptor_account_without_a_label_is_named_by_its_id() {
+    let accounts = descriptor_payload("e9", "");
+    let entry = commands::current_entry("epic", Some("e9"), Some(&accounts));
+    assert_eq!(entry.name.as_deref(), Some("e9"));
 }
 
 // ---------------------------------------------------------------- personas

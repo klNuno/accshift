@@ -367,7 +367,7 @@ fn cmd_list(format: Format, platform_id: &str, folder: Option<&str>) -> u8 {
                     .iter()
                     .filter_map(|a| {
                         let row = output::extract_row(platform_id, a)?;
-                        if ids.contains(&row.folder_id) {
+                        if ids.contains(&row.storage_id) {
                             Some(a.clone())
                         } else {
                             None
