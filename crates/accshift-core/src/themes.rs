@@ -66,39 +66,23 @@ fn is_usable(theme: &CustomTheme) -> bool {
 
 /// The custom themes: every `.json` file of the themes folder that holds a
 /// usable theme, sorted by name. A file that is not one (not JSON, the wrong
-/// shape, an unsafe id, too big), a folder and a file gone since the folder
-/// was listed are left out. A file that is there but cannot be read fails
-/// the list, so no caller takes a partial read for every theme: the restore
-/// would adopt settings that name a theme it did not see.
+/// shape, an unsafe id, too big), a folder, a file gone since the folder was
+/// listed and a file that is there but cannot be read (locked, denied) are
+/// left out: a theme missing from the list never changes the theme the
+/// settings name, which applies once its file reads again. Only a folder
+/// that cannot be listed is an error. The backup export reads the folder
+/// on its own terms and fails on such a file.
 pub fn list_custom_themes(app: &dyn AppContext) -> Result<Vec<CustomTheme>, String> {
-    read_custom_themes(app, true)
-}
-
-/// [`list_custom_themes`] for the boot, which has nothing to fall back on: a
-/// file that cannot be read is left out rather than every theme with it.
-pub fn list_readable_custom_themes(app: &dyn AppContext) -> Vec<CustomTheme> {
-    read_custom_themes(app, false).unwrap_or_default()
-}
-
-fn read_custom_themes(app: &dyn AppContext, strict: bool) -> Result<Vec<CustomTheme>, String> {
     let dir = themes_dir(app)?;
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
         Err(e) => return Err(format!("Could not read themes directory: {e}")),
     };
-    let mut themes = Vec::new();
-    for entry in entries {
-        let read = entry
-            .map_err(|e| format!("Could not read themes directory: {e}"))
-            .and_then(|entry| read_theme_file(&entry.path()));
-        match read {
-            Ok(Some(theme)) => themes.push(theme),
-            Ok(None) => {}
-            Err(error) if strict => return Err(error),
-            Err(_) => {}
-        }
-    }
+    let mut themes: Vec<CustomTheme> = entries
+        .flatten()
+        .filter_map(|entry| read_theme_file(&entry.path()).ok().flatten())
+        .collect();
     themes.sort_by_cached_key(|t| t.name.to_lowercase());
     Ok(themes)
 }
@@ -325,7 +309,10 @@ mod tests {
     }
 
     #[test]
-    fn listing_fails_on_a_theme_file_it_cannot_read_and_the_boot_leaves_it_out() {
+    fn listing_leaves_out_a_theme_file_it_cannot_read_and_keeps_the_others() {
+        // A strict list failed the restore read-back and the external
+        // refresh on one locked file; the boot had to read the folder on
+        // its own terms.
         let root = unique_test_root("list-unreadable");
         let ctx = TestCtx { root: root.clone() };
         let dir = themes_dir(&ctx).unwrap();
@@ -344,11 +331,7 @@ mod tests {
         {
             let _held =
                 crate::test_fs::Unreadable::new(&dir.join("mine.json"), theme("mine").as_bytes());
-            let error = list_custom_themes(&ctx)
-                .map(ids)
-                .expect_err("THEME_FILE_LOCK: a partial list read as complete");
-            assert!(error.contains("mine.json"), "{error}");
-            assert_eq!(ids(list_readable_custom_themes(&ctx)), ["other"]);
+            assert_eq!(ids(list_custom_themes(&ctx).unwrap()), ["other"]);
         }
         assert_eq!(ids(list_custom_themes(&ctx).unwrap()), ["mine", "other"]);
 

@@ -90,10 +90,16 @@ impl StoreContext {
         self.platform_ids.iter().any(|known| known == id)
     }
 
-    /// `getThemeDefinition(id).id`: the id when it names a theme, the default
-    /// theme otherwise.
+    /// The theme id the settings keep: the id when it names a theme or could
+    /// name one, the default theme otherwise. A custom theme whose file is
+    /// missing or cannot be read right now keeps its id: the app paints the
+    /// default theme meanwhile ([`accshift_theme::ThemeRegistry::theme`]
+    /// falls back) and the theme comes back once its file reads, instead of
+    /// the setting being rewritten to the default and saved.
     pub fn resolve_theme_id<'a>(&'a self, id: &'a str) -> &'a str {
-        if !id.is_empty() && self.theme_ids.iter().any(|known| known == id) {
+        if self.theme_ids.iter().any(|known| known == id)
+            || accshift_theme::schema::is_valid_theme_id(id)
+        {
             id
         } else {
             settings::DEFAULT_THEME_ID

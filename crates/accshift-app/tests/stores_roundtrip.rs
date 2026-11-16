@@ -196,3 +196,21 @@ fn a_fixture_with_no_write_is_listed() {
         ]
     );
 }
+
+#[test]
+fn a_custom_theme_missing_from_the_list_keeps_its_id() {
+    // Regression: a custom theme whose file was locked or gone when the
+    // list was read was rewritten to the default theme, and the next save
+    // lost the user's choice for good.
+    let ctx = context();
+    assert!(!ctx.theme_ids.iter().any(|id| id == "mine"));
+    let settings =
+        accshift_app::settings::sanitize_settings(&serde_json::json!({ "themeId": "mine" }), &ctx);
+    assert_eq!(settings.theme_id, "mine");
+    // An id no theme file could carry still falls back.
+    for bad in ["", "../mine", "-mine", &"m".repeat(65)] {
+        let settings =
+            accshift_app::settings::sanitize_settings(&serde_json::json!({ "themeId": bad }), &ctx);
+        assert_eq!(settings.theme_id, "dark", "{bad:?}");
+    }
+}
