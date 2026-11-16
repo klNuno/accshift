@@ -478,6 +478,19 @@ impl ClientStores {
         self.storage.begin_refresh(next)
     }
 
+    /// Takes a whole snapshot read after a restore: every store and the
+    /// manifest, the debounced writes dropped, the typed stores rebuilt
+    /// with the current context. Returns every client store id.
+    pub fn adopt_snapshot(&mut self, snapshot: ClientStorageSnapshot) -> Vec<String> {
+        self.storage.discard_pending_saves();
+        self.storage.apply_snapshot(snapshot);
+        self.sync();
+        crate::storage::CLIENT_STORE_IDS
+            .iter()
+            .map(|id| id.to_string())
+            .collect()
+    }
+
     /// Applies a refresh and rebuilds the typed stores it touched. Returns
     /// every changed id.
     pub fn finish_refresh(
@@ -566,12 +579,20 @@ impl ClientStores {
     }
 
     /// [`Self::sync_accounts`] after an account load. A load that found no
-    /// account prunes nothing: the launcher's own list can be missing for a
-    /// moment (Steam rewriting `loginusers.vdf`, a drive not mounted yet), and
-    /// one such load must not drop every account out of its folder.
+    /// account changes nothing: the launcher's own list can be missing for a
+    /// moment (Steam rewriting `loginusers.vdf`, a drive not mounted yet).
+    /// No load takes an account out of its folder, only
+    /// [`Self::forget_account`] does.
     pub fn sync_loaded_accounts(&mut self, account_ids: &[String], platform: &str) {
         if !account_ids.is_empty() {
             self.sync_accounts(account_ids, platform);
+        }
+    }
+
+    /// Drops the folder placement of an account the user forgot.
+    pub fn forget_account(&mut self, account_id: &str, platform: &str) {
+        if self.folders.forget_account(account_id, platform) {
+            self.write_folders();
         }
     }
 

@@ -313,12 +313,12 @@ impl Backend for Scripted {
         }
         self.inner.reload_user_platforms()
     }
-    fn backup_select_export_path(&self) -> BackendResult<String> {
-        self.record("backup_select_export_path", String::new());
+    fn backup_select_export_path(&self, title: &str, all_files: &str) -> BackendResult<String> {
+        self.record("backup_select_export_path", format!("{title}|{all_files}"));
         if let Some(answer) = self.next("backup_select_export_path") {
             return answer;
         }
-        self.inner.backup_select_export_path()
+        self.inner.backup_select_export_path(title, all_files)
     }
     fn backup_export(&self, path: &str) -> BackendResult<BackupReport> {
         self.record("backup_export", format!("{:?}", (&path,)));
@@ -327,12 +327,12 @@ impl Backend for Scripted {
         }
         self.inner.backup_export(path)
     }
-    fn backup_select_import_file(&self) -> BackendResult<String> {
-        self.record("backup_select_import_file", String::new());
+    fn backup_select_import_file(&self, title: &str, all_files: &str) -> BackendResult<String> {
+        self.record("backup_select_import_file", format!("{title}|{all_files}"));
         if let Some(answer) = self.next("backup_select_import_file") {
             return answer;
         }
-        self.inner.backup_select_import_file()
+        self.inner.backup_select_import_file(title, all_files)
     }
     fn backup_preview(&self, path: &str) -> BackendResult<BackupPreview> {
         self.record("backup_preview", format!("{:?}", (&path,)));

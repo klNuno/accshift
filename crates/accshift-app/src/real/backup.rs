@@ -8,10 +8,12 @@ use accshift_core::storage;
 use accshift_core::AppContext;
 use std::path::Path;
 
-/// Title and filters of the backup dialogs.
-const EXPORT_TITLE: &str = "Export the accshift setup";
-const IMPORT_TITLE: &str = "Restore an accshift backup";
-const FILTERS: &[(&str, &[&str])] = &[("accshift backup", &["json"]), ("All files", &["*"])];
+/// The backup dialogs' filters: the backup files, then every file under
+/// the caller's translated label.
+fn with_filters(mut dialog: rfd::FileDialog, all_files: &str) -> rfd::FileDialog {
+    dialog = dialog.add_filter("accshift backup", &["json"]);
+    dialog.add_filter(all_files, &["*"])
+}
 
 fn now_s() -> u64 {
     std::time::SystemTime::now()
@@ -25,26 +27,20 @@ fn cancelled() -> crate::error::BackendError {
 }
 
 /// Backs `Backend::backup_select_export_path`, on `rfd`.
-pub(super) fn select_export_path() -> BackendResult<String> {
-    let mut dialog = rfd::FileDialog::new()
-        .set_title(EXPORT_TITLE)
+pub(super) fn select_export_path(title: &str, all_files: &str) -> BackendResult<String> {
+    let dialog = rfd::FileDialog::new()
+        .set_title(title)
         .set_file_name(storage::backup_file_name(now_s()));
-    for (name, extensions) in FILTERS {
-        dialog = dialog.add_filter(*name, extensions);
-    }
-    match dialog.save_file() {
+    match with_filters(dialog, all_files).save_file() {
         Some(path) => Ok(path.display().to_string()),
         None => Err(cancelled()),
     }
 }
 
 /// Backs `Backend::backup_select_import_file`, on `rfd`.
-pub(super) fn select_import_file() -> BackendResult<String> {
-    let mut dialog = rfd::FileDialog::new().set_title(IMPORT_TITLE);
-    for (name, extensions) in FILTERS {
-        dialog = dialog.add_filter(*name, extensions);
-    }
-    match dialog.pick_file() {
+pub(super) fn select_import_file(title: &str, all_files: &str) -> BackendResult<String> {
+    let dialog = rfd::FileDialog::new().set_title(title);
+    match with_filters(dialog, all_files).pick_file() {
         Some(path) => Ok(path.display().to_string()),
         None => Err(cancelled()),
     }

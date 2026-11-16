@@ -516,3 +516,71 @@ fn the_wallpaper_capture_answers_a_jpeg_data_url() {
         assert_eq!(snapshot, None);
     }
 }
+
+/// A restore from another PC, then accounts signed in one at a time: the
+/// account the first load misses keeps its folder and its place, and the
+/// second load finds it there. Only forgetting it takes it out.
+#[test]
+fn a_restored_folder_keeps_accounts_a_partial_load_misses() {
+    use accshift_app::folders::ItemRef;
+    use accshift_app::storage::{persist, ClientStorage};
+    use accshift_app::stores::{ClientStores, StoreContext};
+
+    let (from, source) = backend("restore-partial-from");
+    source
+        .save_client_storage_store(
+            STORE_FOLDERS,
+            &json!({
+                "version": 1,
+                "folders": [{"id": "main", "name": "Main", "parentId": null, "platform": "steam"}],
+                "itemOrder": {
+                    "root:steam": [{"type": "folder", "id": "main"}],
+                    "main": [{"type": "account", "id": "a"}, {"type": "account", "id": "b"}]
+                }
+            }),
+        )
+        .unwrap();
+    let file = from.root.join("backup.json");
+    source.backup_export(&file.display().to_string()).unwrap();
+
+    let (_to, real) = backend("restore-partial-to");
+    real.backup_restore(&file.display().to_string()).unwrap();
+    let load = |real: &RealBackend| {
+        ClientStores::new(
+            ClientStorage::from_snapshot(real.load_client_storage_snapshot().unwrap()),
+            StoreContext::shipped(),
+        )
+    };
+    let write = |stores: &mut ClientStores, real: &RealBackend| {
+        for save in stores.take_all_saves() {
+            persist(real, &save).unwrap();
+        }
+    };
+    let both = [ItemRef::account("a"), ItemRef::account("b")];
+
+    // Only A is signed in here.
+    let mut stores = load(&real);
+    stores.sync_loaded_accounts(&["a".to_string()], "steam");
+    write(&mut stores, &real);
+    let mut stores = load(&real);
+    assert_eq!(stores.items_in_folder(Some("main"), "steam"), both);
+
+    // B signs in: it is found in its folder, not added at the root.
+    stores.sync_loaded_accounts(&["a".to_string(), "b".to_string()], "steam");
+    write(&mut stores, &real);
+    let mut stores = load(&real);
+    assert_eq!(stores.items_in_folder(Some("main"), "steam"), both);
+    assert_eq!(
+        stores.items_in_folder(None, "steam"),
+        [ItemRef::folder("main")]
+    );
+
+    // Forgetting B in the app is what takes it out.
+    stores.forget_account("b", "steam");
+    write(&mut stores, &real);
+    let stores = load(&real);
+    assert_eq!(
+        stores.items_in_folder(Some("main"), "steam"),
+        [ItemRef::account("a")]
+    );
+}

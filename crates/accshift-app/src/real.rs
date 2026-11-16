@@ -269,15 +269,15 @@ impl Backend for RealBackend {
         descriptors::open_folder(&self.ctx)
     }
     /// The save dialog: same thread rule as [`Self::descriptor_select_file`].
-    fn backup_select_export_path(&self) -> BackendResult<String> {
-        backup::select_export_path()
+    fn backup_select_export_path(&self, title: &str, all_files: &str) -> BackendResult<String> {
+        backup::select_export_path(title, all_files)
     }
     fn backup_export(&self, path: &str) -> BackendResult<BackupReport> {
         backup::export(&self.ctx, path)
     }
     /// The file picker: same thread rule as [`Self::descriptor_select_file`].
-    fn backup_select_import_file(&self) -> BackendResult<String> {
-        backup::select_import_file()
+    fn backup_select_import_file(&self, title: &str, all_files: &str) -> BackendResult<String> {
+        backup::select_import_file(title, all_files)
     }
     fn backup_preview(&self, path: &str) -> BackendResult<BackupPreview> {
         backup::preview(path)
