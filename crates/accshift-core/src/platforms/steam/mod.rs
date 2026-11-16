@@ -10,6 +10,7 @@ pub mod bans;
 pub mod bulk_edit;
 pub mod cs2_bridge;
 pub mod profile;
+pub mod session;
 pub mod switch_params;
 pub mod vdf;
 
@@ -130,6 +131,51 @@ fn log_switch_requested(
         build_switch_state_details(&auto_login_user, &current_from_file, request),
     );
     current
+}
+
+/// Steam ids whose login Steam does not remember (`RememberPassword` "0").
+/// No Steam install or an unreadable file reads as none.
+pub fn password_needed_steam_ids(app_handle: AppCtx) -> Vec<String> {
+    resolve_steam_path(&app_handle)
+        .map(|path| session::password_needed_ids(&path))
+        .unwrap_or_default()
+}
+
+/// Reads of `loginusers.vdf` after a switch: about 120 s, one every 5 s.
+const SESSION_WATCH_ATTEMPTS: usize = 24;
+const SESSION_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Watches the target's login entry on a background thread: Steam still
+/// running at the end without signing the target in stopped at its password
+/// prompt, which marks the account; a sign-in lifts its mark. A later switch,
+/// setup or forget ends the watch unrecorded.
+fn watch_session_after_switch(
+    app_handle: AppCtx,
+    watch: crate::platforms::session_marks::WatchTicket,
+    steam_path: PathBuf,
+    account_name: &str,
+    before: session::LoginEntry,
+) {
+    let account_name = account_name.to_string();
+    crate::platforms::session_marks::spawn_watch("steam", move || {
+        let verdict = watch.watch(
+            app_handle.as_ref(),
+            SESSION_WATCH_ATTEMPTS,
+            || {
+                let now = session::read_entry(&steam_path, &account_name);
+                session::watch_step(&before, now.as_ref(), accounts::is_steam_running())
+            },
+            || std::thread::sleep(SESSION_WATCH_INTERVAL),
+        );
+        if let Err(error) = watch.apply(app_handle.as_ref(), &before.steam_id, verdict) {
+            log_platform_error(
+                app_handle.as_ref(),
+                "steam.session_watch",
+                "Could not store the session mark",
+                error,
+            );
+        }
+    });
 }
 
 pub fn get_accounts(app_handle: AppCtx) -> Result<Vec<SteamAccount>, PlatformError> {
@@ -494,6 +540,8 @@ impl PlatformService for SteamService {
             launch_options,
         };
         let _ = log_switch_requested(&app, &steam_path, &request);
+        // Read before the switch: the post-switch check compares against it.
+        let before = session::read_entry(&steam_path, account_id);
 
         // Optional persona mode (CLI --invisible/--online, GUI context menu).
         // When absent the switch leaves the account's persona state untouched.
@@ -501,6 +549,9 @@ impl PlatformService for SteamService {
         if !mode.is_empty() && !["online", "invisible"].contains(&mode) {
             return Err("Invalid mode".into());
         }
+        // Taken before Steam is touched: a watch still reading for the
+        // previous target would read this switch's login.
+        let watch = crate::platforms::session_marks::supersede_watch(&app, "steam");
 
         let result = if mode.is_empty() {
             accounts::switch_account(
@@ -548,12 +599,25 @@ impl PlatformService for SteamService {
         }
         .map_err(Into::into);
 
-        log_switch_outcome(&app, &steam_path, &request, result)
+        let result = log_switch_outcome(&app, &steam_path, &request, result);
+        if result.is_ok() {
+            if let Some(before) = before.filter(session::worth_watching) {
+                watch_session_after_switch(
+                    app.clone(),
+                    watch,
+                    steam_path.clone(),
+                    account_id,
+                    before,
+                );
+            }
+        }
+        result
     }
 
     fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), PlatformError> {
         validate_steam_id(account_id)?;
         let steam_path = resolve_steam_path(&app)?;
+        crate::platforms::session_marks::supersede_watch(&app, "steam");
         accounts::forget_account(&steam_path, account_id)
             .map_err(|e| log_platform_failure(&app, "steam.forget_account", e.into()))
     }

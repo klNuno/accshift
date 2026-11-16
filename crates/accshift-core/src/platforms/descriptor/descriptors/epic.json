@@ -100,6 +100,12 @@
         ],
         "displayNameFromId": true,
         "missingSnapshotHint": "Sign in to this account once first."
+      },
+      "session": {
+        "notRemembered": [
+          { "snapshot": "GameUserSettings.ini", "section": "RememberMe", "key": "Enable", "equals": "False" },
+          { "snapshot": "GameUserSettings.ini", "section": "RememberMe", "key": "Data" }
+        ]
       }
     }
   }

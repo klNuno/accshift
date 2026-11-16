@@ -13,6 +13,10 @@ pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Stri
     ensure_no_riot_game_running("switching Riot account")?;
     let client_path = resolve_riot_client_path(&app_handle)?;
     let target_id = normalize_profile_id(&profile_id)?;
+    // Taken before the client is touched and the config read: a watch still
+    // reading for the previous target would read this switch's account, and
+    // the config saved below already holds whatever that watch stored.
+    let watch = crate::platforms::session_marks::supersede_watch(&app_handle, "riot");
     let current_live_identity = detect_live_identity().ok();
     let mut cfg = config::load_config(&app_handle);
     cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
@@ -41,6 +45,11 @@ pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Stri
         return Err(error);
     }
 
+    // Only a restored session can be refused: a profile without a ready
+    // snapshot lands on the sign-in screen by design.
+    let restored_profile = find_profile(&cfg, &target_id)
+        .filter(|profile| profile.snapshot_state == "ready")
+        .cloned();
     // The client path is resolved once for the whole switch.
     let install_dir = client_path.parent();
     let work = switch_after_quit(
@@ -53,6 +62,9 @@ pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Stri
     // Relaunch even when the work failed, so a failed switch never leaves the
     // client closed.
     let result = relaunch_after_quit(work, || launch_riot_client(&client_path));
+    if let (Ok(()), Some(profile)) = (&result, restored_profile) {
+        watch_session_after_switch(app_handle.clone(), watch, profile);
+    }
 
     match &result {
         Ok(()) => log_platform_info(
@@ -73,6 +85,62 @@ pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Stri
     }
 
     result
+}
+
+/// Reads of the RSO session after a relaunch: about 60 s, one every 3 s.
+pub(super) const SESSION_WATCH_ATTEMPTS: usize = 20;
+const SESSION_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Polls the relaunched client on a background thread: marks the profile
+/// when RSO keeps answering "not authenticated", lifts its mark once the
+/// restored session signs in.
+/// A later switch, setup, capture or forget ends the watch unrecorded.
+fn watch_session_after_switch(
+    app_handle: AppCtx,
+    watch: crate::platforms::session_marks::WatchTicket,
+    profile: config::RiotProfileConfig,
+) {
+    crate::platforms::session_marks::spawn_watch("riot", move || {
+        let verdict = watch.watch(
+            app_handle.as_ref(),
+            SESSION_WATCH_ATTEMPTS,
+            || {
+                session_watch_step(read_rso_session_type(), &profile, || {
+                    detect_live_identity().ok()
+                })
+            },
+            || std::thread::sleep(SESSION_WATCH_INTERVAL),
+        );
+        if let Err(error) = watch.apply(app_handle.as_ref(), &profile.id, verdict) {
+            log_platform_error(
+                app_handle.as_ref(),
+                "riot.session_watch",
+                "Could not store the session mark",
+                error,
+            );
+        }
+    });
+}
+
+/// One read of the watch. RSO's session is global: a sign-in counts for the
+/// target only when the live account is the target's (same PUUID). Another
+/// account signed in by hand ends the watch unrecorded; an account that
+/// cannot be named, or a target without a stored PUUID, keeps waiting, so
+/// neither ever lifts the target's mark.
+pub(super) fn session_watch_step(
+    session: RiotSessionType,
+    target: &config::RiotProfileConfig,
+    live: impl FnOnce() -> Option<RiotDetectedIdentity>,
+) -> crate::platforms::session_marks::WatchStep {
+    use crate::platforms::session_marks::WatchStep;
+    if session != RiotSessionType::Authenticated {
+        return session.watch_step();
+    }
+    match check_live_identity(target, live().as_ref()) {
+        IdentityCheck::Match => WatchStep::SignedIn,
+        IdentityCheck::Mismatch => WatchStep::Superseded,
+        IdentityCheck::Unclaimed | IdentityCheck::Unknown => WatchStep::Pending,
+    }
 }
 
 /// Everything a switch does while the client is closed: back the outgoing

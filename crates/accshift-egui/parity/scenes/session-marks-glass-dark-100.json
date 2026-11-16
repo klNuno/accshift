@@ -1,0 +1,111 @@
+{
+  "id": "session-marks-glass-dark-100",
+  "scenario": "dev",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "viewMode": "grid",
+      "animations": "off",
+      "accountDisplay": {
+        "showUsernames": true,
+        "showCardNotesInline": false
+      }
+    }
+  },
+  "steps": [
+    {
+      "wait": 800
+    },
+    {
+      "move": [
+        250,
+        18
+      ]
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "shot": "steam-grid"
+    },
+    {
+      "move": [
+        755,
+        150
+      ]
+    },
+    {
+      "wait": 900
+    },
+    {
+      "shot": "password-needed-tooltip"
+    },
+    {
+      "click": [
+        95,
+        140
+      ]
+    },
+    {
+      "move": [
+        250,
+        18
+      ]
+    },
+    {
+      "wait": 900
+    },
+    {
+      "shot": "folder-grid"
+    },
+    {
+      "move": [
+        205,
+        150
+      ]
+    },
+    {
+      "wait": 900
+    },
+    {
+      "shot": "folder-tooltip-1"
+    },
+    {
+      "move": [
+        315,
+        150
+      ]
+    },
+    {
+      "wait": 900
+    },
+    {
+      "shot": "folder-tooltip-2"
+    },
+    {
+      "click": [
+        816,
+        60
+      ]
+    },
+    {
+      "move": [
+        250,
+        18
+      ]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "shot": "folder-list"
+    }
+  ]
+}

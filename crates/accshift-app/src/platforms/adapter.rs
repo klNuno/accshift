@@ -15,8 +15,9 @@
 //! mutex inside the adapter.
 
 use super::generic::GenericConfig;
-use super::riot::{self, RiotProfile, RiotProfileCache};
+use super::riot::{self, RiotProfile, RiotProfileCache, RiotSessions};
 use super::roblox::{self, RobloxSessions};
+use super::session_marks::{self, SessionMarks, SessionState};
 use super::steam::api::{ApiKeyMemo, SteamLaunchConfig};
 use super::steam::cs2::Cs2Bridge;
 use super::steam::warnings::{self as steam_warnings, BanFetch, BanPlan, BanSession, BanStep};
@@ -57,8 +58,15 @@ pub struct AdapterState {
     pub api_key: ApiKeyMemo,
     pub cs2: Cs2Bridge,
     pub riot_profiles: RiotProfileCache,
+    pub riot_sessions: RiotSessions,
     pub roblox_sessions: RobloxSessions,
+    /// Stored after-the-fact marks and offline "password needed" reads.
+    pub session_marks: SessionMarks,
 }
+
+/// The platforms whose backend answers `session_marks`: Riot and Steam
+/// (after-the-fact marks), Steam and Epic (password needed).
+pub const SESSION_MARK_PLATFORMS: &[&str] = &["riot", "steam", "epic"];
 
 /// What the menu builders read from the UI.
 #[derive(Debug, Clone, Copy)]
@@ -146,7 +154,68 @@ impl PlatformAdapter {
 
     /// Whether the platform has account warnings.
     pub fn has_warnings(&self) -> bool {
-        matches!(self.kind, AdapterKind::Steam | AdapterKind::Roblox)
+        matches!(
+            self.kind,
+            AdapterKind::Steam | AdapterKind::Riot | AdapterKind::Roblox
+        ) || self.has_session_marks()
+    }
+
+    /// Whether the backend keeps session marks for this platform.
+    pub fn has_session_marks(&self) -> bool {
+        SESSION_MARK_PLATFORMS.contains(&self.id.as_str())
+    }
+
+    /// Whether the account's saved session is known to be expired, so a
+    /// switch to it will end on the launcher's sign-in screen.
+    pub fn session_expired(&self, account_id: &str) -> bool {
+        let state = self.state();
+        (self.kind == AdapterKind::Riot && state.riot_sessions.is_expired(account_id))
+            || state.session_marks.state(account_id) == Some(SessionState::Expired)
+    }
+
+    /// The session warnings a load or a switch just recomputed, `None` for
+    /// platforms whose warnings come from a separate load (Steam overlays
+    /// them on its ban load).
+    pub fn session_warning_states(&self) -> Option<BTreeMap<String, WarningPresentation>> {
+        if self.kind == AdapterKind::Steam || !self.has_session_marks() {
+            return None;
+        }
+        let state = self.state();
+        let mut warnings = if self.kind == AdapterKind::Riot {
+            state.riot_sessions.warning_map()
+        } else {
+            BTreeMap::new()
+        };
+        session_marks::overlay(&mut warnings, state.session_marks.warning_map());
+        Some(warnings)
+    }
+
+    /// Adds the session marks to a warning map.
+    fn overlay_session_marks(&self, warnings: &mut BTreeMap<String, WarningPresentation>) {
+        if self.has_session_marks() {
+            let marks = self.state().session_marks.warning_map();
+            session_marks::overlay(warnings, marks);
+        }
+    }
+
+    /// Rereads the session marks a background watch changed (job pool); the
+    /// UI then lands [`Self::cached_warning_states`].
+    pub fn reload_session_marks(&self, backend: &dyn Backend) {
+        self.check_riot_sessions(backend);
+    }
+
+    /// Rereads the Riot session expiry from the snapshots and the platform's
+    /// session marks (job pool, local files only). A failure keeps what was
+    /// known.
+    fn check_riot_sessions(&self, backend: &dyn Backend) {
+        if self.kind == AdapterKind::Riot {
+            let result = backend.riot_check_sessions();
+            self.state().riot_sessions.finish_check(result);
+        }
+        if self.has_session_marks() {
+            let result = backend.session_marks(&self.id);
+            self.state().session_marks.finish_load(result);
+        }
     }
 
     // ------------------------------------------------------------ accounts
@@ -191,7 +260,9 @@ impl PlatformAdapter {
 
     /// The platform's accounts.
     pub fn load_accounts(&self, backend: &dyn Backend) -> BackendResult<Vec<PlatformAccount>> {
-        Ok(self.to_accounts(&self.api(backend).get_accounts()?))
+        let accounts = self.to_accounts(&self.api(backend).get_accounts()?);
+        self.check_riot_sessions(backend);
+        Ok(accounts)
     }
 
     /// The id of the account signed in now.
@@ -201,7 +272,9 @@ impl PlatformAdapter {
 
     /// The accounts and the current one, read in one call at startup.
     pub fn startup_snapshot(&self, backend: &dyn Backend) -> BackendResult<StartupSnapshot> {
-        Ok(self.to_snapshot(&self.api(backend).get_startup_snapshot()?))
+        let snapshot = self.to_snapshot(&self.api(backend).get_startup_snapshot()?);
+        self.check_riot_sessions(backend);
+        Ok(snapshot)
     }
 
     /// Switches account. Steam reads its launch settings; Roblox keeps its
@@ -214,11 +287,19 @@ impl PlatformAdapter {
     ) -> BackendResult<()> {
         match &self.kind {
             AdapterKind::Steam => {
-                steam::api::switch_account(backend, &account.username, &steam_config(settings))
+                let result =
+                    steam::api::switch_account(backend, &account.username, &steam_config(settings));
+                self.check_riot_sessions(backend);
+                result
             }
-            AdapterKind::Riot => self
-                .api(backend)
-                .switch_account(&account.id, &json!({}), None),
+            AdapterKind::Riot => {
+                let result = self
+                    .api(backend)
+                    .switch_account(&account.id, &json!({}), None);
+                // The outgoing profile was re-captured: its window moved.
+                self.check_riot_sessions(backend);
+                result
+            }
             AdapterKind::Roblox => {
                 let result = self
                     .api(backend)
@@ -237,8 +318,11 @@ impl PlatformAdapter {
                 let details = config
                     .mask_switch_log_id(&account.id)
                     .map(|masked| json!({ "accountId": masked }));
-                self.api(backend)
-                    .switch_account(&account.id, &json!({}), details)
+                let result = self
+                    .api(backend)
+                    .switch_account(&account.id, &json!({}), details);
+                self.check_riot_sessions(backend);
+                result
             }
         }
     }
@@ -270,9 +354,14 @@ impl PlatformAdapter {
         setup_id: &str,
     ) -> BackendResult<AddFlowStatus> {
         let status = self.api(backend).get_setup_status(setup_id)?;
-        if self.kind == AdapterKind::Roblox && status.state == "ready" {
+        if status.state == "ready" {
             if let Some(account_id) = status.account_id.as_deref().filter(|id| !id.is_empty()) {
-                self.state().roblox_sessions.clear_expired(account_id);
+                let mut state = self.state();
+                if self.kind == AdapterKind::Roblox {
+                    state.roblox_sessions.clear_expired(account_id);
+                }
+                // A new capture holds a fresh session.
+                state.session_marks.clear(account_id);
             }
         }
         Ok(status)
@@ -530,9 +619,13 @@ impl PlatformAdapter {
         stores: &ClientStores,
     ) -> BTreeMap<String, WarningPresentation> {
         match self.kind {
-            AdapterKind::Steam => steam_warnings::cached_warning_states(stores),
+            AdapterKind::Steam => {
+                let mut warnings = steam_warnings::cached_warning_states(stores);
+                self.overlay_session_marks(&mut warnings);
+                warnings
+            }
             AdapterKind::Roblox => self.state().roblox_sessions.warning_map().warnings,
-            _ => BTreeMap::new(),
+            _ => self.session_warning_states().unwrap_or_default(),
         }
     }
 
@@ -548,16 +641,25 @@ impl PlatformAdapter {
         if self.kind != AdapterKind::Steam {
             return None;
         }
-        let state = self.state();
-        Some(steam_warnings::plan(
-            &state.ban_session,
-            &state.api_key,
-            stores,
-            settings,
-            accounts,
-            options,
-            now_ms,
-        ))
+        let step = {
+            let state = self.state();
+            steam_warnings::plan(
+                &state.ban_session,
+                &state.api_key,
+                stores,
+                settings,
+                accounts,
+                options,
+                now_ms,
+            )
+        };
+        Some(match step {
+            BanStep::Done(mut load) => {
+                self.overlay_session_marks(&mut load.warnings);
+                BanStep::Done(load)
+            }
+            fetch => fetch,
+        })
     }
 
     /// Steam's load, last step (UI thread), after
@@ -568,13 +670,17 @@ impl PlatformAdapter {
         fetched: BanFetch,
         stores: &mut ClientStores,
     ) -> WarningLoad {
-        let mut state = self.state();
-        let AdapterState {
-            ban_session,
-            api_key,
-            ..
-        } = &mut *state;
-        steam_warnings::finish(ban_session, api_key, plan, fetched, stores)
+        let mut load = {
+            let mut state = self.state();
+            let AdapterState {
+                ban_session,
+                api_key,
+                ..
+            } = &mut *state;
+            steam_warnings::finish(ban_session, api_key, plan, fetched, stores)
+        };
+        self.overlay_session_marks(&mut load.warnings);
+        load
     }
 
     /// A warning load in one blocking call: Steam bans or the Roblox session
@@ -610,6 +716,14 @@ impl PlatformAdapter {
                 }
                 let result = RobloxSessions::probe(backend);
                 Some(self.state().roblox_sessions.finish_probe(result))
+            }
+            _ if self.has_session_marks() => {
+                self.check_riot_sessions(backend);
+                Some(WarningLoad {
+                    warnings: self.session_warning_states().unwrap_or_default(),
+                    outcome: None,
+                    toasts: Vec::new(),
+                })
             }
             _ => None,
         }

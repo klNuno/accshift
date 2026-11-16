@@ -29,6 +29,7 @@ pub fn begin_account_setup(
     force_kill: bool,
 ) -> Result<SetupStatus, PlatformError> {
     let steam_path = resolve_steam_path(&app_handle)?;
+    crate::platforms::session_marks::supersede_watch(&app_handle, "steam");
     let known_accounts = accounts::get_accounts(&steam_path)
         .map_err(|e| log_platform_failure(&app_handle, "steam.begin_account_setup", e.into()))?;
     let known_account_ids = known_accounts
@@ -215,6 +216,18 @@ pub fn get_account_setup_status(
     if let Some(account) = maybe_added {
         if let Ok(mut jobs) = steam_setup_jobs().lock() {
             jobs.remove(&setup_id);
+        }
+        // A fresh sign-in: a mark the account kept from before it was
+        // forgotten no longer applies.
+        if let Err(error) =
+            crate::platforms::session_marks::clear_mark(&app_handle, "steam", &account.steam_id)
+        {
+            log_platform_error(
+                &app_handle,
+                "steam.get_account_setup_status",
+                "Could not lift the session mark",
+                error,
+            );
         }
         return Ok(crate::platforms::make_setup_status(
             &setup_id,

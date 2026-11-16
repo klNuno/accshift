@@ -1,5 +1,6 @@
 //! Roblox: account mapping, profile info, menu entries and session warnings.
 
+use super::session_marks::{SessionMarks, SessionState};
 use super::warnings::{WarningChip, WarningLoad, WarningPresentation, WarningTone};
 use super::{PlatformAccount, PlatformProfileInfo, StartupSnapshot};
 use crate::backend::Backend;
@@ -11,7 +12,6 @@ use crate::text::Text;
 use crate::time::unix_ms_to_seconds;
 use crate::types::RobloxProfileInfo;
 use serde_json::Value;
-use std::collections::BTreeSet;
 
 /// `SESSION_EXPIRED_PATTERN`: the backend's wording when the stored
 /// `.ROBLOSECURITY` cookie is refused, matched case-insensitively.
@@ -120,10 +120,11 @@ pub fn roblox_context_menu_actions(account: &PlatformAccount) -> Vec<MenuAction>
 
 /// The dead sessions this session knows of. Roblox cookies carry no readable
 /// expiry, so the backend probes them over the network, once per session
-/// unless forced.
+/// unless forced. The marks are the shared [`SessionMarks`], shown with
+/// Roblox's own wording; they are not stored, the probe recomputes them.
 #[derive(Debug, Clone, Default)]
 pub struct RobloxSessions {
-    dead: BTreeSet<String>,
+    dead: SessionMarks,
     checked_this_session: bool,
 }
 
@@ -145,22 +146,18 @@ impl RobloxSessions {
     /// A switch refused with HTTP 401 proves the cookie dead, whatever the
     /// health-check setting.
     pub fn mark_expired(&mut self, user_id: &str) {
-        self.dead.insert(user_id.to_string());
+        self.dead.mark(user_id, SessionState::Expired);
     }
 
     /// A fresh cookie or a successful switch.
     pub fn clear_expired(&mut self, user_id: &str) {
-        self.dead.remove(user_id);
+        self.dead.clear(user_id);
     }
 
     /// The known dead sessions as a warning map.
     pub fn warning_map(&self) -> WarningLoad {
         WarningLoad {
-            warnings: self
-                .dead
-                .iter()
-                .map(|id| (id.clone(), expired_presentation()))
-                .collect(),
+            warnings: self.dead.warning_map_with(|_| expired_presentation()),
             outcome: None,
             toasts: Vec::new(),
         }
@@ -190,7 +187,8 @@ impl RobloxSessions {
     /// Stores the probe's answer. A failure keeps what was known.
     pub fn finish_probe(&mut self, result: Result<Vec<String>, BackendError>) -> WarningLoad {
         if let Ok(dead) = result {
-            self.dead = dead.into_iter().collect();
+            self.dead
+                .replace(dead.into_iter().map(|id| (id, SessionState::Expired)));
             self.checked_this_session = true;
         }
         self.warning_map()

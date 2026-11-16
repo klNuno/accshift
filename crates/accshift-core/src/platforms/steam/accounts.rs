@@ -51,7 +51,7 @@ pub(crate) fn steam_id_to_account_id(steam_id64: &str) -> Option<u32> {
     Some((id & 0xFFFFFFFF) as u32)
 }
 
-pub(super) fn is_steam_running() -> bool {
+pub(crate) fn is_steam_running() -> bool {
     os::is_process_running(os::steam_process_name())
 }
 

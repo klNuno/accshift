@@ -23,6 +23,7 @@ pub mod path_error;
 pub mod registry;
 pub mod riot;
 pub mod roblox;
+pub mod session_marks;
 pub mod steam;
 pub mod warnings;
 

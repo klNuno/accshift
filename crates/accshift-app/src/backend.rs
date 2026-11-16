@@ -166,6 +166,25 @@ pub trait Backend: Send + Sync {
     // ---------------------------------------------------------------- Riot, Roblox
 
     fn riot_capture_profile(&self, profile_id: &str) -> BackendResult<()>;
+    /// Riot profile ids whose saved session is past its restore window,
+    /// read offline from the snapshots. Unreadable ones are left out.
+    fn riot_check_sessions(&self) -> BackendResult<Vec<String>>;
+    /// A platform's session marks: after-the-fact ones the backend stored
+    /// and the offline "password needed" reads. Unreadable data marks nothing.
+    fn session_marks(&self, platform_id: &str)
+        -> BackendResult<Vec<crate::types::SessionMarkInfo>>;
+    /// Moves when the backend stored or lifted a session mark, for instance
+    /// when a watch ends after its switch returned. One atomic read, safe on
+    /// the UI thread. Backends without background watches stay at 0.
+    fn session_marks_revision(&self) -> u64 {
+        0
+    }
+    /// A post-switch session watch still runs, whatever started the switch
+    /// (account, persona, deep link): the UI keeps waking to land its
+    /// verdict. Safe on the UI thread.
+    fn session_watches_running(&self) -> bool {
+        false
+    }
     fn roblox_add_account_by_cookie(&self, cookie: &str) -> BackendResult<RobloxAccount>;
     fn roblox_get_profile_info(&self, user_id: &str) -> BackendResult<RobloxProfileInfo>;
     /// User ids whose stored session is dead.
