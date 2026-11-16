@@ -17,9 +17,17 @@
 //! `user/backups/pre-restore-<timestamp>/`, writes each store atomically and
 //! puts the files it already replaced back when a later write fails. Stores
 //! are replaced, bar the settings fields of this PC, which are never removed
-//! or replaced; themes and descriptors are added or overwritten by id and
-//! never deleted. Account ids the file names are kept as they are, whether or
-//! not the account exists on this PC.
+//! or replaced; themes are added or overwritten by id and descriptors by file
+//! name, and neither is ever deleted. Account ids the file names are kept as
+//! they are, whether or not the account exists on this PC.
+//!
+//! The descriptors are the files the loader reads, each under its own file
+//! name, with no choice made between two files that declare one id: after a
+//! restore the loader makes the same choice on each OS as before, and a
+//! restore on the same PC overwrites the file it was taken from. A file name
+//! that is not a plain `*.json` name refuses the whole backup before any
+//! write. A backup written before kept a descriptor under the id it declared:
+//! that key is restored as `<id>.json`, as then.
 
 #[allow(unused_imports)]
 use super::*;
@@ -62,7 +70,9 @@ pub struct BackupFile {
     /// Custom theme id to the theme file's JSON.
     #[serde(default)]
     pub themes: BTreeMap<String, Value>,
-    /// User descriptor id to the descriptor file's JSON.
+    /// User descriptor file name (`My Platform.json`) to the file's JSON.
+    /// A backup written before keyed it by the id it declared (`acme`),
+    /// which restores as `acme.json`.
     #[serde(default)]
     pub descriptors: BTreeMap<String, Value>,
 }
@@ -142,50 +152,76 @@ fn read_json_dir(dir: &Path) -> BTreeMap<String, Value> {
     out
 }
 
+/// Names Windows keeps for a device, whatever the extension.
+const RESERVED_NAMES: [&str; 22] = [
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+
+/// A descriptor file name a restore may write on any OS: one plain name
+/// ending in `.json` in any case, with no separator, drive, parent step,
+/// character Windows refuses or device name.
+fn is_safe_descriptor_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let Some(stem) = lower.strip_suffix(".json") else {
+        return false;
+    };
+    let device = stem.split('.').next().unwrap_or(stem).trim_end();
+    !stem.is_empty()
+        && name.len() <= 255
+        && !name.contains("..")
+        && !name.chars().any(|c| {
+            c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+        })
+        && !RESERVED_NAMES.contains(&device)
+        && matches!(
+            Path::new(name).components().collect::<Vec<_>>().as_slice(),
+            [std::path::Component::Normal(only)] if *only == std::ffi::OsStr::new(name)
+        )
+}
+
+/// The file a descriptor key of a backup restores to: the key itself, or
+/// `<id>.json` for the id a backup written before used. `None` refuses it.
+fn descriptor_file_name(key: &str) -> Option<String> {
+    if is_safe_descriptor_name(key) {
+        Some(key.to_string())
+    } else if is_safe_file_id(key) {
+        Some(format!("{key}.json")).filter(|name| is_safe_descriptor_name(name))
+    } else {
+        None
+    }
+}
+
 /// The user descriptors, read as the loader reads them: every file with a
-/// `.json` extension in any case and any name, in path order. One the
-/// loader accepts goes under the id it declares, the first file of an id
-/// winning as at load, so a restore writes it to `<id>.json` like an
-/// install; one it rejects keeps its own name when that is a safe id still
-/// free. A file that does not parse is left out.
+/// `.json` extension in any case, each under its own file name, whatever id
+/// it declares and whether the loader accepts it. A file that does not
+/// parse as JSON is left out, and so is a name a restore could not write on
+/// every OS (a Linux name holding `:` or `\`).
 fn read_descriptor_dir(dir: &Path) -> BTreeMap<String, Value> {
     let mut out = BTreeMap::new();
     let Ok(entries) = fs::read_dir(dir) else {
         return out;
     };
-    let mut files: Vec<PathBuf> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_file()
-                && path
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
-        })
-        .collect();
-    files.sort();
-    let mut rejected = Vec::new();
-    for path in files {
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_json = path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"));
+        if !is_json || !path.is_file() {
+            continue;
+        }
+        let Some(name) = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .filter(|n| is_safe_descriptor_name(n))
+        else {
+            continue;
+        };
         let Ok(body) = fs::read_to_string(&path) else {
             continue;
         };
-        let Ok(value) = serde_json::from_str::<Value>(&body) else {
-            continue;
-        };
-        match crate::platforms::descriptor::Descriptor::parse("", &body) {
-            Ok(descriptor) => {
-                out.entry(descriptor.id).or_insert(value);
-            }
-            Err(_) => rejected.push((path, value)),
-        }
-    }
-    for (path, value) in rejected {
-        if let Some(stem) = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .filter(|s| is_safe_file_id(s))
-        {
-            out.entry(stem.to_string()).or_insert(value);
+        if let Ok(value) = serde_json::from_str::<Value>(&body) {
+            out.insert(name.to_string(), value);
         }
     }
     out
@@ -273,13 +309,21 @@ pub fn read_backup(path: &Path) -> Result<BackupFile, String> {
             ));
         }
     }
-    if let Some(id) = backup
-        .themes
-        .keys()
-        .chain(backup.descriptors.keys())
-        .find(|id| !is_safe_file_id(id))
-    {
+    if let Some(id) = backup.themes.keys().find(|id| !is_safe_file_id(id)) {
         return Err(format!("the backup names an unsafe file id `{id}`"));
+    }
+    let mut names = HashSet::new();
+    for key in backup.descriptors.keys() {
+        let Some(name) = descriptor_file_name(key) else {
+            return Err(format!(
+                "the backup names an unsafe descriptor file `{key}`"
+            ));
+        };
+        if !names.insert(name.clone()) {
+            return Err(format!(
+                "the backup names the descriptor file `{name}` twice"
+            ));
+        }
     }
     Ok(backup)
 }
@@ -415,26 +459,28 @@ fn plan_restore(app: &dyn AppContext, backup: &BackupFile) -> Result<Vec<Planned
             PathBuf::from("user").join(name),
         )?);
     }
-    let dirs = [
-        ("themes", themes_dir(app)?, &backup.themes),
-        (
-            "descriptors",
-            crate::platforms::descriptor::user_dir(app)?,
-            &backup.descriptors,
-        ),
-    ];
-    for (folder, dir, files) in dirs {
-        for (id, value) in files {
-            // A shipped id would only be blocked again at load.
-            if folder == "descriptors" && crate::platforms::is_shipped(id) {
-                continue;
-            }
-            plan.push(PlannedWrite::new(
-                dir.join(format!("{id}.json")),
-                Some(encode(value)?),
-                PathBuf::from(folder).join(format!("{id}.json")),
-            )?);
-        }
+    let themes = themes_dir(app)?;
+    for (id, value) in &backup.themes {
+        let name = format!("{id}.json");
+        plan.push(PlannedWrite::new(
+            themes.join(&name),
+            Some(encode(value)?),
+            PathBuf::from("themes").join(&name),
+        )?);
+    }
+    // Each file back under its own name, so the loader chooses as before.
+    let descriptors = crate::platforms::descriptor::user_dir(app)?;
+    for (key, value) in &backup.descriptors {
+        let Some(name) = descriptor_file_name(key) else {
+            return Err(format!(
+                "the backup names an unsafe descriptor file `{key}`"
+            ));
+        };
+        plan.push(PlannedWrite::new(
+            descriptors.join(&name),
+            Some(encode(value)?),
+            PathBuf::from("descriptors").join(&name),
+        )?);
     }
     Ok(plan)
 }
@@ -944,36 +990,67 @@ mod tests {
         );
     }
 
-    /// The user platforms the loader registers, first file of an id
-    /// winning, as `(id, name)` sorted by id.
+    /// The user platforms the real registry loads on this OS, as
+    /// `(id, name)` sorted by id. The registry is emptied again after.
     fn loaded_platforms(app: &Ctx) -> Vec<(String, String)> {
-        let mut seen = HashSet::new();
-        let mut loaded: Vec<(String, String)> = crate::platforms::descriptor::load_user(app)
-            .0
+        let _registry = crate::platforms::descriptor::test_support::registry_lock();
+        let mut loaded: Vec<(String, String)> = crate::platforms::reload_user_platforms(app)
+            .loaded
             .into_iter()
-            .filter(|(_, d)| seen.insert(d.id.clone()))
-            .map(|(_, d)| (d.id, d.name))
+            .map(|d| (d.id, d.name))
             .collect();
+        crate::platforms::reload_user_platforms(&ctx("empty-registry"));
         loaded.sort();
         loaded
     }
 
+    /// The descriptor files the loader would read, by name.
+    fn descriptor_files(app: &Ctx) -> Vec<String> {
+        let dir = crate::platforms::descriptor::user_dir(app).unwrap();
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.to_ascii_lowercase().ends_with(".json"))
+            .collect();
+        names.sort();
+        names
+    }
+
+    const EVERY_OS: [&str; 3] = ["windows", "linux", "macos"];
+
+    /// A fixture descriptor for `id` named `name`, with a profile for each
+    /// OS of `oses` only.
+    fn descriptor(app: &Ctx, id: &str, name: &str, oses: &[&str]) -> String {
+        use crate::platforms::descriptor::test_support::fixture;
+        let mut value: Value = serde_json::from_str(&fixture(id, &app.0)).unwrap();
+        value["name"] = json!(name);
+        let all = value["os"].as_object().unwrap().clone();
+        value["os"] = Value::Object(
+            all.into_iter()
+                .filter(|(os, _)| oses.contains(&os.as_str()))
+                .collect(),
+        );
+        value.to_string()
+    }
+
     /// Exports `from`, restores the file on a fresh install and answers the
-    /// platforms both load.
+    /// platforms both load; both hold the same descriptor files.
     fn platforms_across_a_backup(
         tag: &str,
         files: &[(&str, &str, &str)],
     ) -> [Vec<(String, String)>; 2] {
-        use crate::platforms::descriptor::test_support::{drop_in, fixture};
+        use crate::platforms::descriptor::test_support::drop_in;
         let from = ctx(&format!("{tag}-from"));
         for (file, id, name) in files {
-            let body = fixture(id, &from.0).replace("Fixture Launcher", name);
-            drop_in(&from, file, &body);
+            drop_in(&from, file, &descriptor(&from, id, name, &EVERY_OS));
         }
         let backup = from.0.join("backup.json");
         export_backup(&from, &backup).unwrap();
         let to = ctx(&format!("{tag}-to"));
         restore_backup(&to, &backup).unwrap();
+        assert_eq!(descriptor_files(&to), descriptor_files(&from));
         [loaded_platforms(&from), loaded_platforms(&to)]
     }
 
@@ -997,6 +1074,154 @@ mod tests {
         );
         assert_eq!(from.len(), 2, "{from:?}");
         assert_eq!(to, from);
+    }
+
+    #[test]
+    fn two_files_of_one_id_for_different_oses_load_the_same_after_a_restore() {
+        use crate::platforms::descriptor::test_support::drop_in;
+        let here = crate::platforms::descriptor::schema::Os::current()
+            .unwrap()
+            .as_str();
+        let other = EVERY_OS.into_iter().find(|os| *os != here).unwrap();
+        let from = ctx("os-collision-from");
+        // The first file in path order is for another OS: the loader skips
+        // it here and loads the second.
+        drop_in(
+            &from,
+            "a.json",
+            &descriptor(&from, "dup", "Elsewhere", &[other]),
+        );
+        drop_in(&from, "b.json", &descriptor(&from, "dup", "Here", &[here]));
+        let file = from.0.join("backup.json");
+        export_backup(&from, &file).unwrap();
+        let to = ctx("os-collision-to");
+        restore_backup(&to, &file).unwrap();
+
+        let before = loaded_platforms(&from);
+        let after = loaded_platforms(&to);
+        assert_eq!(before, [("dup".to_string(), "Here".to_string())]);
+        assert_eq!(
+            after,
+            before,
+            "before={} after={}",
+            before.len(),
+            after.len()
+        );
+        assert_eq!(descriptor_files(&to), ["a.json", "b.json"]);
+    }
+
+    #[test]
+    fn a_restore_on_the_same_pc_overwrites_the_descriptor_file_it_came_from() {
+        use crate::platforms::descriptor::test_support::drop_in;
+        let app = ctx("alias");
+        let original = descriptor(&app, "mine", "Original", &EVERY_OS);
+        drop_in(&app, "My Platform.json", &original);
+        let file = app.0.join("backup.json");
+        export_backup(&app, &file).unwrap();
+        drop_in(
+            &app,
+            "My Platform.json",
+            &descriptor(&app, "mine", "Edited", &EVERY_OS),
+        );
+
+        let report = restore_backup(&app, &file).unwrap();
+        let after = loaded_platforms(&app);
+        let files = descriptor_files(&app);
+        assert_eq!(
+            after,
+            [("mine".to_string(), "Original".to_string())],
+            "descriptor_files={}",
+            files.len()
+        );
+        assert_eq!(files, ["My Platform.json"]);
+        // The edit it replaced is in the pre-restore copy.
+        let copy = fs::read_to_string(
+            PathBuf::from(&report.pre_restore_dir)
+                .join("descriptors")
+                .join("My Platform.json"),
+        )
+        .unwrap();
+        assert!(copy.contains("Edited"), "{copy}");
+    }
+
+    /// A backup file whose only descriptor is under `name`.
+    fn file_with_descriptor(dir: &Path, n: usize, name: &str) -> PathBuf {
+        let file = dir.join(format!("descriptor-{n}.json"));
+        let body = json!({
+            "kind": BACKUP_KIND, "format": 1, "createdAt": 1, "appVersion": "2.0.0",
+            "descriptors": {(name): {"id": "x"}}
+        });
+        fs::write(&file, serde_json::to_vec(&body).unwrap()).unwrap();
+        file
+    }
+
+    #[test]
+    fn a_descriptor_name_that_is_not_a_plain_json_file_refuses_the_backup() {
+        let app = ctx("names");
+        seed(&app);
+        let files = ctx("names-files");
+        let before = tree(&app.0);
+        let refused = [
+            "../evil.json",
+            "..\\evil.json",
+            "sub/x.json",
+            "sub\\x.json",
+            "C:x.json",
+            "C:\\x.json",
+            "/abs.json",
+            "\\\\server\\share\\x.json",
+            "x.txt",
+            "x.json.txt",
+            ".json",
+            "..",
+            "a..json",
+            "con.json",
+            "NUL.txt.json",
+            "a\u{0}.json",
+            "a?.json",
+            "",
+        ];
+        for (n, name) in refused.iter().enumerate() {
+            let file = file_with_descriptor(&files.0, n, name);
+            assert!(preview_backup(&file).is_err(), "{name:?}");
+            assert!(restore_backup(&app, &file).is_err(), "{name:?}");
+            assert_eq!(tree(&app.0), before, "{name:?}");
+        }
+        // Plain names in any case, and the bare id of a backup from before.
+        for (n, name) in ["My Platform.json", "acme.JSON", "a-b_c.d.json", "acme"]
+            .iter()
+            .enumerate()
+        {
+            let file = file_with_descriptor(&files.0, 100 + n, name);
+            assert!(preview_backup(&file).is_ok(), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn a_backup_from_before_with_descriptors_keyed_by_id_still_restores() {
+        use crate::platforms::descriptor::test_support::fixture;
+        let to = ctx("legacy-to");
+        let acme: Value = serde_json::from_str(&fixture("acme", &to.0)).unwrap();
+        // The shape 98896e50 and 71648f17 wrote: a descriptor under the id
+        // it declares.
+        let body = json!({
+            "kind": BACKUP_KIND, "format": 1, "createdAt": 1, "appVersion": "2.0.0",
+            "stores": {(STORE_VIEW_MODE): "list"},
+            "themes": {"midnight": {"id": "midnight", "name": "Midnight"}},
+            "descriptors": {"acme": acme}
+        });
+        let file = to.0.join("old.json");
+        fs::write(&file, serde_json::to_vec_pretty(&body).unwrap()).unwrap();
+
+        let report = restore_backup(&to, &file).unwrap();
+        assert_eq!(report.preview.descriptors, 1);
+        assert_eq!(descriptor_files(&to), ["acme.json"]);
+        assert_eq!(
+            loaded_platforms(&to),
+            [("acme".to_string(), "Fixture Launcher".to_string())]
+        );
+        assert!(themes_dir(&to).unwrap().join("midnight.json").exists());
+        assert_eq!(store(&to, STORE_VIEW_MODE), Some(json!("list")));
     }
 
     #[test]
