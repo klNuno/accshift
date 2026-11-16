@@ -192,8 +192,8 @@ fn add_flow_view<'a>(navigation: &'a FolderNavigation, tab: &'a str) -> AddFlowV
 }
 
 impl Accounts {
-    /// Removes an account: drop it from the loader,
-    /// sync the folders with the accounts left, refresh the items.
+    /// Removes a forgotten account: drop it from the loader and from its
+    /// folder, refresh the items.
     pub fn remove_account(
         &mut self,
         stores: &mut ClientStores,
@@ -201,14 +201,7 @@ impl Accounts {
         account_id: &str,
     ) {
         self.loading.loader.remove_account(account_id);
-        let ids: Vec<String> = self
-            .loading
-            .loader
-            .accounts()
-            .iter()
-            .map(|account| account.id.clone())
-            .collect();
-        stores.sync_accounts(&ids, active_tab);
+        stores.forget_account(account_id, active_tab);
         self.navigation.refresh_current_items(stores, active_tab);
     }
 

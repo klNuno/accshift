@@ -47,9 +47,10 @@ use accshift_app::text::Text;
 use super::theme_editor::ThemeEditorEvent;
 use super::AppModel;
 
-pub use backup::BackupState;
+pub use backup::{restore_confirm, BackupState};
 pub use cs2::{Cs2Form, Cs2Status};
 pub use draft::{clamp_int, js_number, normalize, NumericField, NumericInput};
+pub(in crate::app) use jobs::apply_report;
 pub use state::{visible_tabs, SettingsPanel, TabDef};
 
 /// Digits in a PIN code.

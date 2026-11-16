@@ -31,6 +31,7 @@ impl AppModel {
         self.tick_secure(&ctx);
         self.tick_streamer(&ctx);
         self.tick_settings_panel(&ctx, Instant::now());
+        self.tick_backup(&ctx);
         self.tick_theme_editor(Instant::now());
         self.tick_theme_import(&ctx, Instant::now());
         self.pump_saves(&ctx);

@@ -16,6 +16,7 @@ impl AppModel {
     pub fn flush_app_state(&mut self) -> Result<(), String> {
         self.flush_ui_scale();
         self.flush_settings(Instant::now());
+        self.settle_restore_on_close();
         let Some(b) = self.booted.as_mut() else {
             return Ok(());
         };
@@ -76,7 +77,13 @@ impl AppModel {
         if let Some(due) = next {
             ctx.request_repaint_after(due.saturating_duration_since(now));
         }
-        for save in b.stores.take_due_saves(now) {
+        // A restore under way holds every new write until it is over.
+        let due = if self.backup.restoring() {
+            Vec::new()
+        } else {
+            b.stores.take_due_saves(now)
+        };
+        for save in due {
             let store_id = save.store_id;
             let pending = self
                 .jobs
@@ -86,6 +93,9 @@ impl AppModel {
         self.saves.retain_mut(|(id, pending)| match pending.poll() {
             Poll::Waiting => true,
             Poll::Ready(result) => {
+                if let Err(error) = &result {
+                    self.backup.save_failed(error);
+                }
                 b.stores.finish_save(id, &result);
                 false
             }

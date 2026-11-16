@@ -13,9 +13,6 @@ use super::*;
 pub(super) struct ExternalRefresh {
     window: Option<(bool, bool)>,
     job: Option<RefreshJob>,
-    /// A refresh asked for by the app itself (a restored backup), run as
-    /// soon as no other one is in flight.
-    requested: bool,
 }
 
 enum RefreshJob {
@@ -32,12 +29,14 @@ struct RefreshContents {
     themes: Option<Vec<CustomThemePayload>>,
 }
 
-impl AppModel {
-    /// Reads the stores changed on disk again, as a focus regain does.
-    pub(in crate::app) fn request_external_refresh(&mut self) {
-        self.external_refresh.requested = true;
+impl ExternalRefresh {
+    /// A refresh is reading or waiting for the accounts it reloads.
+    pub(super) fn running(&self) -> bool {
+        self.job.is_some()
     }
+}
 
+impl AppModel {
     pub(super) fn tick_external_refresh(&mut self, ctx: &Context) {
         if self.booted.is_none() {
             return;
@@ -56,8 +55,8 @@ impl AppModel {
             .is_some_and(|previous| (!previous.0 && window.0) || (previous.1 && !window.1));
         // The pending stage is the web lifecycle's in-flight guard. A single
         // restoration can produce both focus and visibility notifications.
-        if (trigger || self.external_refresh.requested) && self.external_refresh.job.is_none() {
-            self.external_refresh.requested = false;
+        // A restore replaces the files: no refresh starts until it is over.
+        if trigger && self.external_refresh.job.is_none() && !self.backup.restoring() {
             self.external_refresh.job = Some(RefreshJob::Manifest(
                 self.jobs.run(|backend| backend.get_storage_manifest()),
             ));
@@ -115,25 +114,10 @@ impl AppModel {
             RefreshJob::Snapshot { plan, mut pending } => match pending.poll() {
                 Poll::Waiting => Some(RefreshJob::Snapshot { plan, pending }),
                 Poll::Ready(Ok(contents)) => {
-                    let b = self.booted.as_mut().unwrap();
                     if let Some(themes) = contents.themes {
-                        b.registry.apply_custom_theme_payloads(&themes);
-                        let mut context = b.stores.context().clone();
-                        context.theme_ids =
-                            b.registry.all_themes().into_iter().map(|t| t.id).collect();
-                        b.stores.set_context(context);
-                        // ThemeKey counts themes, so editing one existing file
-                        // needs an explicit recomputation too.
-                        if b.theme_preview.is_none() {
-                            b.theme = compute_theme(
-                                &b.registry,
-                                &b.stores,
-                                b.runtime_os,
-                                self.os_reduced_motion,
-                                self.liquid.present(),
-                            );
-                        }
+                        self.apply_theme_payloads(&themes);
                     }
+                    let b = self.booted.as_mut().unwrap();
                     let changed = match contents.snapshot {
                         Some(snapshot) => b.stores.finish_refresh(plan, snapshot),
                         None => plan.other_targets,
@@ -167,6 +151,28 @@ impl AppModel {
         };
     }
 
+    /// Takes the custom themes read from disk, and the theme they draw.
+    pub(super) fn apply_theme_payloads(&mut self, themes: &[CustomThemePayload]) {
+        let Some(b) = self.booted.as_mut() else {
+            return;
+        };
+        b.registry.apply_custom_theme_payloads(themes);
+        let mut context = b.stores.context().clone();
+        context.theme_ids = b.registry.all_themes().into_iter().map(|t| t.id).collect();
+        b.stores.set_context(context);
+        // ThemeKey counts themes, so editing one existing file
+        // needs an explicit recomputation too.
+        if b.theme_preview.is_none() {
+            b.theme = compute_theme(
+                &b.registry,
+                &b.stores,
+                b.runtime_os,
+                self.os_reduced_motion,
+                self.liquid.present(),
+            );
+        }
+    }
+
     fn external_refresh_failed(&self, message: String) {
         drop(self.jobs.run(move |backend| {
             backend.log_app_event(
@@ -178,7 +184,7 @@ impl AppModel {
         }));
     }
 
-    fn apply_external_refresh(&mut self, ctx: &Context, changed: &[String]) {
+    pub(super) fn apply_external_refresh(&mut self, ctx: &Context, changed: &[String]) {
         self.sync_settings(ctx);
         let b = self.booted.as_mut().unwrap();
         let steps = plan_external_refresh(

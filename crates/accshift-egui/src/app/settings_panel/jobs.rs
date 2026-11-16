@@ -118,7 +118,7 @@ pub(super) fn drain_landed<J, T>(
 
 /// The folder's descriptors become the user platforms of the tabs, the
 /// account registry and the stores.
-fn apply_report(b: &mut Booted, report: &UserPlatformReport) {
+pub(in crate::app) fn apply_report(b: &mut Booted, report: &UserPlatformReport) {
     let loaded: Vec<Value> = report
         .loaded
         .iter()
@@ -458,7 +458,8 @@ impl AppModel {
         panel.adopt_external_settings(b.stores.settings());
         panel.queue_save(now);
         panel.ensure_active_tab_visible(&b.platforms);
-        if panel.take_due_save(now) {
+        // A restore under way adopts the stored settings first.
+        if !self.backup.restoring() && panel.take_due_save(now) {
             self.persist_settings(now);
         }
         if account_added {
@@ -469,6 +470,5 @@ impl AppModel {
         if !effects.is_empty() {
             self.apply_effects(ctx, effects);
         }
-        self.tick_backup(ctx);
     }
 }

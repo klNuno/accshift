@@ -25,6 +25,7 @@ pub mod accounts;
 mod apply;
 mod avatar_pack;
 pub mod avatars;
+mod backup_flow;
 mod boot;
 mod bulk;
 pub mod clock;
@@ -256,6 +257,8 @@ pub struct AppModel {
     booted: Option<Booted>,
     saves: Vec<(StoreId, Pending<BackendResult<Option<String>>>)>,
     external_refresh: external_refresh::ExternalRefresh,
+    /// The backup card's jobs and a restore under way.
+    backup: backup_flow::BackupFlow,
     /// The zoom shortcuts and the debounced save.
     ui_scale: accshift_app::lifecycle::ui_scale::UiScale,
     /// The UI scale percent a shortcut changed, until it is saved.
