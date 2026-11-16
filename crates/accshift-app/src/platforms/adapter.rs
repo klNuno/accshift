@@ -198,6 +198,12 @@ impl PlatformAdapter {
         }
     }
 
+    /// Rereads the session marks a background watch changed (job pool); the
+    /// UI then lands [`Self::cached_warning_states`].
+    pub fn reload_session_marks(&self, backend: &dyn Backend) {
+        self.check_riot_sessions(backend);
+    }
+
     /// Rereads the Riot session expiry from the snapshots and the platform's
     /// session marks (job pool, local files only). A failure keeps what was
     /// known.

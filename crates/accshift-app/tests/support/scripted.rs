@@ -11,12 +11,14 @@ use accshift_app::{Backend, BackendError, BackendResult};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 pub struct Scripted {
     pub inner: MockBackend,
     log: Mutex<Vec<(String, String)>>,
     script: Mutex<BTreeMap<String, VecDeque<Result<Value, String>>>>,
+    marks_revision: AtomicU64,
 }
 
 impl Scripted {
@@ -25,7 +27,14 @@ impl Scripted {
             inner,
             log: Mutex::new(Vec::new()),
             script: Mutex::new(BTreeMap::new()),
+            marks_revision: AtomicU64::new(0),
         }
+    }
+
+    /// What a session watch ending in the background does: the stored marks
+    /// changed after the switch returned.
+    pub fn bump_marks_revision(&self) {
+        self.marks_revision.fetch_add(1, Ordering::SeqCst);
     }
 
     /// Queues one answer for `command`: `Ok(json)` or `Err(message)`.
@@ -556,6 +565,9 @@ impl Backend for Scripted {
             return answer;
         }
         self.inner.riot_check_sessions()
+    }
+    fn session_marks_revision(&self) -> u64 {
+        self.marks_revision.load(Ordering::SeqCst)
     }
     fn session_marks(
         &self,

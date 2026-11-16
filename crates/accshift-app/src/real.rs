@@ -361,6 +361,9 @@ impl Backend for RealBackend {
     fn riot_capture_profile(&self, profile_id: &str) -> BackendResult<()> {
         riot::capture_profile(self, profile_id)
     }
+    fn session_marks_revision(&self) -> u64 {
+        accshift_core::platforms::session_marks::revision()
+    }
     fn riot_check_sessions(&self) -> BackendResult<Vec<String>> {
         riot::check_sessions(self)
     }

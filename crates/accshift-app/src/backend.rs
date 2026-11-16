@@ -173,6 +173,12 @@ pub trait Backend: Send + Sync {
     /// and the offline "password needed" reads. Unreadable data marks nothing.
     fn session_marks(&self, platform_id: &str)
         -> BackendResult<Vec<crate::types::SessionMarkInfo>>;
+    /// Moves when the backend stored or lifted a session mark, for instance
+    /// when a watch ends after its switch returned. One atomic read, safe on
+    /// the UI thread. Backends without background watches stay at 0.
+    fn session_marks_revision(&self) -> u64 {
+        0
+    }
     fn roblox_add_account_by_cookie(&self, cookie: &str) -> BackendResult<RobloxAccount>;
     fn roblox_get_profile_info(&self, user_id: &str) -> BackendResult<RobloxProfileInfo>;
     /// User ids whose stored session is dead.

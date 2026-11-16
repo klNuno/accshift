@@ -200,3 +200,46 @@ fn switching_to_a_live_profile_shows_no_notice() {
     // The expired profile keeps its badge after another switch.
     assert_eq!(h.expired_ids(), vec![EXPIRED.to_string()]);
 }
+
+#[test]
+fn a_watch_verdict_after_the_switch_landed_updates_the_badge_in_place() {
+    let backend = Arc::new(support::scripted("dev"));
+    let mut h = Harness::new(backend.clone());
+    h.load();
+    let target = h.account("riot-3");
+    assert!(h.with(|loading, ctx| loading.handle_account_switch(ctx, &target, false)));
+    h.settle();
+    assert_eq!(h.expired_ids(), vec![EXPIRED.to_string()]);
+    // The switch landed: the UI keeps waking while the watch may still end.
+    let now = Instant::now();
+    let wake = h.loading.next_deadline(now).expect("a wake for the watch");
+    assert!(wake <= now + Duration::from_secs(1));
+    let checks = backend.calls("session_marks").len();
+
+    // Its watch then saw the sign-in screen and stored the mark: no reload,
+    // tab change or focus change, only the next frames.
+    backend.push(
+        "session_marks",
+        Ok(json!([{ "accountId": "riot-3", "state": "expired" }])),
+    );
+    backend.bump_marks_revision();
+    h.settle();
+    assert_eq!(backend.calls("session_marks").len(), checks + 1);
+    assert_eq!(
+        h.expired_ids(),
+        vec!["riot-3".to_string(), EXPIRED.to_string()]
+    );
+    let warning = &h.loading.loader.warning_states()["riot-3"];
+    assert_eq!(warning.chips[0].text, Text::key("session.expired"));
+    assert_eq!(warning.card_outline_tone, Some(WarningTone::Orange));
+
+    // A later sign-in lifted it again.
+    backend.push("session_marks", Ok(json!([])));
+    backend.bump_marks_revision();
+    h.settle();
+    assert_eq!(h.expired_ids(), vec![EXPIRED.to_string()]);
+
+    // Nothing moved: no reread.
+    h.settle();
+    assert_eq!(backend.calls("session_marks").len(), checks + 2);
+}

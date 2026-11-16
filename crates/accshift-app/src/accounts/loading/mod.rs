@@ -40,7 +40,13 @@ use crate::text::Text;
 use crate::time::Clock;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// How long after a switch the UI keeps waking to see a session watch's
+/// verdict: the longest watch (Steam, about 2 min) with margin.
+const MARKS_FOLLOW_WINDOW: Duration = Duration::from_secs(150);
+/// How often it wakes for that inside the window.
+const MARKS_FOLLOW_TICK: Duration = Duration::from_secs(1);
 
 /// Implemented and supported on this OS.
 pub fn is_platform_usable(registry: &PlatformRegistry, platform_id: &str, os: RuntimeOs) -> bool {
@@ -180,6 +186,12 @@ pub struct AccountLoading {
     ban_checking_toast: bool,
     /// Toasts raised by a handler, sent with the next poll's events.
     notices: Vec<Toast>,
+    /// The backend's session marks revision this loading last saw.
+    marks_seen: Option<u64>,
+    /// Until when a switch's session watch may still store a verdict.
+    marks_follow_until: Option<Instant>,
+    /// A reread of the session marks a watch changed, by platform.
+    marks_reload: Option<(String, Pending<()>)>,
 }
 
 impl AccountLoading {
@@ -199,6 +211,9 @@ impl AccountLoading {
             deferred_runs: Vec::new(),
             ban_checking_toast: false,
             notices: Vec::new(),
+            marks_seen: None,
+            marks_follow_until: None,
+            marks_reload: None,
         }
     }
 
@@ -225,7 +240,8 @@ impl AccountLoading {
             && self.profiles.is_empty()
             && self.warnings.is_empty()
             && self.deferred_background.is_empty()
-            && self.deferred_runs.is_empty())
+            && self.deferred_runs.is_empty()
+            && self.marks_reload.is_none())
             || self.loader.avatars().has_pending()
     }
 
@@ -236,10 +252,14 @@ impl AccountLoading {
             || !self.deferred_runs.is_empty()
             || self.loader.avatars().has_pending())
         .then_some(now);
-        match (soon, self.priming.next_deadline()) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        }
+        let marks = self
+            .marks_follow_until
+            .filter(|until| now < *until)
+            .map(|_| now + MARKS_FOLLOW_TICK);
+        [soon, self.priming.next_deadline(), marks]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     fn expiry(&self, ctx: &LoadingContext<'_>) -> CacheExpiry {

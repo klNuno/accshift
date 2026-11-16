@@ -16,6 +16,7 @@ impl AccountLoading {
         self.poll_adds(ctx, &mut events);
         self.poll_profiles(ctx);
         self.poll_warnings(ctx, &mut events);
+        self.poll_session_marks(ctx);
         self.sync_ban_checking_toast(&mut events);
         if let Some(request) = self.priming.poll(ctx.now) {
             if let Some(adapter) = ctx.adapter() {
@@ -40,6 +41,46 @@ impl AccountLoading {
         }
         self.loader.flush();
         events
+    }
+
+    /// A session watch stored or lifted a mark after its switch landed:
+    /// reread the marks off the UI thread, then land them on the warnings
+    /// the tab already shows (Steam keeps its cached ban warnings).
+    fn poll_session_marks(&mut self, ctx: &mut LoadingContext<'_>) {
+        if let Some((platform_id, mut pending)) = self.marks_reload.take() {
+            if let Poll::Waiting = pending.poll() {
+                self.marks_reload = Some((platform_id, pending));
+                return;
+            }
+            if self.loader.adapter_id() == Some(platform_id.as_str()) {
+                if let Some(adapter) = ctx.registry.adapter(&platform_id) {
+                    let warnings = adapter.cached_warning_states(ctx.stores);
+                    self.loader.replace_warning_states(warnings);
+                }
+            }
+        }
+        if self
+            .marks_follow_until
+            .is_some_and(|until| ctx.now >= until)
+        {
+            self.marks_follow_until = None;
+        }
+        let revision = ctx.jobs.backend().session_marks_revision();
+        let changed = self
+            .marks_seen
+            .replace(revision)
+            .is_some_and(|seen| seen != revision);
+        if !changed {
+            return;
+        }
+        let Some(adapter) = ctx.adapter().filter(|adapter| adapter.has_session_marks()) else {
+            return;
+        };
+        let platform_id = adapter.id().to_string();
+        let pending = ctx
+            .jobs
+            .run(move |backend| adapter.reload_session_marks(backend));
+        self.marks_reload = Some((platform_id, pending));
     }
 
     fn run_deferred(&mut self, ctx: &mut LoadingContext<'_>, events: &mut Vec<LoadingEvent>) {
@@ -316,6 +357,10 @@ impl AccountLoading {
                     caches.profile_info(&adapter, backend, &account_id, &|| clock.now_ms())
                 });
                 self.switch_profiles.push((account, pending));
+            }
+            if outcome.succeeded && adapter.has_session_marks() {
+                // Its session watch ends later: keep waking to land it.
+                self.marks_follow_until = Some(ctx.now + MARKS_FOLLOW_WINDOW);
             }
             events.push(LoadingEvent::SwitchFinished {
                 account_id: ticket.account.id.clone(),
