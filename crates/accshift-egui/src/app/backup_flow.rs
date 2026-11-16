@@ -9,22 +9,24 @@
 //! descriptor and theme writes counted by [`WriteGate`], wherever they were
 //! started. Meanwhile no new store write, descriptor or theme write and no
 //! external refresh starts. Any of these writes that failed there cancels
-//! the backup. A store write's edit is then only in memory. A descriptor or
-//! theme write goes to a temp file renamed into place, so a failed one
-//! leaves the file it replaces whole, except when the rename keeps failing
-//! (an antivirus or the indexer holding the file): it then copies over the
-//! file, and a copy that fails midway can leave it partial, its old bytes in
-//! a `.bak` the descriptor loader does not read. The job itself records the
-//! failure, so it cancels the backup even once its panel is gone.
+//! the backup. A store write's edit is then only in memory. A descriptor
+//! install goes to a temp file renamed over the descriptor and is never
+//! copied over it, so a failed one leaves the descriptor whole. A theme save
+//! copies over its file when the rename keeps failing (an antivirus or the
+//! indexer holding it), and a copy that fails midway can leave it partial.
+//! The job itself records the failure, so it cancels the backup even once
+//! its panel is gone, and the boundary clears the failures of the one
+//! before it under the lock the jobs record with, before it is published.
 //!
 //! The export then reads the files, all written. The restore replaces them,
 //! reloads the user descriptors and reads the stores and themes back. The
 //! app registers the restored descriptors first, so the settings that name a
 //! restored platform are sanitized against them, then adopts the whole
 //! snapshot, dropping the writes queued meanwhile, and only then lets writes
-//! and refreshes run again. When the stores cannot be read back, the
-//! boundary stays up and retries: the old stores in memory are never written
-//! over the restored files, not even on close.
+//! and refreshes run again. When the stores or the custom themes cannot be
+//! read back, the boundary stays up and retries: the old stores in memory
+//! are never written over the restored files, not even on close, and the
+//! restored settings are never adopted without the custom theme they name.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -60,6 +62,9 @@ struct GateState {
     closed: AtomicBool,
     /// The first write that failed while a backup held the boundary.
     failed: Mutex<Option<String>>,
+    /// Test seam: run once the boundary is published.
+    #[cfg(test)]
+    published: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 /// One admitted call, uncounted when dropped.
@@ -132,9 +137,33 @@ impl WriteGate {
     }
 
     fn set_closed(&self, closed: bool) {
-        let was = self.0.closed.swap(closed, Ordering::SeqCst);
-        if closed && !was {
-            self.take_failure();
+        if !closed || self.0.closed.load(Ordering::SeqCst) {
+            self.0.closed.store(closed, Ordering::SeqCst);
+            return;
+        }
+        // The failures of an earlier boundary go before this one is
+        // published, under the lock a failing write records with: a write
+        // that sees the boundary records after this, and is never erased.
+        let mut failed = self.0.failed.lock().unwrap_or_else(|p| p.into_inner());
+        *failed = None;
+        self.0.closed.store(true, Ordering::SeqCst);
+        drop(failed);
+        #[cfg(test)]
+        self.run_published_hook();
+    }
+
+    /// Test seam: runs `hook` on the UI thread the moment the next boundary
+    /// is published to the write jobs.
+    #[cfg(test)]
+    pub(super) fn on_published(&self, hook: impl FnOnce() + Send + 'static) {
+        *self.0.published.lock().unwrap() = Some(Box::new(hook));
+    }
+
+    #[cfg(test)]
+    fn run_published_hook(&self) {
+        let hook = self.0.published.lock().unwrap().take();
+        if let Some(hook) = hook {
+            hook();
         }
     }
 }
@@ -160,10 +189,14 @@ pub(super) struct Restored {
     report: BackupReport,
     /// The user descriptors after the reload; `None` when it failed.
     platforms: Option<UserPlatformReport>,
-    /// The stores as now on disk.
-    snapshot: BackendResult<ClientStorageSnapshot>,
-    /// The custom themes as now on disk; `None` when they could not be read.
-    themes: Option<Vec<CustomThemePayload>>,
+    read_back: BackendResult<ReadBack>,
+}
+
+/// The stores and the custom themes as now on disk, read together: the
+/// restored settings may name a restored theme.
+pub(super) struct ReadBack {
+    snapshot: ClientStorageSnapshot,
+    themes: Vec<CustomThemePayload>,
 }
 
 /// What a boundary is held for.
@@ -192,7 +225,7 @@ enum Stage {
     Unadopted {
         /// The notice once the stores are read back.
         done: String,
-        job: Option<Pending<BackendResult<ClientStorageSnapshot>>>,
+        job: Option<Pending<BackendResult<ReadBack>>>,
         retry_at: Instant,
     },
 }
@@ -285,20 +318,24 @@ fn with_one(locale: Locale, key: &str, name: &str, value: String) -> String {
 fn restore_job(b: &dyn Backend, path: &str) -> BackendResult<Restored> {
     let report = b.backup_restore(path)?;
     let platforms = b.reload_user_platforms().ok();
-    let snapshot = b.load_client_storage_snapshot();
-    let themes = b.list_custom_themes().ok().map(|themes| {
-        themes
-            .iter()
-            .filter_map(|t| serde_json::to_value(t).ok())
-            .filter_map(|v| serde_json::from_value(v).ok())
-            .collect()
-    });
     Ok(Restored {
         report,
         platforms,
-        snapshot,
-        themes,
+        read_back: read_back(b),
     })
+}
+
+/// The stores and the custom themes as now on disk; an error when either
+/// cannot be read.
+fn read_back(b: &dyn Backend) -> BackendResult<ReadBack> {
+    let snapshot = b.load_client_storage_snapshot()?;
+    let themes = b
+        .list_custom_themes()?
+        .iter()
+        .filter_map(|t| serde_json::to_value(t).ok())
+        .filter_map(|v| serde_json::from_value(v).ok())
+        .collect();
+    Ok(ReadBack { snapshot, themes })
 }
 
 /// A backup dialog's title and its "all files" filter, in the app's
@@ -530,7 +567,7 @@ impl AppModel {
                 ctx.request_repaint_after(retry_at.saturating_duration_since(now));
                 return;
             }
-            *job = Some(self.jobs.run(|b| b.load_client_storage_snapshot()));
+            *job = Some(self.jobs.run(read_back));
             return;
         };
         let result = match pending.poll() {
@@ -539,12 +576,12 @@ impl AppModel {
             Poll::Gone => Err(BackendError::new("job panicked")),
         };
         match result {
-            Ok(snapshot) => {
+            Ok(read) => {
                 let Stage::Unadopted { done, .. } = std::mem::take(&mut self.backup.stage) else {
                     return;
                 };
                 self.backup.set_stage(Stage::Idle);
-                self.adopt_restored(ctx, snapshot);
+                self.adopt_restored(ctx, read);
                 self.backup.set_notice(done, false);
             }
             Err(_) => {
@@ -569,13 +606,14 @@ impl AppModel {
                 None
             }
             Stage::Restoring(job) => match job.wait() {
-                Some(Ok(restored)) => Some(restored.snapshot),
+                Some(Ok(restored)) => Some(restored.read_back.map(|read| read.snapshot)),
                 // The files were not replaced: the old stores stand.
                 _ => None,
             },
             Stage::Unadopted { job, .. } => Some(
                 job.and_then(|job| job.wait())
-                    .unwrap_or_else(|| Err(BackendError::new("not read back"))),
+                    .unwrap_or_else(|| Err(BackendError::new("not read back")))
+                    .map(|read| read.snapshot),
             ),
         };
         self.backup.set_stage(Stage::Idle);
@@ -594,12 +632,14 @@ impl AppModel {
         }
     }
 
-    /// Takes the restored stores and refreshes what reads them.
-    fn adopt_restored(&mut self, ctx: &Context, snapshot: ClientStorageSnapshot) {
+    /// Takes the restored themes, then the restored stores, which may name
+    /// one of them, and refreshes what reads them.
+    fn adopt_restored(&mut self, ctx: &Context, read: ReadBack) {
+        self.apply_theme_payloads(&read.themes);
         let changed = self
             .booted
             .as_mut()
-            .map(|b| b.stores.adopt_snapshot(snapshot))
+            .map(|b| b.stores.adopt_snapshot(read.snapshot))
             .unwrap_or_default();
         self.apply_external_refresh(ctx, &changed);
     }
@@ -631,9 +671,6 @@ impl AppModel {
                 panel.user_platforms = Some(report.clone());
             }
         }
-        if let Some(themes) = &restored.themes {
-            self.apply_theme_payloads(themes);
-        }
         let done = if platforms_read {
             with_one(
                 locale,
@@ -644,9 +681,9 @@ impl AppModel {
         } else {
             translate(locale, "settings.backupRestartNeeded")
         };
-        match restored.snapshot {
-            Ok(snapshot) => {
-                self.adopt_restored(ctx, snapshot);
+        match restored.read_back {
+            Ok(read) => {
+                self.adopt_restored(ctx, read);
                 self.backup.set_notice(done, false);
             }
             Err(_) => {

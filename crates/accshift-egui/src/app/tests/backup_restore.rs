@@ -576,3 +576,66 @@ fn no_backup_starts_while_an_update_installs() {
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     assert_eq!(mock.seen("backup_restore"), 1);
 }
+
+#[test]
+fn a_write_failing_right_after_the_boundary_goes_up_cancels_the_restore() {
+    let ctx = Context::default();
+    let (mut app, mock) = restore_app(&ctx);
+    frame(&mut app, &ctx);
+    let gate = app.backup.gate.clone();
+    let write = gate
+        .admit_write(|_| Err::<(), _>("disk full"))
+        .expect("the gate is open");
+    let backend = mock.clone();
+    // The admitted write fails the moment the boundary is published, before
+    // the call that published it returns.
+    gate.on_published(move || {
+        let _ = write(&*backend);
+    });
+    app.start_backup_restore("C:/b.json".into());
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert_eq!(
+        mock.seen("backup_restore"),
+        0,
+        "GATE_FORCED_SCHEDULE: the restore ran after a failed write"
+    );
+    assert!(app.backup.card.error);
+    assert!(
+        app.backup.card.notice.contains("disk full"),
+        "{}",
+        app.backup.card.notice
+    );
+}
+
+#[test]
+fn a_restore_whose_themes_cannot_be_read_keeps_its_custom_theme() {
+    let ctx = Context::default();
+    let theme = json!({"schemaVersion": 1, "id": "mine", "name": "Mine", "colorScheme": "dark", "tokens": {"bgCard": "#112233"}});
+    let (mut app, mock) = restore_app_with(&ctx, |commands| {
+        commands["load_client_storage_snapshot"][0]["result"]["stores"]["client.settings"]
+            ["themeId"] = json!("mine");
+        commands["list_custom_themes"] = json!([{ "args": {}, "result": [theme] }]);
+    });
+    frame(&mut app, &ctx);
+    assert!(mock.fail("list_custom_themes", Some("themes unreadable")));
+    app.start_backup_restore("C:/b.json".into());
+    pump_until(&mut app, &ctx, |_| mock.seen("list_custom_themes") >= 1);
+    for _ in 0..10 {
+        frame(&mut app, &ctx);
+    }
+    // Not adopted while the themes the settings name are unknown.
+    assert!(
+        app.backup.holds_writes(),
+        "adopted with theme {}",
+        app.booted().unwrap().stores.settings().theme_id
+    );
+    assert_ne!(note(&app), "restored note");
+    assert!(mock.fail("list_custom_themes", None));
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert_eq!(app.booted().unwrap().stores.settings().theme_id, "mine");
+    assert_eq!(note(&app), "restored note");
+    for _ in 0..5 {
+        frame(&mut app, &ctx);
+    }
+    assert_eq!(mock.seen(SAVE), 0);
+}
