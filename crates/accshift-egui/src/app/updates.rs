@@ -204,12 +204,22 @@ impl AppModel {
     }
 
     /// Installs the update: never while an account or persona switch runs,
-    /// a relaunch would cut it mid-step.
+    /// a relaunch would cut it mid-step. Never while a backup holds the
+    /// writes either: the install's flush settles the backup as on close,
+    /// and the app may stay open when the install fails.
     pub(super) fn apply_update(&mut self, ctx: &Context) {
         let switching = self.booted.as_ref().is_some_and(|b| {
             b.accounts.loading.loader.switching_account_id().is_some() || b.personas.switching()
         });
         if switching {
+            return;
+        }
+        if self.backup.holds_writes() {
+            self.toasts.push(
+                Toast::new(Text::key("settings.backupHoldsWrites"), ToastKind::Error),
+                Instant::now(),
+            );
+            ctx.request_repaint();
             return;
         }
         let outputs = self.updates.flow.apply();
@@ -273,6 +283,39 @@ impl AppModel {
             }
         });
         self.updates.running = Some(rx);
+    }
+}
+
+#[cfg(test)]
+impl Updates {
+    /// Puts a downloaded update in place, as if the check and the download
+    /// had run. The mock run has no updater, so nothing is ever installed.
+    pub(super) fn ready_for_test(&mut self) {
+        use accshift_app::lifecycle::updater::InstallContext;
+        let update = Update {
+            body: None,
+            current_version: "1.0.5".into(),
+            version: "2.0.0".into(),
+            date: None,
+            target: "windows-x86_64".into(),
+            download_url: "https://example.invalid/update".parse().unwrap(),
+            signature: String::new(),
+            raw_json: serde_json::Value::Null,
+            install: InstallContext {
+                app_name: "accshift".into(),
+                relaunch_args: Vec::new(),
+                bundle_type: None,
+                executable_path: None,
+                pubkey: String::new(),
+            },
+        };
+        let _ = self.flow.on_check_result(Ok(Some(update)));
+        let _ = self.flow.on_download_result(Ok(Vec::new()));
+    }
+
+    /// The flow holds a downloaded update, not yet applied.
+    pub(super) fn ready(&self) -> bool {
+        self.flow.state() == update_flow::UpdateState::Ready
     }
 }
 

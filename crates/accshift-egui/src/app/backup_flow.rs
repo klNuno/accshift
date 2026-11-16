@@ -505,7 +505,9 @@ impl AppModel {
     /// On close: waits for an export or a restore job, so the restored
     /// stores are adopted before the last writes. Stores that cannot be
     /// read back drop the writes queued for the old ones. A backup still
-    /// draining does not start.
+    /// draining does not start. Teardown only: it lifts the boundary, so
+    /// the update install, the one flush that may leave the app open, is
+    /// refused while a backup holds the writes.
     pub(super) fn settle_backup_on_close(&mut self) {
         let snapshot = match std::mem::take(&mut self.backup.stage) {
             Stage::Idle | Stage::Draining { .. } => None,

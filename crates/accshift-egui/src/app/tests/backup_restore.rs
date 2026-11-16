@@ -428,3 +428,34 @@ fn descriptor_and_theme_writes_are_refused_while_a_backup_runs() {
     app.apply_settings(&ctx, SettingsAction::ReloadDescriptors);
     assert!(app.settings_panel.as_ref().unwrap().descriptor_busy);
 }
+
+#[test]
+fn an_update_install_waits_for_stores_not_read_back() {
+    let ctx = Context::default();
+    let (mut app, mock) = restored_but_unread(&ctx);
+    app.updates.ready_for_test();
+    app.apply_update(&ctx);
+    // Refused before its flush: the boundary and the update both stay.
+    assert!(app.backup.holds_writes());
+    assert!(app.updates.ready());
+    assert_eq!(mock.seen(SAVE), 0);
+
+    // The app goes on: edits stay held, the read back keeps retrying.
+    set_note(&mut app, "typed after the update click");
+    for _ in 0..10 {
+        frame(&mut app, &ctx);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(
+        mock.seen(SAVE),
+        0,
+        "the old notes went over the restored ones"
+    );
+    let reads = mock.seen("load_client_storage_snapshot");
+    pump_until(&mut app, &ctx, |_| {
+        mock.seen("load_client_storage_snapshot") > reads
+    });
+    assert!(mock.fail("load_client_storage_snapshot", None));
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert_eq!(note(&app), "restored note");
+}
