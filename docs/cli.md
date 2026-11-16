@@ -113,8 +113,8 @@ battle-net  unknown
 
 `search <query>` looks through every platform's accounts for the text, without
 case sensitivity, in the account id, its display name (persona name, label,
-BattleTag), its secondary id (Riot ID, Steam ID) and its note from the app. It
-exits 0 with no match. A platform whose accounts cannot be read is listed in
+BattleTag), its secondary id (Riot ID, Steam ID, Roblox username) and its note
+from the app. It exits 0 with no match. A platform whose accounts cannot be read is listed in
 `skipped` (on stderr for people).
 
 ```
