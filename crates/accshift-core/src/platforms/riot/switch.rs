@@ -65,18 +65,24 @@ pub(super) fn run_switch(
 
     // The client path is resolved once for the whole switch.
     let install_dir = client_path.parent();
-    let work = switch_after_quit(
+    let launch = |product: &str| launch_riot_product(&client_path, product);
+    let identity = || detect_live_identity().ok();
+    let io = SwitchIo {
+        launch: &launch,
+        quit: &graceful_riot_quit,
+        identity: &identity,
+        wait: UNCONFIRMED_IDENTITY_WAIT,
+        poll: UNCONFIRMED_IDENTITY_POLL,
+    };
+    let result = finish_switch(
         app_handle,
         &mut cfg,
         &target_id,
         install_dir,
         current_live_identity.as_ref(),
+        product_id,
+        &io,
     );
-    let work = work.and_then(|outcome| game_allowed_after(outcome, product_id));
-    // Relaunch even when the work failed, so a failed switch never leaves the
-    // client closed.
-    let launched_product = product_after_switch(work.is_ok(), product_id);
-    let result = relaunch_after_quit(work, || launch_riot_product(&client_path, launched_product));
 
     match &result {
         Ok(()) => log_platform_info(
@@ -114,15 +120,120 @@ pub(super) enum SwitchWork {
     KeptUnconfirmed,
 }
 
-/// A game only starts on a session known to be the target's. A plain switch
-/// to the current profile still reopens the client on its kept session.
-pub(super) fn game_allowed_after(work: SwitchWork, product_id: &str) -> Result<(), String> {
-    if work == SwitchWork::KeptUnconfirmed && product_id != RIOT_CLIENT_PRODUCT {
-        return Err(format!(
-            "{RIOT_ACCOUNT_UNCONFIRMED}: Riot Client was opened without the game. Launch the game again once Riot Client shows the signed-in account."
-        ));
+/// How long a switch to the current profile waits for the reopened client
+/// to say who is signed in, and how often it asks.
+const UNCONFIRMED_IDENTITY_WAIT: Duration = Duration::from_secs(45);
+const UNCONFIRMED_IDENTITY_POLL: Duration = Duration::from_secs(1);
+
+/// The process side of a switch once the client is closed, injected so the
+/// orchestration runs in tests without a Riot client.
+pub(super) struct SwitchIo<'a> {
+    /// Starts the client with a product (`riot-client` for the bare client).
+    pub launch: &'a dyn Fn(&str) -> Result<(), String>,
+    /// Quits the client gracefully, so it flushes its session files.
+    pub quit: &'a dyn Fn() -> Result<(), String>,
+    /// The account the running client reports, `None` while it cannot say.
+    pub identity: &'a dyn Fn() -> Option<RiotDetectedIdentity>,
+    pub wait: Duration,
+    pub poll: Duration,
+}
+
+/// The session work and the relaunch, once the client is closed. A failed
+/// work starts the bare client, so a game never opens on the wrong account.
+pub(super) fn finish_switch(
+    app_handle: &dyn AppContext,
+    cfg: &mut config::AppConfig,
+    target_id: &str,
+    install_dir: Option<&Path>,
+    live_identity: Option<&RiotDetectedIdentity>,
+    product_id: &str,
+    io: &SwitchIo,
+) -> Result<(), String> {
+    match switch_after_quit(app_handle, cfg, target_id, install_dir, live_identity) {
+        Ok(SwitchWork::KeptUnconfirmed) => {
+            resolve_unconfirmed(app_handle, cfg, target_id, install_dir, product_id, io)
+        }
+        work => {
+            // Relaunch even when the work failed, so a failed switch never
+            // leaves the client closed.
+            let work = work.map(|_| ());
+            let launched = product_after_switch(work.is_ok(), product_id);
+            relaunch_after_quit(work, || (io.launch)(launched))
+        }
     }
-    Ok(())
+}
+
+/// The current profile was re-selected over a session nobody could
+/// attribute. Open the bare client on it, untouched, and ask who is signed
+/// in: the profile's account gets the product in the same request, another
+/// account is quit and the profile restored, and no answer is an error with
+/// both sessions kept.
+fn resolve_unconfirmed(
+    app_handle: &dyn AppContext,
+    cfg: &mut config::AppConfig,
+    target_id: &str,
+    install_dir: Option<&Path>,
+    product_id: &str,
+    io: &SwitchIo,
+) -> Result<(), String> {
+    let Some(profile) = find_profile(cfg, target_id).cloned() else {
+        return Err("Riot profile not found".into());
+    };
+    (io.launch)(RIOT_CLIENT_PRODUCT)?;
+    let Some(identity) = wait_for_identity(&profile, io) else {
+        return Err(format!(
+            "{RIOT_ACCOUNT_UNCONFIRMED}: Riot Client did not report the signed-in account in time; nothing was changed."
+        ));
+    };
+    if check_live_identity(&profile, Some(&identity)) == IdentityCheck::Match {
+        log_platform_info(
+            app_handle,
+            "riot.switch_profile",
+            "Confirmed the kept live session as the target profile's",
+            format!("profile={}", crate::platforms::redact_id(target_id)),
+        );
+        update_profile_state(
+            cfg,
+            target_id,
+            None,
+            None,
+            Some(Some(crate::platforms::now_unix_ms())),
+            Some(&identity),
+        )?;
+        config::save_config(app_handle, cfg)?;
+        if product_id == RIOT_CLIENT_PRODUCT {
+            return Ok(());
+        }
+        return (io.launch)(product_id);
+    }
+    // Another account, or an account a profile without one can adopt: the
+    // regular switch knows what to do now that the identity is known.
+    (io.quit)()?;
+    let work = match switch_after_quit(app_handle, cfg, target_id, install_dir, Some(&identity)) {
+        Ok(SwitchWork::Switched) => Ok(()),
+        Ok(SwitchWork::KeptUnconfirmed) => Err(format!(
+            "{RIOT_ACCOUNT_UNCONFIRMED}: the signed-in account could not be checked; nothing was changed."
+        )),
+        Err(error) => Err(error),
+    };
+    let launched = product_after_switch(work.is_ok(), product_id);
+    relaunch_after_quit(work, || (io.launch)(launched))
+}
+
+/// Polls the client until its account can be compared with `profile`, at
+/// most `io.wait`.
+fn wait_for_identity(profile: &RiotProfileConfig, io: &SwitchIo) -> Option<RiotDetectedIdentity> {
+    let deadline = std::time::Instant::now() + io.wait;
+    loop {
+        let identity = (io.identity)();
+        if check_live_identity(profile, identity.as_ref()) != IdentityCheck::Unknown {
+            return identity;
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        thread::sleep(io.poll);
+    }
 }
 
 /// Everything a switch does while the client is closed: back the outgoing
@@ -133,7 +244,8 @@ pub(super) fn game_allowed_after(work: SwitchWork, product_id: &str) -> Result<(
 /// - the identity check confirms the profile's account: the snapshot is
 ///   refreshed from the live session, which is kept;
 /// - no identity is available: both are left as they are, since the live
-///   tokens may be the profile's newer ones or another account's;
+///   tokens may be the profile's newer ones or another account's
+///   (`finish_switch` then asks the reopened client who is signed in);
 /// - another account is proven signed in: the profile's snapshot is restored.
 pub(super) fn switch_after_quit(
     app_handle: &dyn AppContext,

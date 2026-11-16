@@ -364,7 +364,7 @@
   "riot.switchAndRunPick": "Mudar + iniciar um jogo",
   "riot.runPick": "Iniciar um jogo",
   "riot.noInstalledGames": "Nenhum jogo da Riot instalado encontrado",
-  "riot.accountNotConfirmed": "O Riot Client abriu sem o jogo: o accshift não conseguiu confirmar a conta com sessão iniciada. Inicie o jogo novamente quando o Riot Client a mostrar.",
+  "riot.accountNotConfirmed": "O accshift não conseguiu confirmar que conta tem sessão iniciada no Riot Client, por isso nada foi alterado. Verifique a conta no Riot Client e tente novamente.",
   "riot.capturedSession": "Sessão capturada para {profile}",
   "riot.setupPendingLabel": "Conta Riot",
   "riot.setupWaitingForClient": "À espera do Riot Client...",

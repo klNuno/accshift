@@ -480,7 +480,7 @@ impl PlatformAdapter {
                 if let Err(error) =
                     riot::switch_profile_and_launch_game(backend, profile_id, product_id)
                 {
-                    let Some(toast) = riot::run_error_toast(&error.message) else {
+                    let Some(toast) = riot::switch_error_toast(&error.message) else {
                         return Err(error);
                     };
                     outcome.push(TaskEffect::Toast(toast));
@@ -690,6 +690,7 @@ impl PlatformAdapter {
         match self.kind {
             AdapterKind::Steam => steam::switch_error_toast(message),
             AdapterKind::Roblox => roblox::switch_error_toast(message),
+            AdapterKind::Riot => riot::switch_error_toast(message),
             _ => None,
         }
     }

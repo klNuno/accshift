@@ -364,7 +364,7 @@
   "riot.switchAndRunPick": "Switch + launch a game",
   "riot.runPick": "Launch a game",
   "riot.noInstalledGames": "No installed Riot games found",
-  "riot.accountNotConfirmed": "Riot Client opened without the game: accshift could not confirm the signed-in account. Launch the game again once Riot Client shows it.",
+  "riot.accountNotConfirmed": "accshift could not confirm which account is signed in to Riot Client, so nothing was changed. Check the account in Riot Client, then try again.",
   "riot.capturedSession": "Captured session for {profile}",
   "riot.setupPendingLabel": "Riot Account",
   "riot.setupWaitingForClient": "Waiting for Riot Client...",

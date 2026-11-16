@@ -803,22 +803,101 @@ fn reselecting_the_current_profile_never_restores_its_older_snapshot() {
     assert_eq!(saved.account_puuid, "puuid-a");
     assert_eq!(saved.last_captured_at, before.last_captured_at);
     assert_eq!(cfg.riot.current_profile_id, id);
-    assert!(game_allowed_after(work, "valorant").is_err());
+}
+
+/// Runs `finish_switch` for the current profile `id` with the client closed
+/// (no identity before the quit). `answers` are what the reopened client
+/// reports, one per poll, the last one repeated. Returns the result and the
+/// process events, each launch tagged with the live session it started on.
+fn reselect_closed(
+    fx: &SwitchFixture,
+    id: &str,
+    product: &str,
+    answers: Vec<Option<RiotDetectedIdentity>>,
+) -> (Result<(), String>, Vec<String>) {
+    let mut cfg = config_with(vec![profile(id, "ready", "puuid-a")], id);
+    let events = std::cell::RefCell::new(Vec::new());
+    let polls = std::cell::Cell::new(0usize);
+    let launch = |product: &str| {
+        let token = if fx.live().contains("token-t0") {
+            "t0"
+        } else {
+            "t1"
+        };
+        events
+            .borrow_mut()
+            .push(format!("launch {product} on {token}"));
+        Ok(())
+    };
+    let quit = || {
+        events.borrow_mut().push("quit".to_string());
+        Ok(())
+    };
+    let identity = || {
+        let index = polls.get().min(answers.len() - 1);
+        polls.set(polls.get() + 1);
+        answers[index].clone()
+    };
+    let io = SwitchIo {
+        launch: &launch,
+        quit: &quit,
+        identity: &identity,
+        wait: Duration::from_millis(200),
+        poll: Duration::from_millis(5),
+    };
+    let result = finish_switch(&fx.ctx, &mut cfg, id, Some(&fx.install), None, product, &io);
+    (result, events.into_inner())
 }
 
 #[test]
-fn an_unconfirmed_account_never_starts_the_game() {
-    let refused = game_allowed_after(SwitchWork::KeptUnconfirmed, "valorant")
-        .expect_err("a game started on an unconfirmed account");
-    assert!(refused.starts_with(RIOT_ACCOUNT_UNCONFIRMED), "{refused}");
-    // The refusal fails the work, so the bare client starts instead.
-    assert_eq!(product_after_switch(false, "valorant"), RIOT_CLIENT_PRODUCT);
-    // A plain switch reopens the client on the kept session.
+fn a_confirmed_current_account_gets_its_game_in_the_same_request() {
+    let id = "riot-profile-current";
+    let fx = SwitchFixture::new("resolve-match", id);
+
+    let (result, events) =
+        reselect_closed(&fx, id, "valorant", vec![None, None, Some(live("puuid-a"))]);
+
+    assert_eq!(result, Ok(()));
     assert_eq!(
-        game_allowed_after(SwitchWork::KeptUnconfirmed, RIOT_CLIENT_PRODUCT),
-        Ok(())
+        events,
+        vec!["launch riot-client on t1", "launch valorant on t1"]
     );
-    assert_eq!(game_allowed_after(SwitchWork::Switched, "valorant"), Ok(()));
+    assert!(fx.live().contains("token-t1"));
+    assert!(fx.snapshot(id).contains("token-t0"));
+}
+
+#[test]
+fn another_confirmed_account_is_quit_and_the_profile_restored_before_the_game() {
+    let id = "riot-profile-current";
+    let fx = SwitchFixture::new("resolve-mismatch", id);
+
+    let (result, events) = reselect_closed(&fx, id, "valorant", vec![Some(live("puuid-b"))]);
+
+    assert_eq!(result, Ok(()));
+    assert_eq!(
+        events,
+        vec!["launch riot-client on t1", "quit", "launch valorant on t0"]
+    );
+    assert!(
+        fx.snapshot(id).contains("token-t0"),
+        "the other account's session was saved into the profile"
+    );
+}
+
+#[test]
+fn an_account_never_confirmed_changes_nothing_and_is_an_error() {
+    let id = "riot-profile-current";
+    for product in ["valorant", RIOT_CLIENT_PRODUCT] {
+        let fx = SwitchFixture::new(&format!("resolve-unknown-{product}"), id);
+
+        let (result, events) = reselect_closed(&fx, id, product, vec![None]);
+
+        let error = result.expect_err("an unconfirmed account reported success");
+        assert!(error.starts_with(RIOT_ACCOUNT_UNCONFIRMED), "{error}");
+        assert_eq!(events, vec!["launch riot-client on t1"], "{product}");
+        assert!(fx.live().contains("token-t1"));
+        assert!(fx.snapshot(id).contains("token-t0"));
+    }
 }
 
 #[test]

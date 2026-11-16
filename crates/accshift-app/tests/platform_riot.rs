@@ -236,7 +236,7 @@ fn an_unconfirmed_account_toasts_its_own_text_and_does_not_reload() {
     // The core's wording when it kept a session it could not attribute.
     backend.push(
         "riot_switch_profile_and_launch_game",
-        Err("Riot account not confirmed: Riot Client was opened without the game. Launch the game again once Riot Client shows the signed-in account."),
+        Err("Riot account not confirmed: Riot Client did not report the signed-in account in time; nothing was changed."),
     );
     let outcome = adapter.run_task(&run_task("riot-2", "valorant"), &backend, &settings());
     assert_eq!(
@@ -264,4 +264,16 @@ fn the_mock_refuses_the_run_behind_its_switch_failure() {
         .unwrap_err();
     assert_eq!(error.message, "scripted failure");
     assert_eq!(mock.platform_get_current_account("riot").unwrap(), "riot-1");
+}
+
+#[test]
+fn a_plain_switch_on_an_unconfirmed_account_toasts_the_same_text() {
+    let adapter = PlatformAdapter::shipped("riot").unwrap();
+    assert_eq!(
+        adapter.switch_error_toast(
+            "Riot account not confirmed: Riot Client did not report the signed-in account in time; nothing was changed."
+        ),
+        Some(Text::key("riot.accountNotConfirmed"))
+    );
+    assert_eq!(adapter.switch_error_toast("Riot profile not found"), None);
 }

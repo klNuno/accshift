@@ -171,8 +171,9 @@ pub const NO_ACCOUNTS_TOAST_KEY: &str = "toast.noRiotProfilesFound";
 /// it could not confirm (`RIOT_ACCOUNT_UNCONFIRMED` in the core).
 pub const ACCOUNT_UNCONFIRMED_PATTERN: &str = "riot account not confirmed";
 
-/// The dedicated toast for a failed game launch, `None` for the generic one.
-pub fn run_error_toast(message: &str) -> Option<Text> {
+/// The dedicated toast for a failed switch or game launch, `None` for the
+/// generic one.
+pub fn switch_error_toast(message: &str) -> Option<Text> {
     message
         .to_lowercase()
         .starts_with(ACCOUNT_UNCONFIRMED_PATTERN)
