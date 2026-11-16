@@ -18,7 +18,13 @@ pub(super) struct ExternalRefresh {
 enum RefreshJob {
     Manifest(Pending<BackendResult<StorageManifest>>),
     Snapshot {
-        plan: RefreshPlan,
+        /// `None` when only the themes are read again, for a selected
+        /// theme the list did not have.
+        plan: Option<RefreshPlan>,
+        /// The themes fingerprint before the plan marked the new one as
+        /// seen: put back when the themes cannot be read, so the next
+        /// focus reads them again.
+        themes_seen: Option<Option<String>>,
         pending: Pending<BackendResult<RefreshContents>>,
     },
     Accounts,
@@ -27,6 +33,13 @@ enum RefreshJob {
 struct RefreshContents {
     snapshot: Option<ClientStorageSnapshot>,
     themes: Option<Vec<CustomThemePayload>>,
+}
+
+impl ExternalRefresh {
+    /// A refresh is reading or waiting for the accounts it reloads.
+    pub(super) fn running(&self) -> bool {
+        self.job.is_some()
+    }
 }
 
 impl AppModel {
@@ -48,7 +61,8 @@ impl AppModel {
             .is_some_and(|previous| (!previous.0 && window.0) || (previous.1 && !window.1));
         // The pending stage is the web lifecycle's in-flight guard. A single
         // restoration can produce both focus and visibility notifications.
-        if trigger && self.external_refresh.job.is_none() {
+        // A restore replaces the files: no refresh starts until it is over.
+        if trigger && self.external_refresh.job.is_none() && !self.backup.holds_writes() {
             self.external_refresh.job = Some(RefreshJob::Manifest(
                 self.jobs.run(|backend| backend.get_storage_manifest()),
             ));
@@ -59,18 +73,33 @@ impl AppModel {
         self.external_refresh.job = match job {
             RefreshJob::Manifest(mut pending) => match pending.poll() {
                 Poll::Waiting => Some(RefreshJob::Manifest(pending)),
-                Poll::Ready(Ok(manifest)) => self
-                    .booted
-                    .as_mut()
-                    .unwrap()
-                    .stores
-                    .begin_refresh(&manifest)
-                    .map(|plan| {
-                        let snapshot_needed = plan.needs_snapshot();
-                        let themes_needed = plan
-                            .changed
+                Poll::Ready(Ok(manifest)) => {
+                    let b = self.booted.as_mut().unwrap();
+                    // A selected theme the list did not have (its file was
+                    // locked or not there yet) is looked for again on each
+                    // focus: its file may read now with the folder's
+                    // fingerprint unchanged.
+                    let theme_missing =
+                        b.registry.document(&b.stores.settings().theme_id).is_none();
+                    let themes_seen = b
+                        .stores
+                        .storage()
+                        .manifest()
+                        .stores
+                        .get(STORAGE_TARGET_CUSTOM_THEMES)
+                        .cloned();
+                    let plan = b.stores.begin_refresh(&manifest);
+                    let themes_changed = plan.as_ref().is_some_and(|plan| {
+                        plan.changed
                             .iter()
-                            .any(|id| id == STORAGE_TARGET_CUSTOM_THEMES);
+                            .any(|id| id == STORAGE_TARGET_CUSTOM_THEMES)
+                    });
+                    if plan.is_none() && !theme_missing {
+                        None
+                    } else {
+                        let snapshot_needed =
+                            plan.as_ref().is_some_and(RefreshPlan::needs_snapshot);
+                        let themes_needed = themes_changed || theme_missing;
                         let pending = self.jobs.run(move |backend| {
                             let snapshot = if snapshot_needed {
                                 Some(backend.load_client_storage_snapshot()?)
@@ -78,8 +107,9 @@ impl AppModel {
                                 None
                             };
                             let themes = if themes_needed {
-                                // A missing themes directory is harmless,
-                                // as loadCustomThemes was in the web shell.
+                                // A theme file that cannot be read is left
+                                // out of the list; a list that fails whole
+                                // keeps the themes already loaded.
                                 backend.list_custom_themes().ok().map(|themes| {
                                     themes
                                         .iter()
@@ -92,8 +122,13 @@ impl AppModel {
                             };
                             Ok(RefreshContents { snapshot, themes })
                         });
-                        RefreshJob::Snapshot { plan, pending }
-                    }),
+                        Some(RefreshJob::Snapshot {
+                            plan,
+                            themes_seen: themes_changed.then_some(themes_seen),
+                            pending,
+                        })
+                    }
+                }
                 Poll::Ready(Err(error)) => {
                     self.external_refresh_failed(error.message);
                     None
@@ -103,28 +138,29 @@ impl AppModel {
                     None
                 }
             },
-            RefreshJob::Snapshot { plan, mut pending } => match pending.poll() {
-                Poll::Waiting => Some(RefreshJob::Snapshot { plan, pending }),
+            RefreshJob::Snapshot {
+                plan,
+                themes_seen,
+                mut pending,
+            } => match pending.poll() {
+                Poll::Waiting => Some(RefreshJob::Snapshot {
+                    plan,
+                    themes_seen,
+                    pending,
+                }),
                 Poll::Ready(Ok(contents)) => {
-                    let b = self.booted.as_mut().unwrap();
-                    if let Some(themes) = contents.themes {
-                        b.registry.apply_custom_theme_payloads(&themes);
-                        let mut context = b.stores.context().clone();
-                        context.theme_ids =
-                            b.registry.all_themes().into_iter().map(|t| t.id).collect();
-                        b.stores.set_context(context);
-                        // ThemeKey counts themes, so editing one existing file
-                        // needs an explicit recomputation too.
-                        if b.theme_preview.is_none() {
-                            b.theme = compute_theme(
-                                &b.registry,
-                                &b.stores,
-                                b.runtime_os,
-                                self.os_reduced_motion,
-                                self.liquid.present(),
-                            );
+                    match &contents.themes {
+                        Some(themes) => self.apply_theme_payloads(themes),
+                        None => {
+                            if let Some(seen) = themes_seen {
+                                self.unsee_themes(seen);
+                            }
                         }
                     }
+                    let Some(plan) = plan else {
+                        return;
+                    };
+                    let b = self.booted.as_mut().unwrap();
                     let changed = match contents.snapshot {
                         Some(snapshot) => b.stores.finish_refresh(plan, snapshot),
                         None => plan.other_targets,
@@ -158,6 +194,50 @@ impl AppModel {
         };
     }
 
+    /// Takes the custom themes read from disk, and the theme they draw.
+    pub(super) fn apply_theme_payloads(&mut self, themes: &[CustomThemePayload]) {
+        let Some(b) = self.booted.as_mut() else {
+            return;
+        };
+        b.registry.apply_custom_theme_payloads(themes);
+        let mut context = b.stores.context().clone();
+        context.theme_ids = b.registry.all_themes().into_iter().map(|t| t.id).collect();
+        b.stores.set_context(context);
+        // ThemeKey counts themes, so editing one existing file
+        // needs an explicit recomputation too.
+        if b.theme_preview.is_none() {
+            b.theme = compute_theme(
+                &b.registry,
+                &b.stores,
+                b.runtime_os,
+                self.os_reduced_motion,
+                self.liquid.present(),
+            );
+        }
+    }
+
+    /// Puts back the themes fingerprint `seen` before a refresh that could
+    /// not read them: the next focus finds the folder changed again and
+    /// reads it, rather than taking themes it never loaded as current.
+    fn unsee_themes(&mut self, seen: Option<String>) {
+        let Some(b) = self.booted.as_mut() else {
+            return;
+        };
+        let storage = b.stores.storage_mut();
+        let mut manifest = storage.manifest().clone();
+        match seen {
+            Some(fingerprint) => {
+                manifest
+                    .stores
+                    .insert(STORAGE_TARGET_CUSTOM_THEMES.to_owned(), fingerprint);
+            }
+            None => {
+                manifest.stores.remove(STORAGE_TARGET_CUSTOM_THEMES);
+            }
+        }
+        storage.replace_manifest(manifest);
+    }
+
     fn external_refresh_failed(&self, message: String) {
         drop(self.jobs.run(move |backend| {
             backend.log_app_event(
@@ -169,7 +249,7 @@ impl AppModel {
         }));
     }
 
-    fn apply_external_refresh(&mut self, ctx: &Context, changed: &[String]) {
+    pub(super) fn apply_external_refresh(&mut self, ctx: &Context, changed: &[String]) {
         self.sync_settings(ctx);
         let b = self.booted.as_mut().unwrap();
         let steps = plan_external_refresh(

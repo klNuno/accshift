@@ -40,6 +40,11 @@ pub(super) struct Updates {
     running: Option<Receiver<Option<CommandResult>>>,
     /// [`InstallerHost::run_on_main_thread`] tasks, run by `tick_updates`.
     main_tasks: (Sender<MainTask>, Receiver<MainTask>),
+    /// A normal run: [`Self::relaunch`] starts accshift again. Mock and
+    /// scene runs only count the request.
+    relaunches: bool,
+    /// The relaunches asked for in a run that does not relaunch.
+    relaunch_requests: usize,
 }
 
 impl Updates {
@@ -51,6 +56,8 @@ impl Updates {
             due: None,
             running: None,
             main_tasks: mpsc::channel(),
+            relaunches: false,
+            relaunch_requests: 0,
         }
     }
 
@@ -64,7 +71,36 @@ impl Updates {
             due: Some(now + UPDATE_CHECK_DELAY),
             running: None,
             main_tasks: mpsc::channel(),
+            relaunches: true,
+            relaunch_requests: 0,
         }
+    }
+
+    /// Starts accshift again and exits, as the update relaunch does, the
+    /// window hidden first. Returns only when no new process started; the
+    /// app then stays open as the single instance. The caller flushed what
+    /// had to be written. A mock or scene run counts the request and stays.
+    pub(super) fn relaunch(&mut self, ctx: &Context) -> Result<(), String> {
+        if !self.relaunches {
+            self.relaunch_requests += 1;
+            return Ok(());
+        }
+        let args: Vec<_> = std::env::args_os().collect();
+        process::restart(
+            &process::SystemProcess,
+            process::current_binary(),
+            &process::relaunch_args(&args),
+            process::release_instance,
+            process::restore_instance,
+            || ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false)),
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    /// The relaunches a run that does not relaunch was asked for.
+    #[cfg(test)]
+    pub(super) fn relaunch_requests(&self) -> usize {
+        self.relaunch_requests
     }
 
     /// The title bar button: its label, its tooltip, and whether it is
@@ -204,12 +240,22 @@ impl AppModel {
     }
 
     /// Installs the update: never while an account or persona switch runs,
-    /// a relaunch would cut it mid-step.
+    /// a relaunch would cut it mid-step. Never while a backup holds the
+    /// writes either: the install's flush settles the backup as on close,
+    /// and the app may stay open when the install fails.
     pub(super) fn apply_update(&mut self, ctx: &Context) {
         let switching = self.booted.as_ref().is_some_and(|b| {
             b.accounts.loading.loader.switching_account_id().is_some() || b.personas.switching()
         });
         if switching {
+            return;
+        }
+        if self.backup.holds_writes() {
+            self.toasts.push(
+                Toast::new(Text::key("settings.backupHoldsWrites"), ToastKind::Error),
+                Instant::now(),
+            );
+            ctx.request_repaint();
             return;
         }
         let outputs = self.updates.flow.apply();
@@ -273,6 +319,58 @@ impl AppModel {
             }
         });
         self.updates.running = Some(rx);
+    }
+}
+
+impl Updates {
+    /// An install is under way: its relaunch may end the process at any
+    /// time, so no backup starts.
+    pub(super) fn installing(&self) -> bool {
+        self.flow.state() == update_flow::UpdateState::Applying
+    }
+}
+
+#[cfg(test)]
+impl Updates {
+    /// Puts a downloaded update in place, as if the check and the download
+    /// had run. The mock run has no updater, so nothing is ever installed.
+    pub(super) fn ready_for_test(&mut self) {
+        use accshift_app::lifecycle::updater::InstallContext;
+        let update = Update {
+            body: None,
+            current_version: "1.0.5".into(),
+            version: "2.0.0".into(),
+            date: None,
+            target: "windows-x86_64".into(),
+            download_url: "https://example.invalid/update".parse().unwrap(),
+            signature: String::new(),
+            raw_json: serde_json::Value::Null,
+            install: InstallContext {
+                app_name: "accshift".into(),
+                relaunch_args: Vec::new(),
+                bundle_type: None,
+                executable_path: None,
+                pubkey: String::new(),
+            },
+        };
+        let _ = self.flow.on_check_result(Ok(Some(update)));
+        let _ = self.flow.on_download_result(Ok(Vec::new()));
+    }
+
+    /// The flow holds a downloaded update, not yet applied.
+    pub(super) fn ready(&self) -> bool {
+        self.flow.state() == update_flow::UpdateState::Ready
+    }
+
+    /// The install of the ready update starts, and is held there: the
+    /// command it asks for is not run.
+    pub(super) fn install_for_test(&mut self) {
+        let _ = self.flow.apply();
+    }
+
+    /// The install held by [`Self::install_for_test`] fails.
+    pub(super) fn install_failed_for_test(&mut self) {
+        let _ = self.flow.on_install_result(Err("install failed".into()));
     }
 }
 

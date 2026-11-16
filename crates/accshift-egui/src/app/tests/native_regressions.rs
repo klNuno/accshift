@@ -256,6 +256,68 @@ fn native_external_theme_read_failure_does_not_discard_other_store_changes() {
 }
 
 #[test]
+fn native_external_themes_that_fail_to_read_are_read_again_on_the_next_focus() {
+    // Regression (EXTERNAL_THEME_UNLOCK): the refresh took the new themes
+    // fingerprint before the list failed, so no later focus read them, and
+    // the settings naming the theme were sanitized to the default theme.
+    let ctx = Context::default();
+    let (mut app, mock) = external_app_with(&ctx, |fixture| {
+        let snapshot = &mut fixture["commands"]["load_client_storage_snapshot"][0]["result"];
+        snapshot["stores"]["client.settings"]["themeId"] = json!("external");
+        snapshot["manifest"]["stores"]["app.themes"] = json!("theme-2");
+        fixture["commands"]["get_storage_manifest"][0]["result"] = snapshot["manifest"].clone();
+        fixture["commands"]["list_custom_themes"][0]["result"] = json!([{
+            "schemaVersion": 1, "id": "external", "name": "External",
+            "colorScheme": "dark", "tokens": {"bgCard": "#112233"}
+        }]);
+    });
+    let before = app.booted().unwrap().theme.vars.bg_card;
+    mock.fail("list_custom_themes", Some("one file locked"));
+    frame(&mut app, &ctx, true, false);
+    frame(&mut app, &ctx, false, false);
+    frame(&mut app, &ctx, true, false);
+    pump_until(&mut app, &ctx, |a| {
+        a.booted().unwrap().stores.view_mode() == ViewMode::List
+    });
+    let b = app.booted().unwrap();
+    assert_eq!(b.stores.view_mode(), ViewMode::List);
+    assert_eq!(b.stores.settings().theme_id, "external");
+    assert!(b.registry.document("external").is_none());
+    assert_ne!(
+        b.stores
+            .storage()
+            .manifest()
+            .stores
+            .get("app.themes")
+            .map(String::as_str),
+        Some("theme-2"),
+        "themes never read taken as seen"
+    );
+
+    mock.fail("list_custom_themes", None);
+    let reads = mock.seen("list_custom_themes");
+    frame(&mut app, &ctx, false, false);
+    frame(&mut app, &ctx, true, false);
+    pump_until(&mut app, &ctx, |a| {
+        a.booted().unwrap().registry.document("external").is_some()
+    });
+    let b = app.booted().unwrap();
+    assert!(mock.seen("list_custom_themes") > reads);
+    assert!(b.registry.document("external").is_some());
+    assert_eq!(b.stores.settings().theme_id, "external");
+    assert_ne!(b.theme.vars.bg_card, before);
+    assert_eq!(
+        b.stores
+            .storage()
+            .manifest()
+            .stores
+            .get("app.themes")
+            .map(String::as_str),
+        Some("theme-2")
+    );
+}
+
+#[test]
 fn native_external_account_change_without_client_stores_keeps_the_manifest_schema() {
     let ctx = Context::default();
     let (mut app, mock) = external_app_with(&ctx, |fixture| {

@@ -264,7 +264,21 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     // The telemetry onboarding, unless the secure screen suspended
     // rendering.
     let suspended = booted.secure.render_suspended();
-    let tour = app.onboarding.view.as_ref().filter(|_| !suspended);
+    // The restart modal stays on top of the stage; the tour waits.
+    let restart = app.backup.restart_needed().then(|| {
+        let text = |key| accshift_app::i18n::translate(fv.locale, key);
+        stage::RestartModal {
+            title: text("settings.backupRestartTitle"),
+            message: text("settings.backupRestartNeeded"),
+            error: app.backup.restart_failure().map(str::to_owned),
+            button: text("settings.backupRestartNow"),
+        }
+    });
+    let tour = app
+        .onboarding
+        .view
+        .as_ref()
+        .filter(|_| !suspended && restart.is_none());
     let modal = covers_panel(app, tour.is_some(), bulk_step);
     let secure = SecureView::read(booted);
     let pin_focus = std::mem::take(&mut app.pin_focus);
@@ -318,6 +332,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         palette_commands,
         submenus: &app.submenus,
         open_id: app.menu_open_id,
+        restart,
         actions: Vec::new(),
     };
     {
@@ -388,7 +403,8 @@ fn boot_error_screen(app: &AppModel, ui: &mut Ui, screen: Rect) -> Vec<Action> {
 /// panel: the wheel lands on its overlay, never on the content under it.
 fn covers_panel(app: &AppModel, tour_open: bool, bulk_step: Option<BarStep>) -> bool {
     let dialogs = &app.dialogs;
-    app.palette.is_some()
+    app.backup.restart_needed()
+        || app.palette.is_some()
         || tour_open
         || bulk_step == Some(BarStep::Settings)
         || (dialogs.input_dialog().is_some() && app.input_mount.is_some())

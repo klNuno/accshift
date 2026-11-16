@@ -90,10 +90,16 @@ impl StoreContext {
         self.platform_ids.iter().any(|known| known == id)
     }
 
-    /// `getThemeDefinition(id).id`: the id when it names a theme, the default
-    /// theme otherwise.
+    /// The theme id the settings keep: the id when it names a theme or could
+    /// name one, the default theme otherwise. A custom theme whose file is
+    /// missing or cannot be read right now keeps its id: the app paints the
+    /// default theme meanwhile ([`accshift_theme::ThemeRegistry::theme`]
+    /// falls back) and the theme comes back once its file reads, instead of
+    /// the setting being rewritten to the default and saved.
     pub fn resolve_theme_id<'a>(&'a self, id: &'a str) -> &'a str {
-        if !id.is_empty() && self.theme_ids.iter().any(|known| known == id) {
+        if self.theme_ids.iter().any(|known| known == id)
+            || accshift_theme::schema::is_valid_theme_id(id)
+        {
             id
         } else {
             settings::DEFAULT_THEME_ID
@@ -478,6 +484,25 @@ impl ClientStores {
         self.storage.begin_refresh(next)
     }
 
+    /// Drops the debounced writes not handed out yet: after a restore whose
+    /// files could not be read back, they would put the old setup back.
+    pub fn discard_pending_saves(&mut self) {
+        self.storage.discard_pending_saves();
+    }
+
+    /// Takes a whole snapshot read after a restore: every store and the
+    /// manifest, the debounced writes dropped, the typed stores rebuilt
+    /// with the current context. Returns every client store id.
+    pub fn adopt_snapshot(&mut self, snapshot: ClientStorageSnapshot) -> Vec<String> {
+        self.storage.discard_pending_saves();
+        self.storage.apply_snapshot(snapshot);
+        self.sync();
+        crate::storage::CLIENT_STORE_IDS
+            .iter()
+            .map(|id| id.to_string())
+            .collect()
+    }
+
     /// Applies a refresh and rebuilds the typed stores it touched. Returns
     /// every changed id.
     pub fn finish_refresh(
@@ -566,12 +591,20 @@ impl ClientStores {
     }
 
     /// [`Self::sync_accounts`] after an account load. A load that found no
-    /// account prunes nothing: the launcher's own list can be missing for a
-    /// moment (Steam rewriting `loginusers.vdf`, a drive not mounted yet), and
-    /// one such load must not drop every account out of its folder.
+    /// account changes nothing: the launcher's own list can be missing for a
+    /// moment (Steam rewriting `loginusers.vdf`, a drive not mounted yet).
+    /// No load takes an account out of its folder, only
+    /// [`Self::forget_account`] does.
     pub fn sync_loaded_accounts(&mut self, account_ids: &[String], platform: &str) {
         if !account_ids.is_empty() {
             self.sync_accounts(account_ids, platform);
+        }
+    }
+
+    /// Drops the folder placement of an account the user forgot.
+    pub fn forget_account(&mut self, account_id: &str, platform: &str) {
+        if self.folders.forget_account(account_id, platform) {
+            self.write_folders();
         }
     }
 

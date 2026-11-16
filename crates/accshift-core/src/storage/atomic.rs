@@ -105,15 +105,73 @@ pub(super) fn backup_path(path: &Path) -> std::path::PathBuf {
     path.with_file_name(name)
 }
 
-/// Temp-file sibling unique to this process, so a concurrent GUI and CLI
-/// writing the same target never share a temp file.
+/// Temp-file sibling unique to this process and this call, so a concurrent
+/// GUI and CLI, or two writes of one target, never share a temp file. Its
+/// name is short and does not grow with the target's: a target whose name
+/// is as long as a file name can be still gets one. No loader reads `.tmp`.
 pub(super) fn unique_tmp_path(path: &Path) -> std::path::PathBuf {
-    let mut name = path
-        .file_name()
-        .map(|n| n.to_os_string())
-        .unwrap_or_else(|| std::ffi::OsString::from("file"));
-    name.push(format!(".{}.tmp", std::process::id()));
-    path.with_file_name(name)
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    path.with_file_name(format!(".accshift-{}-{n}.tmp", std::process::id()))
+}
+
+/// Writes `bytes` to a new temp file next to `path`, synced.
+fn stage_tmp(path: &Path, bytes: &[u8]) -> Result<std::path::PathBuf, String> {
+    let tmp_path = unique_tmp_path(path);
+    let written = temp_blocked(path).and_then(|()| write_synced(&tmp_path, bytes));
+    if let Err(e) = written {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(format!(
+            "Could not write temp file {}: {e}",
+            tmp_path.display()
+        ));
+    }
+    Ok(tmp_path)
+}
+
+/// The targets whose temp file a test blocked. Shared by every thread: a
+/// load writes its stores from several. Each test blocks its own paths.
+#[cfg(test)]
+static TEMP_BLOCKED: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// Test seam: an error when a test blocked the temp file of `path`.
+fn temp_blocked(path: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    if TEMP_BLOCKED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .any(|p| p == path)
+    {
+        return Err(std::io::Error::other("temp file blocked by a test"));
+    }
+    let _ = path;
+    Ok(())
+}
+
+/// Test seam: no write of `path` can create its temp file
+/// until the guard drops, so the write fails before it could touch `path`.
+#[cfg(test)]
+#[must_use]
+pub(crate) fn block_temp_file(path: &Path) -> TempBlock {
+    TEMP_BLOCKED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(path.to_path_buf());
+    TempBlock(path.to_path_buf())
+}
+
+#[cfg(test)]
+pub(crate) struct TempBlock(std::path::PathBuf);
+
+#[cfg(test)]
+impl Drop for TempBlock {
+    fn drop(&mut self) {
+        TEMP_BLOCKED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|p| *p != self.0);
+    }
 }
 
 /// Write `bytes` to `path` via temp file + rename. On Windows the rename can
@@ -127,9 +185,7 @@ pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
             .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
     }
 
-    let tmp_path = unique_tmp_path(path);
-    write_synced(&tmp_path, bytes)
-        .map_err(|e| format!("Could not write temp file {}: {e}", tmp_path.display()))?;
+    let tmp_path = stage_tmp(path, bytes)?;
     // The rename replaces the file and with it its mode: keep a launcher's
     // owner-only session file owner-only.
     #[cfg(unix)]
@@ -138,15 +194,7 @@ pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     }
 
     let bak_path = backup_path(path);
-    let mut rename_result = fs::rename(&tmp_path, path);
-    for delay_ms in [50, 100, 200] {
-        if rename_result.is_ok() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-        rename_result = fs::rename(&tmp_path, path);
-    }
-    if rename_result.is_ok() {
+    if rename_with_retry(&tmp_path, path).is_ok() {
         sync_parent_dir(path);
         // A .bak left by an earlier failed copy-over now holds an older
         // version than the primary. Drop it so a later read cannot serve it.
@@ -160,6 +208,67 @@ pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
         let _ = fs::copy(path, &bak_path);
     }
     finalize_copy_over(&tmp_path, path, &bak_path)
+}
+
+/// Writes `bytes` to `path` through a synced temp file renamed over it, with
+/// the brief retry of [`write_bytes_atomic`] but no copy-over fallback. When
+/// the rename still fails, the temp file is removed and the error returned:
+/// `path` keeps every old byte, and no `.bak` is left beside it. For a file
+/// read by a loader that knows nothing of the `.bak` recovery copy.
+pub fn write_bytes_replacing(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
+    }
+    let tmp_path = stage_tmp(path, bytes)?;
+    #[cfg(unix)]
+    if let Ok(meta) = fs::metadata(path) {
+        let _ = fs::set_permissions(&tmp_path, meta.permissions());
+    }
+    match rename_with_retry(&tmp_path, path) {
+        Ok(()) => {
+            sync_parent_dir(path);
+            Ok(())
+        }
+        Err(e) => {
+            let _ = fs::remove_file(&tmp_path);
+            Err(format!("Could not replace {}: {e}", path.display()))
+        }
+    }
+}
+
+/// Renames `tmp_path` over `path`, which it replaces on every OS. On Windows
+/// the rename can fail transiently (antivirus, file indexing): it is retried
+/// briefly before the error is returned.
+fn rename_with_retry(tmp_path: &Path, path: &Path) -> std::io::Result<()> {
+    let mut result = rename_over(tmp_path, path);
+    for delay_ms in [50, 100, 200] {
+        if result.is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        result = rename_over(tmp_path, path);
+    }
+    result
+}
+
+fn rename_over(tmp_path: &Path, path: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    if RENAME_FAILS.with(std::cell::Cell::get) {
+        return Err(std::io::Error::other("rename forced to fail by a test"));
+    }
+    fs::rename(tmp_path, path)
+}
+
+#[cfg(test)]
+thread_local! {
+    static RENAME_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Test seam: every rename into place on this thread fails while `on`.
+#[cfg(test)]
+pub(crate) fn force_rename_failures(on: bool) {
+    RENAME_FAILS.with(|fails| fails.set(on));
 }
 
 /// Write and flush to disk before the caller renames the file into place.

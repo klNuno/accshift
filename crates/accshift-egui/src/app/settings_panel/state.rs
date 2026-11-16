@@ -100,6 +100,8 @@ pub struct SettingsPanel {
     pub(super) theme_editor_mount: u64,
     /// A theme import from the clipboard under way.
     pub theme_import: Option<ThemeImport>,
+    /// The Privacy tab's backup card.
+    pub backup: super::BackupState,
     /// The scroll offset of the tab's content.
     pub scroll: f32,
     /// Text for the clipboard once the frame has the context.
@@ -256,6 +258,7 @@ impl SettingsPanel {
             theme_import: None,
             preview_path: String::new(),
             pending_removal: None,
+            backup: super::BackupState::default(),
             scroll: 0.0,
             clipboard: None,
             draft,

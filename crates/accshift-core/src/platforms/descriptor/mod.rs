@@ -265,6 +265,13 @@ pub(crate) mod test_support {
         )
     }
 
+    /// Held by every test that reloads the process-wide user registry, so
+    /// two of them never swap it under each other.
+    pub fn registry_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// Writes `body` into the user descriptor folder as `name`.
     pub fn drop_in(app: &dyn AppContext, name: &str, body: &str) {
         let dir = user_dir(app).unwrap();

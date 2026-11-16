@@ -17,7 +17,7 @@ mod events;
 pub mod install_id;
 mod platform_info;
 mod queue;
-mod time;
+pub(crate) mod time;
 
 pub use client::{
     export, forget, record_consent_choice, user_agent, ConsentChoice, Mode, TELEMETRY_URL,

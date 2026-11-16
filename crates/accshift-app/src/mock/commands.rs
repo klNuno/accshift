@@ -170,6 +170,27 @@ impl Backend for MockBackend {
     fn open_descriptors_folder(&self) -> BackendResult<()> {
         self.call("open_descriptors_folder", json!({}))
     }
+    fn backup_select_export_path(&self, title: &str, all_files: &str) -> BackendResult<String> {
+        self.call(
+            "backup_select_export_path",
+            json!({ "title": title, "allFiles": all_files }),
+        )
+    }
+    fn backup_export(&self, path: &str) -> BackendResult<BackupReport> {
+        self.call("backup_export", json!({ "path": path }))
+    }
+    fn backup_select_import_file(&self, title: &str, all_files: &str) -> BackendResult<String> {
+        self.call(
+            "backup_select_import_file",
+            json!({ "title": title, "allFiles": all_files }),
+        )
+    }
+    fn backup_preview(&self, path: &str) -> BackendResult<BackupPreview> {
+        self.call("backup_preview", json!({ "path": path }))
+    }
+    fn backup_restore(&self, path: &str) -> BackendResult<BackupReport> {
+        self.call("backup_restore", json!({ "path": path }))
+    }
     fn open_url(&self, url: &str) -> BackendResult<()> {
         self.call("open_url", json!({ "url": url }))
     }

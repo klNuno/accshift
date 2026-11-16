@@ -1,0 +1,86 @@
+{
+  "id": "settings-backup-glass-dark-100",
+  "scenario": "dev",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 720,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [
+        87,
+        18
+      ]
+    },
+    {
+      "move": [
+        430,
+        5
+      ]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "click": [
+        93,
+        176
+      ]
+    },
+    {
+      "move": [
+        430,
+        5
+      ]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "card"
+    },
+    {
+      "click": [
+        264,
+        578
+      ]
+    },
+    {
+      "move": [
+        430,
+        5
+      ]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "exported"
+    },
+    {
+      "click": [
+        279,
+        626
+      ]
+    },
+    {
+      "move": [
+        430,
+        5
+      ]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "shot": "preview"
+    }
+  ]
+}
