@@ -1,7 +1,10 @@
+mod commands;
 mod context;
 mod diagnostics;
 mod folders;
+mod i18n;
 mod output;
+mod personas;
 mod pin;
 mod settings;
 mod telemetry;
@@ -74,10 +77,38 @@ enum Command {
     List {
         /// Platform identifier (see `accshift platforms`).
         platform: String,
-        /// Restrict to accounts in the named folder (case-insensitive,
-        /// includes nested subfolders).
+        /// Restrict to accounts in a folder, by id or by name (names are
+        /// case-insensitive; nested subfolders included). A name two
+        /// folders share is refused with their ids (see `accshift folders`).
         #[arg(long)]
         folder: Option<String>,
+    },
+    /// Show a platform's folder tree: ids, names, nesting, account counts.
+    Folders {
+        /// Platform identifier (see `accshift platforms`).
+        platform: String,
+    },
+    /// Show the account signed in on each platform, or on one.
+    Current {
+        /// Platform identifier; every platform when left out.
+        platform: Option<String>,
+    },
+    /// Find accounts on every platform by name, display name or note.
+    Search {
+        /// Text to look for, case-insensitive.
+        query: String,
+    },
+    /// List the personas saved in the app.
+    Personas,
+    /// Switch every account of a persona, stopping at the first failure.
+    Persona {
+        /// Persona id or name (case-insensitive).
+        persona: String,
+    },
+    /// Print a shell completion script.
+    Completions {
+        /// Target shell.
+        shell: commands::CompletionShell,
     },
     /// List the platforms the CLI knows about on this OS.
     Platforms,
@@ -134,6 +165,12 @@ impl Command {
     fn name(&self) -> &'static str {
         match self {
             Command::List { .. } => "list",
+            Command::Folders { .. } => "folders",
+            Command::Current { .. } => "current",
+            Command::Search { .. } => "search",
+            Command::Personas => "personas",
+            Command::Persona { .. } => "persona",
+            Command::Completions { .. } => "completions",
             Command::Platforms => "platforms",
             Command::Switch { .. } => "switch",
             Command::Descriptors => "descriptors",
@@ -225,6 +262,12 @@ fn dispatch(format: Format, command: Command) -> u8 {
     match command {
         Command::List { platform, folder } => cmd_list(format, &platform, folder.as_deref()),
         Command::Platforms => cmd_platforms(format),
+        Command::Folders { platform } => commands::cmd_folders(format, &platform),
+        Command::Current { platform } => commands::cmd_current(format, platform.as_deref()),
+        Command::Search { query } => commands::cmd_search(format, &query),
+        Command::Personas => commands::cmd_personas(format),
+        Command::Persona { persona } => commands::cmd_persona(format, &persona),
+        Command::Completions { shell } => commands::cmd_completions(shell),
         Command::Switch {
             platform,
             account_id,
@@ -297,16 +340,12 @@ fn cmd_list(format: Format, platform_id: &str, folder: Option<&str>) -> u8 {
         }
     };
 
-    let folder_filter = match resolve_folder(&ctx, platform_id, folder) {
-        Ok(f) => f,
-        Err(FolderResolveError::Store(e)) => {
-            emit_err(format, "list", "folder_store_error", &e);
-            return exit::IO;
-        }
-        Err(FolderResolveError::NotFound(e)) => {
-            emit_err(format, "list", "unknown_folder", &e);
-            return exit::GENERIC;
-        }
+    let (folder_filter, folder_path) = match folder {
+        None => (None, None),
+        Some(query) => match commands::folder_filter(&*ctx, format, platform_id, query) {
+            Ok((ids, path)) => (Some(ids), Some(path)),
+            Err(code) => return code,
+        },
     };
 
     let accounts = match service.get_accounts(ctx.clone()) {
@@ -319,7 +358,7 @@ fn cmd_list(format: Format, platform_id: &str, folder: Option<&str>) -> u8 {
 
     // Best-effort: some platforms return an error here (no Steam installed,
     // no config yet, …). Missing current is fine, the list still prints.
-    let current = service.get_current_account(ctx).ok();
+    let current = service.get_current_account(ctx.clone()).ok();
 
     match format {
         Format::Json => {
@@ -328,7 +367,7 @@ fn cmd_list(format: Format, platform_id: &str, folder: Option<&str>) -> u8 {
                     .iter()
                     .filter_map(|a| {
                         let row = output::extract_row(platform_id, a)?;
-                        if ids.contains(&row.folder_id) {
+                        if ids.contains(&row.storage_id) {
                             Some(a.clone())
                         } else {
                             None
@@ -342,6 +381,7 @@ fn cmd_list(format: Format, platform_id: &str, folder: Option<&str>) -> u8 {
                 json!({
                     "platform": platform_id,
                     "folder": folder,
+                    "folderPath": folder_path,
                     "accounts": filtered,
                     "current": current,
                 }),
@@ -350,8 +390,9 @@ fn cmd_list(format: Format, platform_id: &str, folder: Option<&str>) -> u8 {
         Format::Human => {
             let empty = Vec::new();
             let rows = accounts.as_array().unwrap_or(&empty);
-            if let Some(name) = folder {
-                println!("Folder: {name}");
+            if let Some(path) = &folder_path {
+                let tr = i18n::Tr::for_run(format, &*ctx);
+                println!("{}", tr.t("list.folder", &[("path", path)]));
             }
             output::render_accounts(
                 platform_id,
@@ -363,38 +404,6 @@ fn cmd_list(format: Format, platform_id: &str, folder: Option<&str>) -> u8 {
     }
 
     exit::OK
-}
-
-/// Distinguishes a genuine "no such folder" result from a folder-store
-/// read/parse failure, so the two are never reported under the same error
-/// code (a corrupt or transiently-locked folders.json must not look like
-/// "no folder with that name").
-enum FolderResolveError {
-    /// folders.json could not be read or parsed at all.
-    Store(String),
-    /// The store loaded fine but no folder matched (or matched ambiguously).
-    NotFound(String),
-}
-
-fn resolve_folder(
-    ctx: &accshift_core::AppCtx,
-    platform_id: &str,
-    folder: Option<&str>,
-) -> Result<Option<std::collections::HashSet<String>>, FolderResolveError> {
-    let Some(name) = folder else {
-        return Ok(None);
-    };
-    let store = match folders::load(&**ctx).map_err(FolderResolveError::Store)? {
-        Some(s) => s,
-        None => {
-            return Err(FolderResolveError::NotFound(
-                "No folders configured yet.".into(),
-            ))
-        }
-    };
-    folders::accounts_in_folder(&store, platform_id, name)
-        .map(Some)
-        .map_err(FolderResolveError::NotFound)
 }
 
 struct SwitchOverrides {
@@ -463,43 +472,10 @@ fn cmd_switch(
 
     let app_settings = settings::load(&*ctx);
 
-    // PIN gate: the GUI can lock account switching behind a 4-digit PIN. Honour
-    // the same lock here so the CLI cannot bypass it. Prompt before taking the
-    // lock so we never hold it while waiting on stdin, then compare the
-    // admitted lock with the file once the lock is held.
-    let admitted = match pin::enforce(&*ctx, format, accshift_core::pin::read_pin_lock(&*ctx)) {
+    let _lock = match guard_switch(&*ctx, format, "switch") {
         Ok(lock) => lock,
         Err(code) => return code,
     };
-
-    let _lock = match acquire_exclusive(&ctx, LOCK_TIMEOUT) {
-        Ok(g) => g,
-        Err(LockError::Contended) => {
-            emit_err(
-                format,
-                "switch",
-                "lock_contended",
-                "Another accshift instance is running. Retry once it finishes, or close the GUI.",
-            );
-            return exit::LOCK_CONTENDED;
-        }
-        Err(LockError::Io(e)) => {
-            emit_err(format, "switch", "io", &e);
-            return exit::IO;
-        }
-    };
-
-    // Read under the operation lock, after the prompt: a PIN the GUI enabled
-    // or replaced in between is not the lock `enforce` admitted.
-    if accshift_core::pin::read_pin_lock(&*ctx) != admitted {
-        emit_err(
-            format,
-            "switch",
-            "pin_required",
-            "The PIN changed while it was being checked. Run the switch again.",
-        );
-        return exit::PIN_DENIED;
-    }
 
     let saved = &app_settings.platform_settings.steam;
     let defaults = SteamSwitchDefaults::from_settings(
@@ -527,6 +503,53 @@ fn cmd_switch(
             status
         }
     }
+}
+
+/// The PIN and the operation lock a switch goes through, for `switch` and
+/// `persona` alike: prompt before taking the lock so it is never held while
+/// waiting on stdin, then compare the admitted PIN with the file under the
+/// lock. The guard is held for the whole switch.
+fn guard_switch(
+    ctx: &dyn accshift_core::AppContext,
+    format: Format,
+    command: &str,
+) -> Result<accshift_core::lock::LockGuard, u8> {
+    // PIN gate: the GUI can lock account switching behind a 4-digit PIN. Honour
+    // the same lock here so the CLI cannot bypass it. Prompt before taking the
+    // lock so we never hold it while waiting on stdin, then compare the
+    // admitted lock with the file once the lock is held.
+    let admitted = pin::enforce(ctx, format, command, accshift_core::pin::read_pin_lock(ctx))?;
+
+    let lock = match acquire_exclusive(ctx, LOCK_TIMEOUT) {
+        Ok(g) => g,
+        Err(LockError::Contended) => {
+            emit_err(
+                format,
+                command,
+                "lock_contended",
+                "Another accshift instance is running. Retry once it finishes, or close the GUI.",
+            );
+            return Err(exit::LOCK_CONTENDED);
+        }
+        Err(LockError::Io(e)) => {
+            emit_err(format, command, "io", &e);
+            return Err(exit::IO);
+        }
+    };
+
+    // Read under the operation lock, after the prompt: a PIN the GUI enabled
+    // or replaced in between is not the lock `enforce` admitted.
+    if accshift_core::pin::read_pin_lock(ctx) != admitted {
+        emit_err(
+            format,
+            command,
+            "pin_required",
+            "The PIN changed while it was being checked. Run the switch again.",
+        );
+        return Err(exit::PIN_DENIED);
+    }
+
+    Ok(lock)
 }
 
 /// Maps a platform failure onto the CLI's error code and exit status.
@@ -668,3 +691,6 @@ fn cmd_descriptors(format: Format) -> u8 {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod command_tests;

@@ -60,6 +60,20 @@ fn every_command() -> Vec<Command> {
             folder: None,
         },
         Command::Platforms,
+        Command::Folders {
+            platform: "steam".into(),
+        },
+        Command::Current { platform: None },
+        Command::Search {
+            query: "alice".into(),
+        },
+        Command::Personas,
+        Command::Persona {
+            persona: "main".into(),
+        },
+        Command::Completions {
+            shell: crate::commands::CompletionShell::Bash,
+        },
         Command::Switch {
             platform: "steam".into(),
             account_id: "alice".into(),
@@ -159,6 +173,8 @@ fn every_subcommand_is_listed() {
     assert_eq!(
         names,
         vec![
+            "completions",
+            "current",
             "descriptors",
             "diag-bundle",
             "diag-check",
@@ -167,8 +183,12 @@ fn every_subcommand_is_listed() {
             "diag-logs",
             "diag-schema",
             "dry-run",
+            "folders",
             "list",
+            "persona",
+            "personas",
             "platforms",
+            "search",
             "switch",
         ],
         "a subcommand was added or renamed without updating every_command()"
