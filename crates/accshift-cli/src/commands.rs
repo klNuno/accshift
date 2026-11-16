@@ -675,6 +675,21 @@ fn list_steps(steps: &[Assignment]) -> String {
         .join(", ")
 }
 
+/// The `persona_empty` error: its message and details keep the assignments
+/// skipped because their platform is not loaded here.
+pub fn nothing_to_switch(tr: Tr, persona: &Persona, skipped: &[Assignment]) -> (String, Value) {
+    let mut message = tr.t("persona.nothingToSwitch", &[("name", &persona.name)]);
+    if !skipped.is_empty() {
+        message.push('\n');
+        message.push_str(&tr.t("persona.skipped", &[("platforms", &list_steps(skipped))]));
+    }
+    let details = json!({
+        "persona": { "id": persona.id, "name": persona.name },
+        "skipped": skipped,
+    });
+    (message, details)
+}
+
 /// `persona` on a given context, platform set and switch: the lookup, then
 /// the PIN and the operation lock exactly as `switch` takes them, then the
 /// steps.
@@ -699,12 +714,8 @@ pub fn persona_in(
     };
     let (steps, skipped) = plan(persona, available);
     if steps.is_empty() {
-        emit_err(
-            format,
-            "persona",
-            "persona_empty",
-            &tr.t("persona.nothingToSwitch", &[("name", &persona.name)]),
-        );
+        let (message, details) = nothing_to_switch(tr, persona, &skipped);
+        emit_err_with(format, "persona", "persona_empty", &message, details);
         return exit::GENERIC;
     }
 

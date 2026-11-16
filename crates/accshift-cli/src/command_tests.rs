@@ -96,6 +96,9 @@ fn a_folder_id_picks_one_of_the_duplicates() {
     let store = FolderStore::from_value(&duplicate_names());
     let folder = folders::resolve(&store, "steam", "f-main-2").expect("by id");
     assert_eq!(folder.id, "f-main-2");
+    // Padding copied from the `folders` table trims as a name does.
+    let padded = folders::resolve(&store, "steam", " f-main-2 ").expect("padded id");
+    assert_eq!(padded.id, "f-main-2");
     let ids = folders::accounts_in_folder(&store, &folder.id);
     assert_eq!(ids, ["764".to_string()].into_iter().collect());
     // The id of another platform's folder is not this platform's.
@@ -203,15 +206,23 @@ fn the_folder_reader_keeps_what_the_app_keeps() {
         })
         .collect();
     assert_eq!(cli_folders, app_folders);
-    let app_order: BTreeSet<(String, Vec<String>)> = app
+    let app_order: BTreeSet<(String, Vec<(String, String)>)> = app
         .item_order
         .iter()
-        .map(|(k, v)| (k.clone(), v.iter().map(|i| i.id.clone()).collect()))
+        .map(|(k, v)| {
+            let kind =
+                |i: &accshift_app::folders::ItemRef| json!(i.kind).as_str().map(str::to_string);
+            let items = v.iter().map(|i| (kind(i).expect("type"), i.id.clone()));
+            (k.clone(), items.collect())
+        })
         .collect();
-    let cli_order: BTreeSet<(String, Vec<String>)> = cli
+    let cli_order: BTreeSet<(String, Vec<(String, String)>)> = cli
         .item_order
         .iter()
-        .map(|(k, v)| (k.clone(), v.iter().map(|i| i.id.clone()).collect()))
+        .map(|(k, v)| {
+            let items = v.iter().map(|i| (i.kind.clone(), i.id.clone()));
+            (k.clone(), items.collect())
+        })
         .collect();
     assert_eq!(cli_order, app_order);
 }
@@ -745,6 +756,27 @@ fn persona_refuses_ambiguous_unknown_and_empty_personas_without_switching() {
     assert_eq!(commands::personas_in(&ctx, Format::Human), exit::OK);
 }
 
+#[test]
+fn a_persona_with_every_platform_skipped_keeps_its_skipped_list() {
+    let list = personas::from_value(&two_personas());
+    let (steps, skipped) = commands::plan(&list[0], &|_| false);
+    assert!(steps.is_empty());
+    let (message, details) = commands::nothing_to_switch(Tr::english(), &list[0], &skipped);
+    assert!(
+        message.contains("steam (761), riot (r1), gone (x)"),
+        "{message}"
+    );
+    assert_eq!(details["persona"], json!({ "id": "p1", "name": "Main" }));
+    assert_eq!(
+        details["skipped"],
+        json!([
+            { "platformId": "steam", "accountId": "761" },
+            { "platformId": "riot", "accountId": "r1" },
+            { "platformId": "gone", "accountId": "x" }
+        ])
+    );
+}
+
 // ---------------------------------------------------------------- completions
 
 #[test]
@@ -840,8 +872,19 @@ fn every_table_has_the_english_keys_and_placeholders() {
 #[test]
 fn every_key_the_code_asks_for_exists_in_english() {
     let en = i18n::table("en");
-    for source in [include_str!("commands.rs"), include_str!("main.rs")] {
-        for chunk in source.split("tr.t(").skip(1) {
+    // Every source of the crate, and every `.t(` form (`tr.t(`, `Tr::...t(`).
+    // The needle is built so this file does not match its own literal.
+    let needle = format!(".{}(", "t");
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+    let mut scanned = 0;
+    for entry in std::fs::read_dir(dir).expect("src") {
+        let path = entry.expect("entry").path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+            continue;
+        }
+        scanned += 1;
+        let source = std::fs::read_to_string(&path).expect("source");
+        for chunk in source.split(needle.as_str()).skip(1) {
             let Some(rest) = chunk.trim_start().strip_prefix('"') else {
                 continue;
             };
@@ -849,6 +892,7 @@ fn every_key_the_code_asks_for_exists_in_english() {
             assert!(en.contains_key(key), "missing i18n key {key}");
         }
     }
+    assert!(scanned > 10, "only {scanned} sources scanned");
 }
 
 #[test]
@@ -863,6 +907,18 @@ fn the_language_follows_the_app_then_the_os() {
     assert_eq!(
         Tr::locale("fr").t("folders.empty", &[("platform", "steam")]),
         "Aucun dossier sur steam."
+    );
+    // A value is never scanned for placeholders of its own.
+    assert_eq!(
+        Tr::english().t(
+            "folders.notFound",
+            &[
+                ("folder", "{platform}"),
+                ("platform", "steam"),
+                ("available", "a")
+            ]
+        ),
+        "Folder '{platform}' not found on steam. Available: a"
     );
     // JSON output stays English whatever the app is set to.
     let scratch = Scratch::new("tr-json");

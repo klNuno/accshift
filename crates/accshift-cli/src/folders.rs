@@ -167,10 +167,11 @@ pub fn resolve<'a>(
     if on_platform.is_empty() {
         return Err(FolderLookupError::NoneConfigured);
     }
+    let query = query.trim();
     if let Some(by_id) = on_platform.iter().find(|f| f.id == query) {
         return Ok(by_id);
     }
-    let wanted = query.trim().to_lowercase();
+    let wanted = query.to_lowercase();
     let by_name: Vec<&FolderInfo> = on_platform
         .iter()
         .copied()

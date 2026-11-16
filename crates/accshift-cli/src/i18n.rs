@@ -103,18 +103,37 @@ impl Tr {
         }
     }
 
-    /// The text of `key`, its `{name}` placeholders filled from `params`.
-    /// A key missing from a table falls back to English, then to the key.
+    /// The text of `key`, its `{name}` placeholders filled from `params` in
+    /// one pass, so a value is never scanned for placeholders of its own. A
+    /// placeholder without a param stays as written. A key missing from a
+    /// table falls back to English, then to the key.
     pub fn t(&self, key: &str, params: &[(&str, &str)]) -> String {
         let template = table(self.locale)
             .get(key)
             .or_else(|| table("en").get(key))
             .and_then(Value::as_str)
             .unwrap_or(key);
-        let mut out = template.to_string();
-        for (name, value) in params {
-            out = out.replace(&format!("{{{name}}}"), value);
+        let mut out = String::with_capacity(template.len());
+        let mut rest = template;
+        while let Some(open) = rest.find('{') {
+            out.push_str(&rest[..open]);
+            rest = &rest[open..];
+            let filled = rest[1..].split_once('}').and_then(|(name, after)| {
+                let (_, value) = params.iter().find(|(n, _)| *n == name)?;
+                Some((value, after))
+            });
+            match filled {
+                Some((value, after)) => {
+                    out.push_str(value);
+                    rest = after;
+                }
+                None => {
+                    out.push('{');
+                    rest = &rest[1..];
+                }
+            }
         }
+        out.push_str(rest);
         out
     }
 }
