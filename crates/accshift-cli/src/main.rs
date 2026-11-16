@@ -218,8 +218,17 @@ fn main() -> ExitCode {
         reporter.finish(command_name, telemetry::error_code_for_exit(exit));
     }
 
+    // A switch leaves a session watch running (Steam, Riot). The result is
+    // printed and the operation lock released; staying until the watch ends
+    // lets it store a refused session instead of dying with the process.
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    accshift_core::platforms::session_marks::wait_for_watches(SESSION_WATCH_LIMIT);
+
     ExitCode::from(exit)
 }
+
+/// The longest post-switch watch (Steam: 24 reads, 5 s apart) with margin.
+const SESSION_WATCH_LIMIT: Duration = Duration::from_secs(150);
 
 fn dispatch(format: Format, command: Command) -> u8 {
     match command {

@@ -507,6 +507,7 @@ pub(super) fn undo_failed_setup_capture(
 
 pub fn begin_profile_setup(app_handle: AppCtx) -> Result<RiotProfileSetupStatus, String> {
     ensure_no_riot_game_running("starting Riot account setup")?;
+    crate::platforms::session_marks::supersede_watch("riot");
     let client_path = resolve_riot_client_path(&app_handle)?;
     let install_dir = client_path.parent();
     let mut cfg = config::load_config(&app_handle);
@@ -710,6 +711,7 @@ pub fn cancel_profile_setup(app_handle: AppCtx, profile_id: String) -> Result<()
 
 pub fn capture_profile(app_handle: AppCtx, profile_id: String) -> Result<(), String> {
     let profile_id = normalize_profile_id(&profile_id)?;
+    crate::platforms::session_marks::supersede_watch("riot");
     let live_identity = detect_live_identity().ok();
     let mut cfg = config::load_config(&app_handle);
     let Some(profile) = find_profile(&cfg, &profile_id) else {

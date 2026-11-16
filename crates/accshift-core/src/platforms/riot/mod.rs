@@ -234,6 +234,7 @@ pub fn get_current_profile(app_handle: AppCtx) -> Result<String, String> {
 
 pub fn forget_profile(app_handle: AppCtx, profile_id: String) -> Result<(), String> {
     let profile_id = normalize_profile_id(&profile_id)?;
+    crate::platforms::session_marks::supersede_watch("riot");
     config::update_config(&app_handle, |cfg| {
         cfg.riot
             .profiles

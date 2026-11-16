@@ -147,16 +147,18 @@ const SESSION_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_se
 
 /// Watches the target's login entry on a background thread: Steam still
 /// running at the end without signing the target in stopped at its password
-/// prompt, which marks the account; a sign-in lifts its mark.
+/// prompt, which marks the account; a sign-in lifts its mark. A later switch,
+/// setup or forget ends the watch unrecorded.
 fn watch_session_after_switch(
     app_handle: AppCtx,
+    watch: crate::platforms::session_marks::WatchTicket,
     steam_path: PathBuf,
     account_name: &str,
     before: session::LoginEntry,
 ) {
     let account_name = account_name.to_string();
     crate::platforms::session_marks::spawn_watch("steam", move || {
-        let verdict = crate::platforms::session_marks::watch_after_switch(
+        let verdict = watch.watch(
             SESSION_WATCH_ATTEMPTS,
             || {
                 let now = session::read_entry(&steam_path, &account_name);
@@ -164,12 +166,7 @@ fn watch_session_after_switch(
             },
             || std::thread::sleep(SESSION_WATCH_INTERVAL),
         );
-        if let Err(error) = crate::platforms::session_marks::apply_verdict(
-            app_handle.as_ref(),
-            "steam",
-            &before.steam_id,
-            verdict,
-        ) {
+        if let Err(error) = watch.apply(app_handle.as_ref(), &before.steam_id, verdict) {
             log_platform_error(
                 app_handle.as_ref(),
                 "steam.session_watch",
@@ -551,6 +548,9 @@ impl PlatformService for SteamService {
         if !mode.is_empty() && !["online", "invisible"].contains(&mode) {
             return Err("Invalid mode".into());
         }
+        // Taken before Steam is touched: a watch still reading for the
+        // previous target would read this switch's login.
+        let watch = crate::platforms::session_marks::supersede_watch("steam");
 
         let result = if mode.is_empty() {
             accounts::switch_account(
@@ -601,7 +601,13 @@ impl PlatformService for SteamService {
         let result = log_switch_outcome(&app, &steam_path, &request, result);
         if result.is_ok() {
             if let Some(before) = before.filter(session::worth_watching) {
-                watch_session_after_switch(app.clone(), steam_path.clone(), account_id, before);
+                watch_session_after_switch(
+                    app.clone(),
+                    watch,
+                    steam_path.clone(),
+                    account_id,
+                    before,
+                );
             }
         }
         result
@@ -610,6 +616,7 @@ impl PlatformService for SteamService {
     fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), PlatformError> {
         validate_steam_id(account_id)?;
         let steam_path = resolve_steam_path(&app)?;
+        crate::platforms::session_marks::supersede_watch("steam");
         accounts::forget_account(&steam_path, account_id)
             .map_err(|e| log_platform_failure(&app, "steam.forget_account", e.into()))
     }

@@ -11,6 +11,22 @@ use crate::config::{self, AppConfig};
 use crate::context::AppContext;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Condvar, Mutex, MutexGuard, OnceLock};
+use std::time::{Duration, Instant};
+
+/// Bumped by every mark this process stores or lifts, so the app can reread
+/// the marks a background watch wrote after the switch returned.
+static REVISION: AtomicU64 = AtomicU64::new(0);
+
+/// The revision of the marks this process wrote. Cheap: one atomic read.
+pub fn revision() -> u64 {
+    REVISION.load(Ordering::SeqCst)
+}
+
+fn bump_revision() {
+    REVISION.fetch_add(1, Ordering::SeqCst);
+}
 
 /// What a mark says about the session.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -104,7 +120,9 @@ pub fn mark_after_switch(
         source: SessionSource::AfterSwitch,
         detected_at: super::now_unix_ms(),
     };
-    config::update_config(app, |cfg| set_mark_in(cfg, platform, account_id, mark))
+    config::update_config(app, |cfg| set_mark_in(cfg, platform, account_id, mark))?;
+    bump_revision();
+    Ok(())
 }
 
 /// Lifts a mark: a new capture, or a switch that ended signed in. A config
@@ -119,7 +137,9 @@ pub fn clear_mark(app: &dyn AppContext, platform: &str, account_id: &str) -> Res
     }
     config::update_config(app, |cfg| {
         clear_mark_in(cfg, platform, account_id);
-    })
+    })?;
+    bump_revision();
+    Ok(())
 }
 
 /// The persisted marks of a platform with the offline ones on top. An offline
@@ -173,6 +193,9 @@ pub enum WatchStep {
     SignedIn,
     /// The launcher answered and the target is not signed in.
     NotSignedIn,
+    /// Another switch, setup or capture took the launcher over: what it
+    /// shows now belongs to another account. Ends the watch, marks nothing.
+    Superseded,
 }
 
 /// How a post-switch watch ended.
@@ -203,6 +226,7 @@ pub fn watch_after_switch(
             WatchStep::SignedIn => return WatchVerdict::SignedIn,
             WatchStep::NotSignedIn => streak += 1,
             WatchStep::Pending => streak = 0,
+            WatchStep::Superseded => return WatchVerdict::Unknown,
         }
     }
     if streak >= 2 {
@@ -229,15 +253,142 @@ pub fn apply_verdict(
     }
 }
 
+/// The watch generation of each platform. Taking a new ticket supersedes the
+/// running watch of that platform: its later reads and its verdict are
+/// dropped, so account B's sign-in never clears account A's mark.
+fn watch_epochs() -> MutexGuard<'static, BTreeMap<String, u64>> {
+    static EPOCHS: OnceLock<Mutex<BTreeMap<String, u64>>> = OnceLock::new();
+    EPOCHS
+        .get_or_init(|| Mutex::new(BTreeMap::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// One operation's claim on a platform's launcher.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WatchTicket {
+    platform: String,
+    epoch: u64,
+}
+
+/// Starts a switch, setup, capture or forget on `platform`: any watch still
+/// running there stops counting. Call it before the launcher is touched.
+pub fn supersede_watch(platform: &str) -> WatchTicket {
+    let mut epochs = watch_epochs();
+    let epoch = epochs.entry(platform.to_string()).or_default();
+    *epoch += 1;
+    WatchTicket {
+        platform: platform.to_string(),
+        epoch: *epoch,
+    }
+}
+
+impl WatchTicket {
+    /// No later operation took the platform over.
+    pub fn is_current(&self) -> bool {
+        watch_epochs().get(&self.platform) == Some(&self.epoch)
+    }
+
+    /// [`watch_after_switch`] that stops once superseded. The check follows
+    /// each read: a read that saw the next operation's account is dropped.
+    pub fn watch(
+        &self,
+        attempts: usize,
+        mut read: impl FnMut() -> WatchStep,
+        wait: impl FnMut(),
+    ) -> WatchVerdict {
+        watch_after_switch(
+            attempts,
+            || {
+                let step = read();
+                if self.is_current() {
+                    step
+                } else {
+                    WatchStep::Superseded
+                }
+            },
+            wait,
+        )
+    }
+
+    /// [`apply_verdict`] for this ticket's account, unless superseded.
+    pub fn apply(
+        &self,
+        app: &dyn AppContext,
+        account_id: &str,
+        verdict: WatchVerdict,
+    ) -> Result<(), String> {
+        if !self.is_current() {
+            return Ok(());
+        }
+        apply_verdict(app, &self.platform, account_id, verdict)
+    }
+}
+
+/// Watches still running in this process.
+fn running_watches() -> &'static (Mutex<usize>, Condvar) {
+    static RUNNING: OnceLock<(Mutex<usize>, Condvar)> = OnceLock::new();
+    RUNNING.get_or_init(|| (Mutex::new(0), Condvar::new()))
+}
+
+/// Counts one running watch until dropped, panics included.
+struct RunningWatch;
+
+impl RunningWatch {
+    fn start() -> Self {
+        let (count, _) = running_watches();
+        *count.lock().unwrap_or_else(|p| p.into_inner()) += 1;
+        Self
+    }
+}
+
+impl Drop for RunningWatch {
+    fn drop(&mut self) {
+        let (count, ended) = running_watches();
+        let mut count = count.lock().unwrap_or_else(|p| p.into_inner());
+        *count = count.saturating_sub(1);
+        ended.notify_all();
+    }
+}
+
+/// Waits until every watch of this process ended, at most `limit`. A
+/// short-lived caller (the CLI) calls it before exiting, so a refusal seen
+/// after it printed its result is still stored. True when none is left.
+pub fn wait_for_watches(limit: Duration) -> bool {
+    let deadline = Instant::now() + limit;
+    let (count, ended) = running_watches();
+    let mut count = count.lock().unwrap_or_else(|p| p.into_inner());
+    while *count > 0 {
+        let now = Instant::now();
+        if now >= deadline {
+            return false;
+        }
+        count = match ended.wait_timeout(count, deadline - now) {
+            Ok((guard, _)) => guard,
+            Err(poisoned) => poisoned.into_inner().0,
+        };
+    }
+    true
+}
+
 /// Runs a post-switch watch on its own thread, so the switch returns at once.
 /// Never in unit tests: they would leave a thread polling a scratch folder.
 pub fn spawn_watch(name: &str, job: impl FnOnce() + Send + 'static) {
     if cfg!(test) {
         return;
     }
+    spawn_tracked(name, job);
+}
+
+/// Spawns `job` counted by [`wait_for_watches`].
+fn spawn_tracked(name: &str, job: impl FnOnce() + Send + 'static) {
+    let running = RunningWatch::start();
     let _ = std::thread::Builder::new()
         .name(format!("session-watch-{name}"))
-        .spawn(job);
+        .spawn(move || {
+            let _running = running;
+            job();
+        });
 }
 
 #[cfg(test)]

@@ -245,3 +245,70 @@ fn a_verdict_marks_clears_or_leaves_the_store() {
     assert!(config::load_config(ctx.as_ref()).session_marks.is_empty());
     let _ = std::fs::remove_dir_all(&ctx.root);
 }
+
+#[test]
+fn a_later_switch_keeps_the_earlier_watch_from_touching_its_mark() {
+    let app = tmp_ctx("supersede");
+    let platform = "test-supersede";
+    let a = supersede_watch(platform);
+    mark_after_switch(app.as_ref(), platform, "a", SessionState::Expired).unwrap();
+
+    // A's watch sees the sign-in screen, then B's switch starts and B signs in.
+    let mut reads = 0;
+    let verdict = a.watch(
+        20,
+        || {
+            reads += 1;
+            if reads == 1 {
+                return WatchStep::NotSignedIn;
+            }
+            let _b = supersede_watch(platform);
+            WatchStep::SignedIn
+        },
+        || {},
+    );
+    assert_eq!(verdict, WatchVerdict::Unknown, "B's answer is dropped");
+    assert_eq!(reads, 2, "the watch stops once superseded");
+    assert!(!a.is_current());
+
+    // Even a verdict A reached on its own is not written once B started.
+    a.apply(app.as_ref(), "a", WatchVerdict::SignedIn).unwrap();
+    a.apply(app.as_ref(), "b", WatchVerdict::Refused).unwrap();
+    let marks = config::load_config(app.as_ref()).session_marks;
+    assert!(marks[platform].contains_key("a"), "A keeps its mark");
+    assert!(!marks[platform].contains_key("b"));
+
+    // The current ticket still records.
+    let c = supersede_watch(platform);
+    assert!(c.is_current());
+    c.apply(app.as_ref(), "a", WatchVerdict::SignedIn).unwrap();
+    assert!(config::load_config(app.as_ref()).session_marks.is_empty());
+}
+
+#[test]
+fn storing_or_lifting_a_mark_moves_the_revision() {
+    let app = tmp_ctx("revision");
+    let start = revision();
+    mark_after_switch(app.as_ref(), "test-revision", "a", SessionState::Expired).unwrap();
+    let marked = revision();
+    assert!(marked > start);
+    clear_mark(app.as_ref(), "test-revision", "a").unwrap();
+    assert!(revision() > marked);
+}
+
+#[test]
+fn a_short_lived_caller_waits_for_its_running_watch() {
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let (done_tx, done) = std::sync::mpsc::channel::<()>();
+    spawn_tracked("test", move || {
+        let _ = released.recv();
+        let _ = done_tx.send(());
+    });
+    assert!(
+        !wait_for_watches(Duration::from_millis(20)),
+        "the limit bounds the wait"
+    );
+    release.send(()).unwrap();
+    assert!(wait_for_watches(Duration::from_secs(10)));
+    assert!(done.try_recv().is_ok(), "the watch ran to its end");
+}
