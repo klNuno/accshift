@@ -17,19 +17,32 @@ export const ROOT = join(here, "..");
 export const PLUGIN_DIR = join(ROOT, "dev.mtsu.accshift.sdPlugin");
 const APP_ICONS = join(ROOT, "..", "..", "crates", "accshift-egui", "icons");
 
-export async function buildPlugin() {
-  mkdirSync(join(PLUGIN_DIR, "bin"), { recursive: true });
+/**
+ * Bundles the Node entry point into `<pluginDir>/bin/plugin.js`, the file
+ * the manifest's CodePath names. The SDK's `ws` dependency is CommonJS and
+ * calls `require("events")`; an ESM bundle has no `require`, so the banner
+ * gives it one.
+ */
+export async function bundleEntry(pluginDir = PLUGIN_DIR) {
+  mkdirSync(join(pluginDir, "bin"), { recursive: true });
   await build({
     entryPoints: [join(ROOT, "src", "plugin.js")],
-    outfile: join(PLUGIN_DIR, "bin", "plugin.js"),
+    outfile: join(pluginDir, "bin", "plugin.js"),
     bundle: true,
     platform: "node",
     format: "esm",
     target: "node24",
+    banner: {
+      js: 'import { createRequire as __accshiftCreateRequire } from "node:module";\nconst require = __accshiftCreateRequire(import.meta.url);',
+    },
     legalComments: "inline",
     logLevel: "warning",
   });
-  writeFileSync(join(PLUGIN_DIR, "bin", "package.json"), '{ "type": "module" }\n');
+  writeFileSync(join(pluginDir, "bin", "package.json"), '{ "type": "module" }\n');
+}
+
+export async function buildPlugin() {
+  await bundleEntry(PLUGIN_DIR);
 
   await build({
     entryPoints: [join(ROOT, "src", "inspector.js")],

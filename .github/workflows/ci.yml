@@ -92,6 +92,11 @@ jobs:
       - name: Bundle script tests
         run: node --test crates/accshift-egui/bundle/linux-deps.test.mjs
 
+      # esbuild and the Stream Deck SDK: the start test bundles the plugin
+      # and runs it against a fake Stream Deck.
+      - name: Install the Stream Deck plugin dependencies
+        run: corepack pnpm --dir integrations/streamdeck install --frozen-lockfile
+
       - name: Stream Deck plugin tests
         working-directory: integrations/streamdeck
         run: node --test "test/*.test.mjs"
