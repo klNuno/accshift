@@ -315,7 +315,7 @@ impl PlatformAdapter {
             ),
             AdapterKind::Riot => {
                 let profile = self.state().riot_profiles.get(&account.id).cloned();
-                riot::riot_context_menu_actions(account, profile.as_ref())
+                riot::riot_context_menu_actions(account, profile.as_ref(), ctx.current_account_id)
             }
             AdapterKind::Roblox => roblox::roblox_context_menu_actions(account),
             AdapterKind::Generic(config) => {
@@ -372,6 +372,10 @@ impl PlatformAdapter {
                     to_steam_id,
                     &games,
                 ))
+            }
+            SubmenuLoader::RiotInstalledGames { profile_id } => {
+                let games = backend.riot_get_installed_games()?;
+                Ok(riot::installed_games_submenu(profile_id, &games))
             }
         }
     }
@@ -466,6 +470,22 @@ impl PlatformAdapter {
                     "riot.capturedSession",
                     [("profile", display_name.as_str())],
                 )));
+                outcome.push(TaskEffect::RefreshAccounts);
+                Ok(())
+            }
+            PlatformTask::RiotRunGame {
+                profile_id,
+                product_id,
+            } => {
+                if let Err(error) =
+                    riot::switch_profile_and_launch_game(backend, profile_id, product_id)
+                {
+                    let Some(toast) = riot::switch_error_toast(&error.message) else {
+                        return Err(error);
+                    };
+                    outcome.push(TaskEffect::Toast(toast));
+                    return Ok(());
+                }
                 outcome.push(TaskEffect::RefreshAccounts);
                 Ok(())
             }
@@ -670,6 +690,7 @@ impl PlatformAdapter {
         match self.kind {
             AdapterKind::Steam => steam::switch_error_toast(message),
             AdapterKind::Roblox => roblox::switch_error_toast(message),
+            AdapterKind::Riot => riot::switch_error_toast(message),
             _ => None,
         }
     }
