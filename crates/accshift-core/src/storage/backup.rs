@@ -6,20 +6,24 @@
 //! It never carries what only means something on this PC: saved sessions and
 //! snapshots (encrypted for this machine), the PIN and its hash, the analytics
 //! id and the launcher paths (both live in the portable config, which is not
-//! read here), the profile and ban caches (rebuilt from the network), and the
-//! `startWithSystem` flag, which mirrors an OS registration.
+//! read here), the profile and ban caches (rebuilt from the network), the
+//! `startWithSystem` flag, which mirrors an OS registration, and the
+//! `cliEnabled` permission, which each PC grants on its own.
 //!
 //! A restore reads and checks the whole file first: a newer format, a file of
-//! another kind or one that does not parse is refused before anything is
-//! written. It then copies the current files to
+//! another kind, one that does not parse or one whose settings are not an
+//! object is refused before anything is written. It then copies the current
+//! files and their `.bak` recovery copies to
 //! `user/backups/pre-restore-<timestamp>/`, writes each store atomically and
 //! puts the files it already replaced back when a later write fails. Stores
-//! are replaced; themes and descriptors are added or overwritten by id and
+//! are replaced, bar the settings fields of this PC, which are never removed
+//! or replaced; themes and descriptors are added or overwritten by id and
 //! never deleted. Account ids the file names are kept as they are, whether or
 //! not the account exists on this PC.
 
 #[allow(unused_imports)]
 use super::*;
+use serde_json::Map;
 
 /// What the `kind` field of a backup file says.
 pub const BACKUP_KIND: &str = "accshift-backup";
@@ -39,8 +43,9 @@ pub const BACKUP_STORES: [&str; 8] = [
 ];
 
 /// Settings fields that belong to this PC: never exported, and kept from the
-/// current settings on restore.
-pub const LOCAL_SETTINGS_FIELDS: [&str; 3] = ["pinEnabled", "pinHash", "startWithSystem"];
+/// current settings on restore, whatever the file says.
+pub const LOCAL_SETTINGS_FIELDS: [&str; 4] =
+    ["pinEnabled", "pinHash", "startWithSystem", "cliEnabled"];
 
 /// A backup file as written to disk.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -155,11 +160,12 @@ pub fn build_backup(app: &dyn AppContext, created_at: u64) -> Result<BackupFile,
     let mut stores = BTreeMap::new();
     for id in BACKUP_STORES {
         let path = client_store_path(app, id)?;
-        let value = read_json_if_exists::<Value>(&path)?.unwrap_or(Value::Null);
+        let value = read_json_if_exists::<Value>(&path)?;
         let value = if id == STORE_SETTINGS {
-            portable_settings(value)
+            // Never written yet: the defaults, which a restore can apply.
+            portable_settings(value.unwrap_or_else(|| Value::Object(Map::new())))
         } else {
-            value
+            value.unwrap_or(Value::Null)
         };
         stores.insert(id.to_string(), value);
     }
@@ -210,6 +216,14 @@ pub fn read_backup(path: &Path) -> Result<BackupFile, String> {
     }
     let backup: BackupFile = serde_json::from_value(head)
         .map_err(|e| format!("{} is not a readable backup: {e}", path.display()))?;
+    if let Some(settings) = backup.stores.get(STORE_SETTINGS) {
+        if !settings.is_object() {
+            return Err(format!(
+                "{} holds settings that are not an object",
+                path.display()
+            ));
+        }
+    }
     if let Some(id) = backup
         .themes
         .keys()
@@ -269,8 +283,32 @@ struct PlannedWrite {
     /// `None` removes the file.
     next: Option<Vec<u8>>,
     previous: Option<Vec<u8>>,
-    /// Where the copy of `previous` goes under the pre-restore folder.
+    /// The `.bak` recovery copy next to `path` and its bytes: the store the
+    /// app reads when the primary is missing or corrupt.
+    bak_path: PathBuf,
+    previous_bak: Option<Vec<u8>>,
+    /// Where the copy of `previous` goes under the pre-restore folder; the
+    /// one of `previous_bak` goes next to it.
     copy_as: PathBuf,
+}
+
+impl PlannedWrite {
+    fn new(path: PathBuf, next: Option<Vec<u8>>, copy_as: PathBuf) -> Result<Self, String> {
+        let bak_path = backup_path(&path);
+        let previous_bak = if bak_path == path {
+            None
+        } else {
+            read_previous(&bak_path)?
+        };
+        Ok(Self {
+            previous: read_previous(&path)?,
+            path,
+            next,
+            bak_path,
+            previous_bak,
+            copy_as,
+        })
+    }
 }
 
 fn encode(value: &Value) -> Result<Vec<u8>, String> {
@@ -285,18 +323,18 @@ fn read_previous(path: &Path) -> Result<Option<Vec<u8>>, String> {
     }
 }
 
-/// The restored settings: the file's, with this PC's
-/// [`LOCAL_SETTINGS_FIELDS`] taken from the current settings.
-fn merged_settings(restored: &Value, current: Option<&Value>) -> Value {
-    let mut restored = portable_settings(restored.clone());
-    if let (Value::Object(map), Some(Value::Object(current))) = (&mut restored, current) {
-        for key in LOCAL_SETTINGS_FIELDS {
-            if let Some(value) = current.get(key) {
-                map.insert(key.to_string(), value.clone());
-            }
+/// The restored settings: the file's object, with this PC's
+/// [`LOCAL_SETTINGS_FIELDS`] taken from the current settings. A field the
+/// current settings lack stays absent, so it keeps its default here.
+fn merged_settings(restored: &Map<String, Value>, current: Option<&Value>) -> Value {
+    let mut map = restored.clone();
+    for key in LOCAL_SETTINGS_FIELDS {
+        map.remove(key);
+        if let Some(value) = current.and_then(|c| c.get(key)) {
+            map.insert(key.to_string(), value.clone());
         }
     }
-    restored
+    Value::Object(map)
 }
 
 /// Every write the restore of `backup` makes, with what each replaces.
@@ -307,24 +345,26 @@ fn plan_restore(app: &dyn AppContext, backup: &BackupFile) -> Result<Vec<Planned
             continue;
         };
         let path = client_store_path(app, id)?;
-        let previous = read_previous(&path)?;
-        let next = if value.is_null() {
-            None
-        } else if id == STORE_SETTINGS {
-            // The PIN must survive: a current settings file that cannot be
-            // read refuses the restore rather than drop the lock.
+        let next = if id == STORE_SETTINGS {
+            // The PIN must survive: settings that are not an object were
+            // refused by read_backup, and a current settings file that
+            // cannot be read refuses the restore rather than drop the lock.
+            let Some(restored) = value.as_object() else {
+                return Err("the backup holds settings that are not an object".into());
+            };
             let current = read_json_if_exists::<Value>(&path)?;
-            Some(encode(&merged_settings(value, current.as_ref()))?)
+            Some(encode(&merged_settings(restored, current.as_ref()))?)
+        } else if value.is_null() {
+            None
         } else {
             Some(encode(value)?)
         };
         let name = path.file_name().map(PathBuf::from).unwrap_or_default();
-        plan.push(PlannedWrite {
-            copy_as: PathBuf::from("user").join(name),
+        plan.push(PlannedWrite::new(
             path,
             next,
-            previous,
-        });
+            PathBuf::from("user").join(name),
+        )?);
     }
     let dirs = [
         ("themes", themes_dir(app)?, &backup.themes),
@@ -340,13 +380,11 @@ fn plan_restore(app: &dyn AppContext, backup: &BackupFile) -> Result<Vec<Planned
             if folder == "descriptors" && crate::platforms::is_shipped(id) {
                 continue;
             }
-            let path = dir.join(format!("{id}.json"));
-            plan.push(PlannedWrite {
-                previous: read_previous(&path)?,
-                next: Some(encode(value)?),
-                copy_as: PathBuf::from(folder).join(format!("{id}.json")),
-                path,
-            });
+            plan.push(PlannedWrite::new(
+                dir.join(format!("{id}.json")),
+                Some(encode(value)?),
+                PathBuf::from(folder).join(format!("{id}.json")),
+            )?);
         }
     }
     Ok(plan)
@@ -371,6 +409,10 @@ fn put_back(written: &[&PlannedWrite]) {
             Some(bytes) => write_bytes_atomic(&write.path, bytes),
             None => fs::remove_file(&write.path).map_err(|e| e.to_string()),
         };
+        // Written last: the atomic write above drops a stale .bak.
+        if let Some(bytes) = &write.previous_bak {
+            let _ = fs::write(&write.bak_path, bytes);
+        }
     }
 }
 
@@ -395,6 +437,10 @@ pub fn restore_backup_at(
     for write in &plan {
         if let Some(bytes) = &write.previous {
             write_bytes_atomic(&copy_dir.join(&write.copy_as), bytes)?;
+        }
+        if let Some(bytes) = &write.previous_bak {
+            let copy = copy_dir.join(&write.copy_as).with_extension("bak");
+            write_bytes_atomic(&copy, bytes)?;
         }
     }
 
@@ -464,7 +510,7 @@ mod tests {
         let stores = [
             (
                 STORE_SETTINGS,
-                json!({"language": "fr", "themeId": "midnight", "pinEnabled": true, "pinHash": HASH, "startWithSystem": true}),
+                json!({"language": "fr", "themeId": "midnight", "pinEnabled": true, "pinHash": HASH, "startWithSystem": true, "cliEnabled": true}),
             ),
             (
                 STORE_FOLDERS,
@@ -576,6 +622,7 @@ mod tests {
             "pinHash",
             "pinEnabled",
             "startWithSystem",
+            "cliEnabled",
             "0123456789abcdef",
             "SESSION-SECRET",
             "INSTALL-ID-123",
@@ -708,6 +755,143 @@ mod tests {
         assert_eq!(
             store(&to, STORE_ACCOUNT_CARD_COLORS).unwrap()["765"],
             "#ff0000"
+        );
+    }
+
+    /// A destination with a real PIN, its hash, and the CLI turned off.
+    fn locked_destination(tag: &str) -> (Ctx, String) {
+        let to = ctx(tag);
+        let hash = crate::pin::hash_pin_code("4321").unwrap();
+        save_client_store(
+            &to,
+            STORE_SETTINGS,
+            &json!({"language": "en", "pinEnabled": true, "pinHash": hash, "startWithSystem": true, "cliEnabled": false}),
+        )
+        .unwrap();
+        (to, hash)
+    }
+
+    /// A backup file whose settings store is `settings`.
+    fn file_with_settings(dir: &Path, settings: Value) -> PathBuf {
+        let file = dir.join(format!("settings-{}.json", settings.to_string().len()));
+        let body = json!({
+            "kind": BACKUP_KIND, "format": 1, "createdAt": 1, "appVersion": "2.0.0",
+            "stores": {(STORE_SETTINGS): settings, (STORE_VIEW_MODE): "list"}
+        });
+        fs::write(&file, serde_json::to_vec(&body).unwrap()).unwrap();
+        file
+    }
+
+    #[test]
+    fn null_or_non_object_settings_are_refused_before_any_write_and_the_pin_stays() {
+        let (to, hash) = locked_destination("bad-settings");
+        let bak = backup_path(&client_store_path(&to, STORE_SETTINGS).unwrap());
+        fs::write(&bak, br#"{"pinEnabled":true}"#).unwrap();
+        let before = tree(&to.0.join("config"));
+        for settings in [Value::Null, json!([]), json!("x"), json!(3)] {
+            let file = file_with_settings(&to.0, settings.clone());
+            assert!(preview_backup(&file).is_err(), "{settings}");
+            let error = restore_backup(&to, &file).unwrap_err();
+            assert!(error.contains("not an object"), "{settings}: {error}");
+            assert_eq!(tree(&to.0.join("config")), before, "{settings}");
+            assert_eq!(
+                crate::pin::read_pin_lock(&to),
+                crate::pin::PinLock::On(hash.clone())
+            );
+        }
+    }
+
+    #[test]
+    fn empty_settings_restore_the_defaults_and_keep_every_local_field() {
+        let (to, hash) = locked_destination("empty-settings");
+        let file = file_with_settings(&to.0, json!({}));
+        restore_backup(&to, &file).unwrap();
+        let settings = store(&to, STORE_SETTINGS).unwrap();
+        assert_eq!(
+            settings,
+            json!({"pinEnabled": true, "pinHash": hash.clone(), "startWithSystem": true, "cliEnabled": false})
+        );
+        assert_eq!(
+            crate::pin::read_pin_lock(&to),
+            crate::pin::PinLock::On(hash)
+        );
+    }
+
+    #[test]
+    fn a_restore_never_turns_on_the_cli_this_pc_turned_off() {
+        for incoming in [
+            json!({"language": "fr", "cliEnabled": true}),
+            json!({"language": "fr"}),
+        ] {
+            let (to, _) = locked_destination("cli");
+            let file = file_with_settings(&to.0, incoming.clone());
+            restore_backup(&to, &file).unwrap();
+            let settings = store(&to, STORE_SETTINGS).unwrap();
+            assert_eq!(settings["language"], "fr");
+            assert_eq!(settings["cliEnabled"], false, "{incoming}");
+        }
+        // A PC that never wrote the flag keeps its default (allowed), even
+        // when the file says off: the flag is this PC's alone.
+        let to = ctx("cli-unset");
+        let file = file_with_settings(&to.0, json!({"cliEnabled": false, "language": "fr"}));
+        restore_backup(&to, &file).unwrap();
+        let settings = store(&to, STORE_SETTINGS).unwrap();
+        assert!(settings.get("cliEnabled").is_none(), "{settings}");
+    }
+
+    #[test]
+    fn a_fresh_install_exports_settings_another_pc_can_restore() {
+        let from = ctx("fresh-from");
+        let file = from.0.join("b.json");
+        export_backup(&from, &file).unwrap();
+        assert!(preview_backup(&file).unwrap().has_settings);
+        let (to, hash) = locked_destination("fresh-to");
+        restore_backup(&to, &file).unwrap();
+        assert_eq!(
+            crate::pin::read_pin_lock(&to),
+            crate::pin::PinLock::On(hash)
+        );
+    }
+
+    #[test]
+    fn the_pre_restore_copy_holds_the_bak_recovery_files() {
+        let from = ctx("bak-from");
+        seed(&from);
+        let file = from.0.join("b.json");
+        export_backup(&from, &file).unwrap();
+
+        let to = ctx("bak-to");
+        let notes = client_store_path(&to, STORE_ACCOUNT_CARD_NOTES).unwrap();
+        let colors = client_store_path(&to, STORE_ACCOUNT_CARD_COLORS).unwrap();
+        fs::create_dir_all(notes.parent().unwrap()).unwrap();
+        // Notes: the primary is missing, the app reads the .bak.
+        fs::write(backup_path(&notes), br#"{"42":"recovered note"}"#).unwrap();
+        // Colors: the primary is corrupt, the app reads the .bak.
+        fs::write(&colors, b"{\"42\":").unwrap();
+        fs::write(backup_path(&colors), br##"{"42":"#123456"}"##).unwrap();
+        assert_eq!(
+            store(&to, STORE_ACCOUNT_CARD_NOTES),
+            Some(json!({"42": "recovered note"}))
+        );
+
+        let report = restore_backup_at(&to, &file, 1_791_000_000).unwrap();
+        let dir = PathBuf::from(&report.pre_restore_dir).join("user");
+        assert_eq!(
+            fs::read(dir.join("account-card-notes.bak")).unwrap(),
+            br#"{"42":"recovered note"}"#
+        );
+        assert!(!dir.join("account-card-notes.json").exists());
+        assert_eq!(
+            fs::read(dir.join("account-card-colors.json")).unwrap(),
+            b"{\"42\":"
+        );
+        assert_eq!(
+            fs::read(dir.join("account-card-colors.bak")).unwrap(),
+            br##"{"42":"#123456"}"##
+        );
+        assert_eq!(
+            store(&to, STORE_ACCOUNT_CARD_NOTES),
+            Some(json!({"765": "main account"}))
         );
     }
 
