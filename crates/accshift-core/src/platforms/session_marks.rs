@@ -12,7 +12,7 @@ use crate::context::AppContext;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Condvar, Mutex, MutexGuard, OnceLock};
+use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// Bumped by every mark this process stores or lifts, so the app can reread
@@ -253,46 +253,78 @@ pub fn apply_verdict(
     }
 }
 
-/// The watch generation of each platform. Taking a new ticket supersedes the
-/// running watch of that platform: its later reads and its verdict are
-/// dropped, so account B's sign-in never clears account A's mark.
-fn watch_epochs() -> MutexGuard<'static, BTreeMap<String, u64>> {
-    static EPOCHS: OnceLock<Mutex<BTreeMap<String, u64>>> = OnceLock::new();
-    EPOCHS
-        .get_or_init(|| Mutex::new(BTreeMap::new()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+/// Where each platform's watch generation lives: one small file beside the
+/// operation lock, shared by every accshift process (GUI and CLI), so a CLI
+/// switch supersedes a watch the GUI started and the reverse.
+fn epochs_path(app: &dyn AppContext) -> Result<std::path::PathBuf, String> {
+    Ok(app
+        .app_local_data_dir()?
+        .join("state")
+        .join("session-watch.json"))
+}
+
+/// Missing or unreadable reads as no generation yet.
+fn read_epochs(app: &dyn AppContext) -> BTreeMap<String, u64> {
+    epochs_path(app)
+        .ok()
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+const EPOCH_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Runs `job` under the cross-process write lock the config writes and the
+/// launcher operations take (nested when this thread already holds it).
+fn with_operation_lock<T>(
+    app: &dyn AppContext,
+    job: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let _lock =
+        crate::lock::acquire_for_write(app, EPOCH_LOCK_TIMEOUT).map_err(|e| e.to_string())?;
+    job()
 }
 
 /// One operation's claim on a platform's launcher.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WatchTicket {
     platform: String,
+    /// 0: the claim could not be stored; such a ticket never records.
     epoch: u64,
 }
 
 /// Starts a switch, setup, capture or forget on `platform`: any watch still
-/// running there stops counting. Call it before the launcher is touched.
-pub fn supersede_watch(platform: &str) -> WatchTicket {
-    let mut epochs = watch_epochs();
-    let epoch = epochs.entry(platform.to_string()).or_default();
-    *epoch += 1;
+/// running there, in this process or another, stops counting. Call it before
+/// the launcher is touched and before the config the operation saves is
+/// read. A generation that cannot be stored gives a ticket that records
+/// nothing.
+pub fn supersede_watch(app: &dyn AppContext, platform: &str) -> WatchTicket {
+    let epoch = with_operation_lock(app, || {
+        let mut epochs = read_epochs(app);
+        let epoch = epochs.entry(platform.to_string()).or_default();
+        *epoch += 1;
+        let epoch = *epoch;
+        crate::storage::write_json_atomic(&epochs_path(app)?, &epochs)?;
+        Ok(epoch)
+    })
+    .unwrap_or(0);
     WatchTicket {
         platform: platform.to_string(),
-        epoch: *epoch,
+        epoch,
     }
 }
 
 impl WatchTicket {
-    /// No later operation took the platform over.
-    pub fn is_current(&self) -> bool {
-        watch_epochs().get(&self.platform) == Some(&self.epoch)
+    /// No later operation took the platform over, in any process.
+    pub fn is_current(&self, app: &dyn AppContext) -> bool {
+        self.epoch != 0 && read_epochs(app).get(&self.platform) == Some(&self.epoch)
     }
 
     /// [`watch_after_switch`] that stops once superseded. The check follows
     /// each read: a read that saw the next operation's account is dropped.
     pub fn watch(
         &self,
+        app: &dyn AppContext,
         attempts: usize,
         mut read: impl FnMut() -> WatchStep,
         wait: impl FnMut(),
@@ -301,7 +333,7 @@ impl WatchTicket {
             attempts,
             || {
                 let step = read();
-                if self.is_current() {
+                if self.is_current(app) {
                     step
                 } else {
                     WatchStep::Superseded
@@ -311,17 +343,37 @@ impl WatchTicket {
         )
     }
 
-    /// [`apply_verdict`] for this ticket's account, unless superseded.
+    /// [`apply_verdict`] for this ticket's account, unless superseded. The
+    /// check and the write share one hold of the operation lock, the lock
+    /// [`supersede_watch`] takes: a newer operation lands wholly before
+    /// (the verdict is dropped) or wholly after (it sees the write).
     pub fn apply(
         &self,
         app: &dyn AppContext,
         account_id: &str,
         verdict: WatchVerdict,
     ) -> Result<(), String> {
-        if !self.is_current() {
+        self.apply_with(app, account_id, verdict, || {})
+    }
+
+    /// [`Self::apply`] with a hook between the check and the write (tests).
+    fn apply_with(
+        &self,
+        app: &dyn AppContext,
+        account_id: &str,
+        verdict: WatchVerdict,
+        before_write: impl FnOnce(),
+    ) -> Result<(), String> {
+        if verdict == WatchVerdict::Unknown {
             return Ok(());
         }
-        apply_verdict(app, &self.platform, account_id, verdict)
+        with_operation_lock(app, || {
+            if !self.is_current(app) {
+                return Ok(());
+            }
+            before_write();
+            apply_verdict(app, &self.platform, account_id, verdict)
+        })
     }
 }
 
@@ -349,6 +401,13 @@ impl Drop for RunningWatch {
         *count = count.saturating_sub(1);
         ended.notify_all();
     }
+}
+
+/// Whether a watch of this process is still running, so the UI keeps
+/// waking to land its verdict.
+pub fn watches_running() -> bool {
+    let (count, _) = running_watches();
+    *count.lock().unwrap_or_else(|p| p.into_inner()) > 0
 }
 
 /// Waits until every watch of this process ended, at most `limit`. A

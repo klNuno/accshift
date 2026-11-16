@@ -13,15 +13,16 @@ pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Stri
     ensure_no_riot_game_running("switching Riot account")?;
     let client_path = resolve_riot_client_path(&app_handle)?;
     let target_id = normalize_profile_id(&profile_id)?;
+    // Taken before the client is touched and the config read: a watch still
+    // reading for the previous target would read this switch's account, and
+    // the config saved below already holds whatever that watch stored.
+    let watch = crate::platforms::session_marks::supersede_watch(&app_handle, "riot");
     let current_live_identity = detect_live_identity().ok();
     let mut cfg = config::load_config(&app_handle);
     cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
     if find_profile(&cfg, &target_id).is_none() {
         return Err("Riot profile not found".into());
     }
-    // Taken before the client is touched: a watch still reading for the
-    // previous target would read this switch's account.
-    let watch = crate::platforms::session_marks::supersede_watch("riot");
 
     // Riot Client only flushes its in-memory session tokens to
     // RiotGamesPrivateSettings.yaml on a graceful quit. Quit (and wait for the
@@ -100,6 +101,7 @@ fn watch_session_after_switch(
 ) {
     crate::platforms::session_marks::spawn_watch("riot", move || {
         let verdict = watch.watch(
+            app_handle.as_ref(),
             SESSION_WATCH_ATTEMPTS,
             || read_rso_session_type().watch_step(),
             || std::thread::sleep(SESSION_WATCH_INTERVAL),

@@ -29,7 +29,7 @@ pub fn begin_account_setup(
     force_kill: bool,
 ) -> Result<SetupStatus, PlatformError> {
     let steam_path = resolve_steam_path(&app_handle)?;
-    crate::platforms::session_marks::supersede_watch("steam");
+    crate::platforms::session_marks::supersede_watch(&app_handle, "steam");
     let known_accounts = accounts::get_accounts(&steam_path)
         .map_err(|e| log_platform_failure(&app_handle, "steam.begin_account_setup", e.into()))?;
     let known_account_ids = known_accounts

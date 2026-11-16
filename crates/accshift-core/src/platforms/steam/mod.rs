@@ -159,6 +159,7 @@ fn watch_session_after_switch(
     let account_name = account_name.to_string();
     crate::platforms::session_marks::spawn_watch("steam", move || {
         let verdict = watch.watch(
+            app_handle.as_ref(),
             SESSION_WATCH_ATTEMPTS,
             || {
                 let now = session::read_entry(&steam_path, &account_name);
@@ -550,7 +551,7 @@ impl PlatformService for SteamService {
         }
         // Taken before Steam is touched: a watch still reading for the
         // previous target would read this switch's login.
-        let watch = crate::platforms::session_marks::supersede_watch("steam");
+        let watch = crate::platforms::session_marks::supersede_watch(&app, "steam");
 
         let result = if mode.is_empty() {
             accounts::switch_account(
@@ -616,7 +617,7 @@ impl PlatformService for SteamService {
     fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), PlatformError> {
         validate_steam_id(account_id)?;
         let steam_path = resolve_steam_path(&app)?;
-        crate::platforms::session_marks::supersede_watch("steam");
+        crate::platforms::session_marks::supersede_watch(&app, "steam");
         accounts::forget_account(&steam_path, account_id)
             .map_err(|e| log_platform_failure(&app, "steam.forget_account", e.into()))
     }

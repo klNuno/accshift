@@ -250,26 +250,27 @@ fn a_verdict_marks_clears_or_leaves_the_store() {
 fn a_later_switch_keeps_the_earlier_watch_from_touching_its_mark() {
     let app = tmp_ctx("supersede");
     let platform = "test-supersede";
-    let a = supersede_watch(platform);
+    let a = supersede_watch(app.as_ref(), platform);
     mark_after_switch(app.as_ref(), platform, "a", SessionState::Expired).unwrap();
 
     // A's watch sees the sign-in screen, then B's switch starts and B signs in.
     let mut reads = 0;
     let verdict = a.watch(
+        app.as_ref(),
         20,
         || {
             reads += 1;
             if reads == 1 {
                 return WatchStep::NotSignedIn;
             }
-            let _b = supersede_watch(platform);
+            let _b = supersede_watch(app.as_ref(), platform);
             WatchStep::SignedIn
         },
         || {},
     );
     assert_eq!(verdict, WatchVerdict::Unknown, "B's answer is dropped");
     assert_eq!(reads, 2, "the watch stops once superseded");
-    assert!(!a.is_current());
+    assert!(!a.is_current(app.as_ref()));
 
     // Even a verdict A reached on its own is not written once B started.
     a.apply(app.as_ref(), "a", WatchVerdict::SignedIn).unwrap();
@@ -279,10 +280,71 @@ fn a_later_switch_keeps_the_earlier_watch_from_touching_its_mark() {
     assert!(!marks[platform].contains_key("b"));
 
     // The current ticket still records.
-    let c = supersede_watch(platform);
-    assert!(c.is_current());
+    let c = supersede_watch(app.as_ref(), platform);
+    assert!(c.is_current(app.as_ref()));
     c.apply(app.as_ref(), "a", WatchVerdict::SignedIn).unwrap();
     assert!(config::load_config(app.as_ref()).session_marks.is_empty());
+}
+
+#[test]
+fn a_switch_from_another_process_supersedes_the_watch() {
+    // Two contexts on one data folder and nothing shared in memory: what the
+    // GUI and the CLI see.
+    let gui = tmp_ctx("cross-process");
+    let cli = Arc::new(TempCtx {
+        root: gui.root.clone(),
+    });
+    let platform = "test-cross-process";
+    mark_after_switch(gui.as_ref(), platform, "a", SessionState::Expired).unwrap();
+    let a = supersede_watch(gui.as_ref(), platform);
+    assert!(a.is_current(gui.as_ref()));
+
+    // The CLI switches to B; B signs in.
+    let b = supersede_watch(cli.as_ref(), platform);
+    assert!(b.is_current(cli.as_ref()));
+    assert!(!a.is_current(gui.as_ref()));
+    let verdict = a.watch(gui.as_ref(), 5, || WatchStep::SignedIn, || {});
+    assert_eq!(verdict, WatchVerdict::Unknown);
+    a.apply(gui.as_ref(), "a", WatchVerdict::SignedIn).unwrap();
+    assert!(
+        config::load_config(gui.as_ref()).session_marks[platform].contains_key("a"),
+        "B's sign-in never clears A's mark"
+    );
+}
+
+#[test]
+fn a_capture_between_the_check_and_the_write_is_never_overwritten() {
+    let app = tmp_ctx("check-write");
+    let platform = "test-check-write";
+    let old = supersede_watch(app.as_ref(), platform);
+    let (done_tx, done) = std::sync::mpsc::channel::<()>();
+    let capture = {
+        let app = app.clone();
+        move || {
+            // A new capture: takes the platform over, then lifts the mark of
+            // the fresh session.
+            let _new = supersede_watch(app.as_ref(), platform);
+            clear_mark(app.as_ref(), platform, "a").unwrap();
+            let _ = done_tx.send(());
+        }
+    };
+    let mut capture = Some(capture);
+    let mut handle = None;
+    old.apply_with(app.as_ref(), "a", WatchVerdict::Refused, || {
+        // The old watch passed its check: the capture starts now and gets
+        // the time to finish if nothing holds it back.
+        handle = Some(std::thread::spawn(capture.take().unwrap()));
+        let _ = done.recv_timeout(Duration::from_millis(300));
+    })
+    .unwrap();
+    handle.unwrap().join().unwrap();
+    assert!(
+        !config::load_config(app.as_ref())
+            .session_marks
+            .get(platform)
+            .is_some_and(|marks| marks.contains_key("a")),
+        "the capture's clear lands after the obsolete write"
+    );
 }
 
 #[test]
