@@ -11,7 +11,7 @@ use accshift_app::{Backend, BackendError, BackendResult};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 pub struct Scripted {
@@ -19,6 +19,7 @@ pub struct Scripted {
     log: Mutex<Vec<(String, String)>>,
     script: Mutex<BTreeMap<String, VecDeque<Result<Value, String>>>>,
     marks_revision: AtomicU64,
+    watches_running: AtomicBool,
 }
 
 impl Scripted {
@@ -28,6 +29,7 @@ impl Scripted {
             log: Mutex::new(Vec::new()),
             script: Mutex::new(BTreeMap::new()),
             marks_revision: AtomicU64::new(0),
+            watches_running: AtomicBool::new(false),
         }
     }
 
@@ -35,6 +37,11 @@ impl Scripted {
     /// changed after the switch returned.
     pub fn bump_marks_revision(&self) {
         self.marks_revision.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// A post-switch session watch runs (or ended), whatever started it.
+    pub fn set_watches_running(&self, running: bool) {
+        self.watches_running.store(running, Ordering::SeqCst);
     }
 
     /// Queues one answer for `command`: `Ok(json)` or `Err(message)`.
@@ -568,6 +575,9 @@ impl Backend for Scripted {
     }
     fn session_marks_revision(&self) -> u64 {
         self.marks_revision.load(Ordering::SeqCst)
+    }
+    fn session_watches_running(&self) -> bool {
+        self.watches_running.load(Ordering::SeqCst)
     }
     fn session_marks(
         &self,

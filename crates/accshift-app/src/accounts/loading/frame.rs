@@ -47,6 +47,9 @@ impl AccountLoading {
     /// reread the marks off the UI thread, then land them on the warnings
     /// the tab already shows (Steam keeps its cached ban warnings).
     fn poll_session_marks(&mut self, ctx: &mut LoadingContext<'_>) {
+        // Read every frame: a watch started by any switch (account, persona,
+        // deep link) keeps the UI waking until it ends.
+        self.marks_watch_running = ctx.jobs.backend().session_watches_running();
         if let Some((platform_id, mut pending)) = self.marks_reload.take() {
             if let Poll::Waiting = pending.poll() {
                 self.marks_reload = Some((platform_id, pending));
@@ -58,12 +61,6 @@ impl AccountLoading {
                     self.loader.replace_warning_states(warnings);
                 }
             }
-        }
-        if self
-            .marks_follow_until
-            .is_some_and(|until| ctx.now >= until)
-        {
-            self.marks_follow_until = None;
         }
         let revision = ctx.jobs.backend().session_marks_revision();
         let changed = self
@@ -357,10 +354,6 @@ impl AccountLoading {
                     caches.profile_info(&adapter, backend, &account_id, &|| clock.now_ms())
                 });
                 self.switch_profiles.push((account, pending));
-            }
-            if outcome.succeeded && adapter.has_session_marks() {
-                // Its session watch ends later: keep waking to land it.
-                self.marks_follow_until = Some(ctx.now + MARKS_FOLLOW_WINDOW);
             }
             events.push(LoadingEvent::SwitchFinished {
                 account_id: ticket.account.id.clone(),

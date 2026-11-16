@@ -364,6 +364,9 @@ impl Backend for RealBackend {
     fn session_marks_revision(&self) -> u64 {
         accshift_core::platforms::session_marks::revision()
     }
+    fn session_watches_running(&self) -> bool {
+        accshift_core::platforms::session_marks::watches_running()
+    }
     fn riot_check_sessions(&self) -> BackendResult<Vec<String>> {
         riot::check_sessions(self)
     }

@@ -179,6 +179,12 @@ pub trait Backend: Send + Sync {
     fn session_marks_revision(&self) -> u64 {
         0
     }
+    /// A post-switch session watch still runs, whatever started the switch
+    /// (account, persona, deep link): the UI keeps waking to land its
+    /// verdict. Safe on the UI thread.
+    fn session_watches_running(&self) -> bool {
+        false
+    }
     fn roblox_add_account_by_cookie(&self, cookie: &str) -> BackendResult<RobloxAccount>;
     fn roblox_get_profile_info(&self, user_id: &str) -> BackendResult<RobloxProfileInfo>;
     /// User ids whose stored session is dead.

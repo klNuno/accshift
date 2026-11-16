@@ -208,6 +208,8 @@ fn a_watch_verdict_after_the_switch_landed_updates_the_badge_in_place() {
     h.load();
     let target = h.account("riot-3");
     assert!(h.with(|loading, ctx| loading.handle_account_switch(ctx, &target, false)));
+    // The real switch leaves its session watch running.
+    backend.set_watches_running(true);
     h.settle();
     assert_eq!(h.expired_ids(), vec![EXPIRED.to_string()]);
     // The switch landed: the UI keeps waking while the watch may still end.
@@ -223,6 +225,7 @@ fn a_watch_verdict_after_the_switch_landed_updates_the_badge_in_place() {
         Ok(json!([{ "accountId": "riot-3", "state": "expired" }])),
     );
     backend.bump_marks_revision();
+    backend.set_watches_running(false);
     h.settle();
     assert_eq!(backend.calls("session_marks").len(), checks + 1);
     assert_eq!(
@@ -242,4 +245,39 @@ fn a_watch_verdict_after_the_switch_landed_updates_the_badge_in_place() {
     // Nothing moved: no reread.
     h.settle();
     assert_eq!(backend.calls("session_marks").len(), checks + 2);
+}
+
+#[test]
+fn a_persona_switch_watch_wakes_the_idle_ui_and_lands_its_verdict() {
+    let backend = Arc::new(support::scripted("dev"));
+    let mut h = Harness::new(backend.clone());
+    h.load();
+    let checks = backend.calls("session_marks").len();
+    // A persona switch runs the adapter's switch on its own job, never
+    // through this loading: only its session watch is left running.
+    backend.set_watches_running(true);
+    let frame = h.with(|loading, ctx| loading.poll(ctx));
+    assert!(frame.is_empty());
+    let now = Instant::now();
+    let wake = h
+        .loading
+        .next_deadline(now)
+        .expect("a wake while the watch runs");
+    assert!(wake <= now + Duration::from_secs(1));
+
+    // About a minute later the watch stores the refusal and ends; the next
+    // timed wake is the only frame.
+    backend.push(
+        "session_marks",
+        Ok(json!([{ "accountId": "riot-3", "state": "expired" }])),
+    );
+    backend.bump_marks_revision();
+    backend.set_watches_running(false);
+    h.with(|loading, ctx| loading.poll(ctx));
+    h.settle();
+    assert_eq!(backend.calls("session_marks").len(), checks + 1);
+    assert_eq!(
+        h.expired_ids(),
+        vec!["riot-3".to_string(), EXPIRED.to_string()]
+    );
 }

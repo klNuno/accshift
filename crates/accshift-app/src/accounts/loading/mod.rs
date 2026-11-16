@@ -42,10 +42,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// How long after a switch the UI keeps waking to see a session watch's
-/// verdict: the longest watch (Steam, about 2 min) with margin.
-const MARKS_FOLLOW_WINDOW: Duration = Duration::from_secs(150);
-/// How often it wakes for that inside the window.
+/// How often the UI wakes while a session watch runs, to land its verdict.
 const MARKS_FOLLOW_TICK: Duration = Duration::from_secs(1);
 
 /// Implemented and supported on this OS.
@@ -188,8 +185,8 @@ pub struct AccountLoading {
     notices: Vec<Toast>,
     /// The backend's session marks revision this loading last saw.
     marks_seen: Option<u64>,
-    /// Until when a switch's session watch may still store a verdict.
-    marks_follow_until: Option<Instant>,
+    /// A session watch was running at the last poll.
+    marks_watch_running: bool,
     /// A reread of the session marks a watch changed, by platform.
     marks_reload: Option<(String, Pending<()>)>,
 }
@@ -212,7 +209,7 @@ impl AccountLoading {
             ban_checking_toast: false,
             notices: Vec::new(),
             marks_seen: None,
-            marks_follow_until: None,
+            marks_watch_running: false,
             marks_reload: None,
         }
     }
@@ -252,10 +249,7 @@ impl AccountLoading {
             || !self.deferred_runs.is_empty()
             || self.loader.avatars().has_pending())
         .then_some(now);
-        let marks = self
-            .marks_follow_until
-            .filter(|until| now < *until)
-            .map(|_| now + MARKS_FOLLOW_TICK);
+        let marks = self.marks_watch_running.then(|| now + MARKS_FOLLOW_TICK);
         [soon, self.priming.next_deadline(), marks]
             .into_iter()
             .flatten()
