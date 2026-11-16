@@ -477,7 +477,15 @@ impl PlatformAdapter {
                 profile_id,
                 product_id,
             } => {
-                riot::switch_profile_and_launch_game(backend, profile_id, product_id)?;
+                if let Err(error) =
+                    riot::switch_profile_and_launch_game(backend, profile_id, product_id)
+                {
+                    let Some(toast) = riot::run_error_toast(&error.message) else {
+                        return Err(error);
+                    };
+                    outcome.push(TaskEffect::Toast(toast));
+                    return Ok(());
+                }
                 outcome.push(TaskEffect::RefreshAccounts);
                 Ok(())
             }

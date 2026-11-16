@@ -230,6 +230,29 @@ fn a_failed_run_toasts_the_error_logs_it_and_does_not_reload() {
 }
 
 #[test]
+fn an_unconfirmed_account_toasts_its_own_text_and_does_not_reload() {
+    let backend = support::scripted("dev");
+    let adapter = PlatformAdapter::shipped("riot").unwrap();
+    // The core's wording when it kept a session it could not attribute.
+    backend.push(
+        "riot_switch_profile_and_launch_game",
+        Err("Riot account not confirmed: Riot Client was opened without the game. Launch the game again once Riot Client shows the signed-in account."),
+    );
+    let outcome = adapter.run_task(&run_task("riot-2", "valorant"), &backend, &settings());
+    assert_eq!(
+        outcome.effects,
+        vec![TaskEffect::Toast(Text::key("riot.accountNotConfirmed"))]
+    );
+    assert!(
+        backend
+            .calls("log_app_event")
+            .last()
+            .is_some_and(|log| log.contains("Switch+launch failed")),
+        "the refusal was not logged"
+    );
+}
+
+#[test]
 fn the_mock_refuses_the_run_behind_its_switch_failure() {
     let mock = support::mock("dev");
     mock.fail(

@@ -167,6 +167,18 @@ pub fn riot_profile_info(profile: Option<&RiotProfile>) -> Option<PlatformProfil
 /// The toast for a Riot tab with no profiles.
 pub const NO_ACCOUNTS_TOAST_KEY: &str = "toast.noRiotProfilesFound";
 
+/// Start of the backend's refusal to start a game on a session whose account
+/// it could not confirm (`RIOT_ACCOUNT_UNCONFIRMED` in the core).
+pub const ACCOUNT_UNCONFIRMED_PATTERN: &str = "riot account not confirmed";
+
+/// The dedicated toast for a failed game launch, `None` for the generic one.
+pub fn run_error_toast(message: &str) -> Option<Text> {
+    message
+        .to_lowercase()
+        .starts_with(ACCOUNT_UNCONFIRMED_PATTERN)
+        .then(|| Text::key("riot.accountNotConfirmed"))
+}
+
 /// The "switch and run a game" entry of a ready profile: its submenu lists
 /// the installed games once open.
 fn run_game_item(account: &PlatformAccount, is_current: bool) -> MenuAction {

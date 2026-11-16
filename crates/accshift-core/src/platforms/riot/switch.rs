@@ -72,6 +72,7 @@ pub(super) fn run_switch(
         install_dir,
         current_live_identity.as_ref(),
     );
+    let work = work.and_then(|outcome| game_allowed_after(outcome, product_id));
     // Relaunch even when the work failed, so a failed switch never leaves the
     // client closed.
     let launched_product = product_after_switch(work.is_ok(), product_id);
@@ -98,20 +99,49 @@ pub(super) fn run_switch(
     result
 }
 
+/// Start of the error a game launch returns when the account signed in to the
+/// client could not be confirmed. The app matches it to show its own toast.
+pub(super) const RIOT_ACCOUNT_UNCONFIRMED: &str = "Riot account not confirmed";
+
+/// What `switch_after_quit` left live.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SwitchWork {
+    /// The target's session is live: restored, or kept and refreshed.
+    Switched,
+    /// The target is the current profile and the live session has tokens, but
+    /// no identity check could say whose they are (client closed, local API
+    /// down). Neither the live files nor the snapshot were touched.
+    KeptUnconfirmed,
+}
+
+/// A game only starts on a session known to be the target's. A plain switch
+/// to the current profile still reopens the client on its kept session.
+pub(super) fn game_allowed_after(work: SwitchWork, product_id: &str) -> Result<(), String> {
+    if work == SwitchWork::KeptUnconfirmed && product_id != RIOT_CLIENT_PRODUCT {
+        return Err(format!(
+            "{RIOT_ACCOUNT_UNCONFIRMED}: Riot Client was opened without the game. Launch the game again once Riot Client shows the signed-in account."
+        ));
+    }
+    Ok(())
+}
+
 /// Everything a switch does while the client is closed: back the outgoing
 /// session up into its own profile, restore the target and save the config.
 ///
 /// Re-selecting the current profile (a game launch on it, a click on its
-/// card) keeps the live session when the identity check does not prove it is
-/// another account's: it is the profile's own, with tokens newer than its
-/// snapshot, so the snapshot is refreshed from it instead of restored over it.
+/// card) never restores its older snapshot over a live session with tokens:
+/// - the identity check confirms the profile's account: the snapshot is
+///   refreshed from the live session, which is kept;
+/// - no identity is available: both are left as they are, since the live
+///   tokens may be the profile's newer ones or another account's;
+/// - another account is proven signed in: the profile's snapshot is restored.
 pub(super) fn switch_after_quit(
     app_handle: &dyn AppContext,
     cfg: &mut config::AppConfig,
     target_id: &str,
     install_dir: Option<&Path>,
     live_identity: Option<&RiotDetectedIdentity>,
-) -> Result<(), String> {
+) -> Result<SwitchWork, String> {
     let current_id = cfg.riot.current_profile_id.clone();
     let mut kept_live = false;
     if !current_id.trim().is_empty() {
@@ -138,6 +168,18 @@ pub(super) fn switch_after_quit(
                 "Skipped the outgoing backup: the signed-in Riot account is not this profile's",
                 format!("profile={}", crate::platforms::redact_id(&current_id)),
             ),
+            OutgoingBackup::Backup {
+                adopt_identity: false,
+            } if current_id == target_id => {
+                log_platform_info(
+                    app_handle,
+                    "riot.switch_profile",
+                    "Kept the live session unchanged: the signed-in Riot account could not be confirmed",
+                    format!("profile={}", crate::platforms::redact_id(target_id)),
+                );
+                config::save_config(app_handle, cfg)?;
+                return Ok(SwitchWork::KeptUnconfirmed);
+            }
             OutgoingBackup::Backup { adopt_identity } => {
                 backup_live_snapshot(app_handle, &current_id, install_dir)?;
                 update_profile_state(
@@ -157,7 +199,7 @@ pub(super) fn switch_after_quit(
         log_platform_info(
             app_handle,
             "riot.switch_profile",
-            "Kept the live session: the target is the current profile",
+            "Kept the live session: the target is the current profile's signed-in account",
             format!("profile={}", crate::platforms::redact_id(target_id)),
         );
         true
@@ -201,5 +243,6 @@ pub(super) fn switch_after_quit(
         Some(Some(crate::platforms::now_unix_ms())),
         None,
     )?;
-    config::save_config(app_handle, cfg)
+    config::save_config(app_handle, cfg)?;
+    Ok(SwitchWork::Switched)
 }

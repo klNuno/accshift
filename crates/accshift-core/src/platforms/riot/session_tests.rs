@@ -777,30 +777,48 @@ impl Drop for SwitchFixture {
 
 #[test]
 fn reselecting_the_current_profile_never_restores_its_older_snapshot() {
-    // A game launched on the current profile with the client closed: the
-    // client rotated its tokens (T1) after the last snapshot (T0).
+    // A game launched on the current profile A with the client closed. The
+    // live tokens (T1) may be A's, rotated after its snapshot (T0), or those
+    // of an account B signed in inside the client: nothing can tell them
+    // apart, so neither side is overwritten and the game does not start.
     let id = "riot-profile-current";
     let fx = SwitchFixture::new("reselect-closed", id);
     let mut cfg = config_with(vec![profile(id, "ready", "puuid-a")], id);
+    let before = find_profile(&cfg, id).unwrap().clone();
 
-    switch_after_quit(&fx.ctx, &mut cfg, id, Some(&fx.install), None).unwrap();
+    let work = switch_after_quit(&fx.ctx, &mut cfg, id, Some(&fx.install), None).unwrap();
 
+    assert_eq!(work, SwitchWork::KeptUnconfirmed);
     assert!(
         fx.live().contains("token-t1"),
         "T0 replaced T1: {}",
         fx.live()
     );
     assert!(
-        fx.snapshot(id).contains("token-t1"),
-        "snapshot not refreshed"
+        fx.snapshot(id).contains("token-t0"),
+        "an unconfirmed session overwrote the profile's snapshot"
     );
     let saved = find_profile(&cfg, id).unwrap();
-    assert_eq!(saved.snapshot_state, "ready");
-    assert_eq!(
-        saved.account_puuid, "puuid-a",
-        "an unknown identity renamed it"
-    );
+    assert_eq!(saved.snapshot_state, before.snapshot_state);
+    assert_eq!(saved.account_puuid, "puuid-a");
+    assert_eq!(saved.last_captured_at, before.last_captured_at);
     assert_eq!(cfg.riot.current_profile_id, id);
+    assert!(game_allowed_after(work, "valorant").is_err());
+}
+
+#[test]
+fn an_unconfirmed_account_never_starts_the_game() {
+    let refused = game_allowed_after(SwitchWork::KeptUnconfirmed, "valorant")
+        .expect_err("a game started on an unconfirmed account");
+    assert!(refused.starts_with(RIOT_ACCOUNT_UNCONFIRMED), "{refused}");
+    // The refusal fails the work, so the bare client starts instead.
+    assert_eq!(product_after_switch(false, "valorant"), RIOT_CLIENT_PRODUCT);
+    // A plain switch reopens the client on the kept session.
+    assert_eq!(
+        game_allowed_after(SwitchWork::KeptUnconfirmed, RIOT_CLIENT_PRODUCT),
+        Ok(())
+    );
+    assert_eq!(game_allowed_after(SwitchWork::Switched, "valorant"), Ok(()));
 }
 
 #[test]
@@ -809,7 +827,7 @@ fn reselecting_the_current_profile_with_its_account_signed_in_keeps_the_session(
     let fx = SwitchFixture::new("reselect-match", id);
     let mut cfg = config_with(vec![profile(id, "ready", "puuid-a")], id);
 
-    switch_after_quit(
+    let work = switch_after_quit(
         &fx.ctx,
         &mut cfg,
         id,
@@ -818,8 +836,10 @@ fn reselecting_the_current_profile_with_its_account_signed_in_keeps_the_session(
     )
     .unwrap();
 
+    assert_eq!(work, SwitchWork::Switched);
     assert!(fx.live().contains("token-t1"));
     assert!(fx.snapshot(id).contains("token-t1"));
+    assert_eq!(find_profile(&cfg, id).unwrap().snapshot_state, "ready");
 }
 
 #[test]
@@ -831,7 +851,7 @@ fn reselecting_the_current_profile_over_another_account_restores_the_profile() {
     let fx = SwitchFixture::new("reselect-mismatch", id);
     let mut cfg = config_with(vec![profile(id, "ready", "puuid-a")], id);
 
-    switch_after_quit(
+    let work = switch_after_quit(
         &fx.ctx,
         &mut cfg,
         id,
@@ -840,6 +860,7 @@ fn reselecting_the_current_profile_over_another_account_restores_the_profile() {
     )
     .unwrap();
 
+    assert_eq!(work, SwitchWork::Switched);
     assert!(fx.live().contains("token-t0"), "{}", fx.live());
     assert!(fx.snapshot(id).contains("token-t0"));
 }

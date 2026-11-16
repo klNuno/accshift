@@ -364,6 +364,7 @@
   "riot.switchAndRunPick": "切换并运行游戏",
   "riot.runPick": "运行游戏",
   "riot.noInstalledGames": "未找到已安装的 Riot 游戏",
+  "riot.accountNotConfirmed": "Riot Client 已打开，但未启动游戏：accshift 无法确认已登录的账户。请在 Riot Client 显示该账户后再次启动游戏。",
   "riot.capturedSession": "已捕获 {profile} 的会话",
   "riot.setupPendingLabel": "Riot 账号",
   "riot.setupWaitingForClient": "等待 Riot 客户端...",

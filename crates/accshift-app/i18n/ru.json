@@ -364,6 +364,7 @@
   "riot.switchAndRunPick": "Сменить + запустить игру",
   "riot.runPick": "Запустить игру",
   "riot.noInstalledGames": "Установленные игры Riot не найдены",
+  "riot.accountNotConfirmed": "Riot Client открыт без игры: accshift не смог подтвердить вошедший аккаунт. Запустите игру снова, когда Riot Client его покажет.",
   "riot.capturedSession": "Сессия для {profile} захвачена",
   "riot.setupPendingLabel": "Аккаунт Riot",
   "riot.setupWaitingForClient": "Ожидание Riot Client...",
