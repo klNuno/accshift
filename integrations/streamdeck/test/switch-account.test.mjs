@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { Accshift, openCommand } from "../src/accshift.js";
+import { Accshift, nodeIo, openCommand } from "../src/accshift.js";
 import {
   accountOptions,
   platformOptions,
@@ -14,7 +14,7 @@ const envelope = (command, data) =>
   JSON.stringify({ schema: "accshift.v1", ok: true, command, data });
 
 /** A machine with accshift installed (or not), every command recorded. */
-function fakeIo({ installed = true, platform = "win32", replies = {}, openExit = 0 } = {}) {
+function fakeIo({ installed = true, platform = "win32", replies = {}, openExit = 0, openReply = null } = {}) {
   const calls = [];
   return {
     calls,
@@ -35,6 +35,7 @@ function fakeIo({ installed = true, platform = "win32", replies = {}, openExit =
         const reply = replies[args[0]];
         if (reply) return reply;
       }
+      if (openReply) return openReply;
       return { stdout: "", stderr: openExit ? "no application can open the URL" : "", exitCode: openExit };
     },
   };
@@ -130,6 +131,72 @@ describe("key press", () => {
   test("open commands per OS", () => {
     assert.deepEqual(openCommand("darwin", "accshift://x"), { file: "open", args: ["accshift://x"] });
     assert.deepEqual(openCommand("linux", "accshift://x"), { file: "xdg-open", args: ["accshift://x"] });
+  });
+});
+
+describe("failure logs", () => {
+  const EMAIL = { platform: "battle-net", accountId: "private@example.test", accountName: "Main" };
+  const LINK = "accshift://switch/battle-net/private%40example.test";
+  const leaksAccount = /private|example.test/;
+
+  test("open failing with the link in stderr logs a category and the exit code only", async () => {
+    const io = fakeIo({
+      platform: "darwin",
+      openReply: { stdout: "", stderr: `LSOpenURLsWithRole() failed for ${LINK}`, exitCode: 1 },
+    });
+    const log = fakeLog();
+    const key = fakeKey();
+    await controller(io, log).action.keyDown(key, EMAIL);
+    assert.deepEqual(key.events, [["alert"]]);
+    assert.deepEqual(log.lines, [
+      ["error", "could not open the accshift switch link for battle-net: exit, exit code 1"],
+    ]);
+  });
+
+  test("an opener killed by the timeout logs `timeout`, not Node's message with the link", async () => {
+    // A real process killed by the real timeout: Node's error message repeats
+    // the command line, so it carries the link and the email.
+    const killed = await nodeIo({ timeoutMs: 200 }).run(process.execPath, [
+      "-e",
+      "setTimeout(() => {}, 10000)",
+      LINK,
+    ]);
+    assert.equal(killed.spawnError?.killed, true);
+    assert.match(killed.spawnError.message, /private%40example.test/);
+
+    const io = fakeIo({ openReply: { ...killed, stderr: LINK } });
+    const log = fakeLog();
+    const key = fakeKey();
+    await controller(io, log).action.keyDown(key, EMAIL);
+    assert.deepEqual(key.events, [["alert"]]);
+    assert.deepEqual(log.lines, [
+      ["error", "could not open the accshift switch link for battle-net: timeout, exit code none"],
+    ]);
+    assert.doesNotMatch(log.lines[0][1], leaksAccount);
+  });
+
+  test("a CLI that cannot start logs its error code, not its message", async () => {
+    const spawnError = Object.assign(new Error(`spawn EACCES ${LINK}`), { code: "EACCES" });
+    const io = fakeIo({ replies: { platforms: { stdout: "", stderr: "", exitCode: null, spawnError } } });
+    const log = fakeLog();
+    await controller(io, log).action.message({ event: "getPlatforms" }, async () => {});
+    assert.deepEqual(log.lines, [
+      ["error", `accshift CLI could not start (${CLI}): EACCES, exit code none`],
+    ]);
+    assert.doesNotMatch(log.lines[0][1], leaksAccount);
+  });
+
+  test("a CLI error envelope is logged by its code and exit code", async () => {
+    const failed = JSON.stringify({
+      schema: "accshift.v1",
+      ok: false,
+      command: "list",
+      error: { code: "internal", message: `could not read ${EMAIL.accountId}` },
+    });
+    const io = fakeIo({ replies: { list: { stdout: "", stderr: failed, exitCode: 1 } } });
+    const log = fakeLog();
+    await controller(io, log).action.message({ event: "getAccounts", platform: "battle-net" }, async () => {});
+    assert.deepEqual(log.lines, [["error", "accshift CLI getAccounts failed: internal, exit code 1"]]);
   });
 });
 

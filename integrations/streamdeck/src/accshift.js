@@ -26,14 +26,31 @@ export function openCommand(platform, url) {
   return { file: "xdg-open", args: [url] };
 }
 
+/**
+ * What went wrong with a process, for the log: a category and the exit code,
+ * never its message or output. Node's error messages repeat the command line
+ * and stderr may echo it, and a switch link carries the account id (an email
+ * for Battle.net).
+ * @param {{ exitCode?: number | null, spawnError?: (Error & { code?: unknown, killed?: boolean }) | null }} out
+ * @returns {string}
+ */
+export function processFailure(out) {
+  const error = out.spawnError;
+  let category = "exit";
+  if (error?.killed) category = "timeout";
+  else if (typeof error?.code === "string" && /^[A-Z][A-Z0-9_]*$/.test(error.code)) category = error.code;
+  else if (error) category = "spawn_error";
+  return `${category}, exit code ${out.exitCode ?? "none"}`;
+}
+
 /** The real side effects. */
-export function nodeIo() {
+export function nodeIo({ timeoutMs = CLI_TIMEOUT_MS } = {}) {
   const run = (file, args) =>
     new Promise((resolve) => {
       execFile(
         file,
         args,
-        { timeout: CLI_TIMEOUT_MS, windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
+        { timeout: timeoutMs, windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
         (error, stdout, stderr) => {
           const exitCode =
             error && typeof error.code === "number" ? error.code : error ? null : 0;
@@ -92,8 +109,9 @@ export class Accshift {
     const cli = await this.cli();
     const out = await this.io.run(cli, [...args, "--json"]);
     if (out.spawnError) {
-      this.log.error(`accshift CLI could not start (${cli}): ${out.spawnError.message}`);
-      throw new CliError("not_installed", out.spawnError.message);
+      const failure = processFailure(out);
+      this.log.error(`accshift CLI could not start (${cli}): ${failure}`);
+      throw new CliError("not_installed", failure);
     }
     return out;
   }
@@ -121,9 +139,9 @@ export class Accshift {
     if (out.spawnError || (out.exitCode !== 0 && this.io.platform !== "win32")) {
       // rundll32 reports nothing useful; `open` and `xdg-open` exit non-zero
       // when no app answers the scheme.
-      const reason = out.spawnError?.message || out.stderr.trim() || `exit ${out.exitCode}`;
-      this.log.error(`could not open the accshift switch link for ${settings.platform}: ${reason}`);
-      throw new CliError("open_failed", reason);
+      const failure = processFailure(out);
+      this.log.error(`could not open the accshift switch link for ${settings.platform}: ${failure}`);
+      throw new CliError("open_failed", failure);
     }
     this.log.info(`switch link opened for ${settings.platform}`);
     return url;

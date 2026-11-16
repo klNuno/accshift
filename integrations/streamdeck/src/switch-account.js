@@ -66,7 +66,12 @@ export class SwitchAccount {
     } catch (error) {
       const key = errorKey(error);
       if (key === "error.failed") {
-        this.accshift.log.error(`accshift CLI ${event} failed: ${error?.message ?? error}`);
+        // A CliError's message comes from the CLI process: log its code only.
+        const reason =
+          error instanceof CliError
+            ? `${error.code}, exit code ${error.exitCode ?? "none"}`
+            : (error?.message ?? error);
+        this.accshift.log.error(`accshift CLI ${event} failed: ${reason}`);
       }
       await send({
         event: "error",
