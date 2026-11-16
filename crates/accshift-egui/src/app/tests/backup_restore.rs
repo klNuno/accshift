@@ -630,6 +630,24 @@ fn a_restore_whose_themes_cannot_be_read_keeps_its_custom_theme() {
         app.booted().unwrap().stores.settings().theme_id
     );
     assert_ne!(note(&app), "restored note");
+    // The read back retries at its pace, on a job: a list that keeps
+    // failing neither spins nor holds the frame.
+    let reads = mock.seen("list_custom_themes");
+    let started = Instant::now();
+    for _ in 0..40 {
+        let frame_started = Instant::now();
+        frame(&mut app, &ctx);
+        assert!(frame_started.elapsed() < std::time::Duration::from_millis(500));
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let retries = mock.seen("list_custom_themes") - reads;
+    // READ_BACK_RETRY is 50 ms under test.
+    let paced = started.elapsed().as_millis() / 50 + 1;
+    assert!(
+        retries as u128 <= paced,
+        "{retries} reads in {paced} retry slots"
+    );
+    assert!(app.backup.holds_writes());
     assert!(mock.fail("list_custom_themes", None));
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     assert_eq!(app.booted().unwrap().stores.settings().theme_id, "mine");

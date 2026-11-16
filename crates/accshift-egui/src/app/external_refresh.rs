@@ -87,7 +87,9 @@ impl AppModel {
                             };
                             let themes = if themes_needed {
                                 // A missing themes directory is harmless,
-                                // as loadCustomThemes was in the web shell.
+                                // as loadCustomThemes was in the web shell;
+                                // a theme file that cannot be read keeps the
+                                // themes already loaded.
                                 backend.list_custom_themes().ok().map(|themes| {
                                     themes
                                         .iter()

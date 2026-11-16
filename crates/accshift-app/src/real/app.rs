@@ -37,8 +37,9 @@ pub(super) fn boot_payload(c: &dyn AppContext) -> BackendResult<BootPayload> {
     let migration = migrate_legacy_config(c);
     let (storage_snapshot, recovered_stores) =
         storage::load_client_storage_snapshot_reporting(c).map_err(PlatformError::from)?;
-    // A missing themes dir is normal on a first run.
-    let custom_themes = themes::list_custom_themes(c).unwrap_or_default();
+    // A missing themes dir is normal on a first run; a theme file that
+    // cannot be read is left out, as the boot has nothing to fall back on.
+    let custom_themes = themes::list_readable_custom_themes(c);
     // A rejected descriptor is reported, never fatal.
     let user_platforms = platforms::reload_user_platforms(c);
     Ok(BootPayload {

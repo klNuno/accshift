@@ -1,7 +1,7 @@
 use crate::context::AppContext;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// A theme file, one per theme, in the user's config directory.
 ///
@@ -64,37 +64,70 @@ fn is_usable(theme: &CustomTheme) -> bool {
         && theme.tokens.is_object()
 }
 
+/// The custom themes: every `.json` file of the themes folder that holds a
+/// usable theme, sorted by name. A file that is not one (not JSON, the wrong
+/// shape, an unsafe id, too big), a folder and a file gone since the folder
+/// was listed are left out. A file that is there but cannot be read fails
+/// the list, so no caller takes a partial read for every theme: the restore
+/// would adopt settings that name a theme it did not see.
 pub fn list_custom_themes(app: &dyn AppContext) -> Result<Vec<CustomTheme>, String> {
+    read_custom_themes(app, true)
+}
+
+/// [`list_custom_themes`] for the boot, which has nothing to fall back on: a
+/// file that cannot be read is left out rather than every theme with it.
+pub fn list_readable_custom_themes(app: &dyn AppContext) -> Vec<CustomTheme> {
+    read_custom_themes(app, false).unwrap_or_default()
+}
+
+fn read_custom_themes(app: &dyn AppContext, strict: bool) -> Result<Vec<CustomTheme>, String> {
     let dir = themes_dir(app)?;
-    if !dir.exists() {
-        return Ok(vec![]);
-    }
-    let entries =
-        fs::read_dir(&dir).map_err(|e| format!("Could not read themes directory: {e}"))?;
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => return Err(format!("Could not read themes directory: {e}")),
+    };
     let mut themes = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
+    for entry in entries {
+        let read = entry
+            .map_err(|e| format!("Could not read themes directory: {e}"))
+            .and_then(|entry| read_theme_file(&entry.path()));
+        match read {
+            Ok(Some(theme)) => themes.push(theme),
+            Ok(None) => {}
+            Err(error) if strict => return Err(error),
+            Err(_) => {}
         }
-        if entry.metadata().map(|m| m.len()).unwrap_or(0) > MAX_THEME_FILE_BYTES {
-            continue;
-        }
-        let data = match fs::read_to_string(&path) {
-            Ok(d) => d,
-            Err(_) => continue,
-        };
-        let theme: CustomTheme = match serde_json::from_str(&data) {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-        if !is_usable(&theme) {
-            continue;
-        }
-        themes.push(theme);
     }
     themes.sort_by_cached_key(|t| t.name.to_lowercase());
     Ok(themes)
+}
+
+/// The theme `path` holds; `None` when it is not a usable theme file or is
+/// gone, an error when it is there and cannot be read.
+fn read_theme_file(path: &Path) -> Result<Option<CustomTheme>, String> {
+    if path.extension().and_then(|e| e.to_str()) != Some("json") {
+        return Ok(None);
+    }
+    let unreadable =
+        |e: std::io::Error| format!("Could not read theme file {}: {e}", path.display());
+    let meta = match fs::metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(unreadable(e)),
+    };
+    if !meta.is_file() || meta.len() > MAX_THEME_FILE_BYTES {
+        return Ok(None);
+    }
+    let data = match fs::read(path) {
+        Ok(data) => data,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(unreadable(e)),
+    };
+    let Ok(theme) = serde_json::from_slice::<CustomTheme>(&data) else {
+        return Ok(None);
+    };
+    Ok(is_usable(&theme).then_some(theme))
 }
 
 pub fn save_custom_theme(app: &dyn AppContext, theme: &CustomTheme) -> Result<(), String> {
@@ -287,6 +320,37 @@ mod tests {
         };
         save_custom_theme(&ctx, &theme).unwrap();
         assert_eq!(list_custom_themes(&ctx).unwrap().len(), 1);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn listing_fails_on_a_theme_file_it_cannot_read_and_the_boot_leaves_it_out() {
+        let root = unique_test_root("list-unreadable");
+        let ctx = TestCtx { root: root.clone() };
+        let dir = themes_dir(&ctx).unwrap();
+        fs::create_dir_all(&dir).unwrap();
+        let theme = |id: &str| {
+            format!(
+                r#"{{"schemaVersion":2,"id":"{id}","name":"{id}","colorScheme":"dark","tokens":{{}}}}"#
+            )
+        };
+        fs::write(dir.join("other.json"), theme("other")).unwrap();
+        // Not a theme: left out, never an error.
+        fs::write(dir.join("broken.json"), b"{ not json").unwrap();
+        fs::write(dir.join("latin1.json"), b"{\"id\":\"\xe9\"}").unwrap();
+        fs::create_dir_all(dir.join("folder.json")).unwrap();
+        let ids = |themes: Vec<CustomTheme>| themes.into_iter().map(|t| t.id).collect::<Vec<_>>();
+        {
+            let _held =
+                crate::test_fs::Unreadable::new(&dir.join("mine.json"), theme("mine").as_bytes());
+            let error = list_custom_themes(&ctx)
+                .map(ids)
+                .expect_err("THEME_FILE_LOCK: a partial list read as complete");
+            assert!(error.contains("mine.json"), "{error}");
+            assert_eq!(ids(list_readable_custom_themes(&ctx)), ["other"]);
+        }
+        assert_eq!(ids(list_custom_themes(&ctx).unwrap()), ["mine", "other"]);
 
         let _ = fs::remove_dir_all(&root);
     }

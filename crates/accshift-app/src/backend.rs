@@ -191,6 +191,8 @@ pub trait Backend: Send + Sync {
 
     // ---------------------------------------------------------------- themes
 
+    /// Every usable theme file; an error when one that is there cannot be
+    /// read, so a partial list is never taken for the whole folder.
     fn list_custom_themes(&self) -> BackendResult<Vec<CustomTheme>>;
     fn save_custom_theme(&self, theme: &CustomTheme) -> BackendResult<()>;
     fn delete_custom_theme(&self, theme_id: &str) -> BackendResult<()>;
