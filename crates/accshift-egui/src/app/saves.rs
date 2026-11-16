@@ -3,6 +3,7 @@
 
 use std::time::Instant;
 
+use accshift_app::error::BackendError;
 use accshift_app::jobs::Poll;
 use egui::Context;
 
@@ -22,12 +23,13 @@ impl AppModel {
         };
         let mut first_error = None;
         for (id, pending) in self.saves.drain(..) {
-            if let Some(result) = pending.wait() {
-                if let Err(e) = &result {
-                    first_error.get_or_insert_with(|| e.message.clone());
-                }
-                b.stores.finish_save(id, &result);
+            let result = pending
+                .wait()
+                .unwrap_or_else(|| Err(BackendError::new("job panicked")));
+            if let Err(e) = &result {
+                first_error.get_or_insert_with(|| e.message.clone());
             }
+            b.stores.finish_save(id, &result);
         }
         for save in b.stores.take_all_saves() {
             let result = self
@@ -90,16 +92,18 @@ impl AppModel {
                 .run(move |backend| backend.save_client_storage_store(store_id, &save.value));
             self.saves.push((store_id, pending));
         }
-        self.saves.retain_mut(|(id, pending)| match pending.poll() {
-            Poll::Waiting => true,
-            Poll::Ready(result) => {
-                if let Err(error) = &result {
-                    self.backup.save_failed(error);
-                }
-                b.stores.finish_save(id, &result);
-                false
+        self.saves.retain_mut(|(id, pending)| {
+            let result = match pending.poll() {
+                Poll::Waiting => return true,
+                Poll::Ready(result) => result,
+                // A job that died is a failed write: its store is freed.
+                Poll::Gone => Err(BackendError::new("job panicked")),
+            };
+            if let Err(error) = &result {
+                self.backup.save_failed(error);
             }
-            Poll::Gone => false,
+            b.stores.finish_save(id, &result);
+            false
         });
     }
 }

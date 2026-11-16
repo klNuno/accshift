@@ -235,6 +235,29 @@ fn a_write_that_fails_before_the_restore_cancels_it() {
 }
 
 #[test]
+fn a_save_job_that_dies_cancels_the_restore_and_frees_its_store() {
+    let ctx = Context::default();
+    let (mut app, mock) = restore_app(&ctx);
+    frame(&mut app, &ctx);
+    // The note write is handed out, then its job panics before answering.
+    set_note(&mut app, "typed before");
+    let stores = &mut app.booted.as_mut().unwrap().stores;
+    let mut saves = stores.take_all_saves();
+    assert_eq!(saves.len(), 1);
+    let save = saves.pop().unwrap();
+    let job = app
+        .jobs
+        .run(|_| -> BackendResult<Option<String>> { panic!("the save job died") });
+    app.saves.push((save.store_id, job));
+
+    app.start_backup_restore("C:/b.json".into());
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert_eq!(mock.seen("backup_restore"), 0);
+    assert!(app.backup.card.error, "{}", app.backup.card.notice);
+    assert!(!app.booted().unwrap().stores.storage().has_unsaved());
+}
+
+#[test]
 fn the_backup_dialogs_are_titled_in_the_app_language() {
     use super::super::backup_flow::dialog_labels;
     let (title, all_files) = dialog_labels(Locale::Fr, "settings.backupImportDialog");

@@ -8,7 +8,10 @@
 //! debounced ones it hands out itself, for an external refresh and for the
 //! descriptor and theme writes counted by [`WriteGate`], wherever they were
 //! started. Meanwhile no new store write, descriptor or theme write and no
-//! external refresh starts. A write that failed there cancels the backup.
+//! external refresh starts. A store write that failed there cancels the
+//! backup: its edit is only in memory. A descriptor or theme write that
+//! failed does not: the app takes its result only on success, so the files
+//! still hold the setup it runs.
 //!
 //! The export then reads the files, all written. The restore replaces them,
 //! reloads the user descriptors and reads the stores and themes back. The
