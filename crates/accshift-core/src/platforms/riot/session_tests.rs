@@ -692,3 +692,154 @@ fn the_setup_poll_logs_only_when_its_view_changes() {
     };
     assert!(observation_changed(&mut last, &other_setup));
 }
+
+// -- Re-selecting the current profile keeps its live session -------------
+
+/// Points the live Riot files of this thread at `root` until dropped.
+struct LiveRoot;
+
+impl LiveRoot {
+    fn at(root: &Path) -> Self {
+        TEST_LIVE_ROOT.with(|live| *live.borrow_mut() = Some(root.to_path_buf()));
+        Self
+    }
+}
+
+impl Drop for LiveRoot {
+    fn drop(&mut self) {
+        TEST_LIVE_ROOT.with(|live| *live.borrow_mut() = None);
+    }
+}
+
+struct SwitchFixture {
+    root: PathBuf,
+    ctx: TempCtx,
+    install: PathBuf,
+    settings: PathBuf,
+    _live: LiveRoot,
+}
+
+impl SwitchFixture {
+    /// Profile `id` has a snapshot holding `token-t0`; the live session,
+    /// flushed by a client that is now closed, holds `token-t1`.
+    fn new(tag: &str, id: &str) -> Self {
+        let root = scratch(tag);
+        let live = LiveRoot::at(&root.join("live"));
+        let install = root.join("install");
+        let settings = live_path_for(&RIOT_SNAPSHOT_ITEMS[0], Some(&install))
+            .unwrap()
+            .unwrap();
+        assert!(settings.starts_with(&root), "{settings:?}");
+        let fx = Self {
+            ctx: TempCtx { root: root.clone() },
+            root,
+            install,
+            settings,
+            _live: live,
+        };
+        fx.write_live("token-t0");
+        backup_live_snapshot(&fx.ctx, id, Some(&fx.install)).unwrap();
+        fx.write_live("token-t1");
+        fx
+    }
+
+    fn write_live(&self, token: &str) {
+        fs::create_dir_all(self.settings.parent().unwrap()).unwrap();
+        fs::write(
+            &self.settings,
+            format!("private: {token}\nsessions: {{}}\n"),
+        )
+        .unwrap();
+    }
+
+    fn live(&self) -> String {
+        fs::read_to_string(&self.settings).unwrap()
+    }
+
+    fn snapshot(&self, id: &str) -> String {
+        let out = self.root.join("snapshot-check.yaml");
+        decrypted_copy_file(
+            &profile_snapshot_path(&self.ctx, id)
+                .unwrap()
+                .join("RiotGamesPrivateSettings.yaml"),
+            &out,
+        )
+        .unwrap();
+        fs::read_to_string(&out).unwrap()
+    }
+}
+
+impl Drop for SwitchFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+#[test]
+fn reselecting_the_current_profile_never_restores_its_older_snapshot() {
+    // A game launched on the current profile with the client closed: the
+    // client rotated its tokens (T1) after the last snapshot (T0).
+    let id = "riot-profile-current";
+    let fx = SwitchFixture::new("reselect-closed", id);
+    let mut cfg = config_with(vec![profile(id, "ready", "puuid-a")], id);
+
+    switch_after_quit(&fx.ctx, &mut cfg, id, Some(&fx.install), None).unwrap();
+
+    assert!(
+        fx.live().contains("token-t1"),
+        "T0 replaced T1: {}",
+        fx.live()
+    );
+    assert!(
+        fx.snapshot(id).contains("token-t1"),
+        "snapshot not refreshed"
+    );
+    let saved = find_profile(&cfg, id).unwrap();
+    assert_eq!(saved.snapshot_state, "ready");
+    assert_eq!(
+        saved.account_puuid, "puuid-a",
+        "an unknown identity renamed it"
+    );
+    assert_eq!(cfg.riot.current_profile_id, id);
+}
+
+#[test]
+fn reselecting_the_current_profile_with_its_account_signed_in_keeps_the_session() {
+    let id = "riot-profile-current";
+    let fx = SwitchFixture::new("reselect-match", id);
+    let mut cfg = config_with(vec![profile(id, "ready", "puuid-a")], id);
+
+    switch_after_quit(
+        &fx.ctx,
+        &mut cfg,
+        id,
+        Some(&fx.install),
+        Some(&live("puuid-a")),
+    )
+    .unwrap();
+
+    assert!(fx.live().contains("token-t1"));
+    assert!(fx.snapshot(id).contains("token-t1"));
+}
+
+#[test]
+fn reselecting_the_current_profile_over_another_account_restores_the_profile() {
+    // The live session is proven to be another account's: keeping it would
+    // open the game on that account, so the profile's snapshot comes back
+    // and the other account's session is not saved into it.
+    let id = "riot-profile-current";
+    let fx = SwitchFixture::new("reselect-mismatch", id);
+    let mut cfg = config_with(vec![profile(id, "ready", "puuid-a")], id);
+
+    switch_after_quit(
+        &fx.ctx,
+        &mut cfg,
+        id,
+        Some(&fx.install),
+        Some(&live("puuid-b")),
+    )
+    .unwrap();
+
+    assert!(fx.live().contains("token-t0"), "{}", fx.live());
+    assert!(fx.snapshot(id).contains("token-t0"));
+}

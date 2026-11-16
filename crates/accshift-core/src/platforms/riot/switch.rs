@@ -100,6 +100,11 @@ pub(super) fn run_switch(
 
 /// Everything a switch does while the client is closed: back the outgoing
 /// session up into its own profile, restore the target and save the config.
+///
+/// Re-selecting the current profile (a game launch on it, a click on its
+/// card) keeps the live session when the identity check does not prove it is
+/// another account's: it is the profile's own, with tokens newer than its
+/// snapshot, so the snapshot is refreshed from it instead of restored over it.
 pub(super) fn switch_after_quit(
     app_handle: &dyn AppContext,
     cfg: &mut config::AppConfig,
@@ -108,7 +113,8 @@ pub(super) fn switch_after_quit(
     live_identity: Option<&RiotDetectedIdentity>,
 ) -> Result<(), String> {
     let current_id = cfg.riot.current_profile_id.clone();
-    if !current_id.trim().is_empty() && current_id != target_id {
+    let mut kept_live = false;
+    if !current_id.trim().is_empty() {
         if !is_valid_profile_id(&current_id) {
             return Err("Invalid Riot profile id in config".into());
         }
@@ -142,11 +148,22 @@ pub(super) fn switch_after_quit(
                     None,
                     live_identity.filter(|_| adopt_identity),
                 )?;
+                kept_live = current_id == target_id;
             }
         }
     }
 
-    let restored = restore_live_snapshot(app_handle, target_id, install_dir)?;
+    let restored = if kept_live {
+        log_platform_info(
+            app_handle,
+            "riot.switch_profile",
+            "Kept the live session: the target is the current profile",
+            format!("profile={}", crate::platforms::redact_id(target_id)),
+        );
+        true
+    } else {
+        restore_live_snapshot(app_handle, target_id, install_dir)?
+    };
     if clear_live_for_target_without_snapshot(restored, &current_id, target_id) {
         // Without this, the client would reopen on the previous account and
         // the next capture would save that account into the target profile.
