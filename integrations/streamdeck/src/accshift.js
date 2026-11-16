@@ -35,12 +35,14 @@ export function openCommand(platform, url) {
  * @returns {string}
  */
 export function processFailure(out) {
-  const error = out.spawnError;
-  let category = "exit";
-  if (error?.killed) category = "timeout";
-  else if (typeof error?.code === "string" && /^[A-Z][A-Z0-9_]*$/.test(error.code)) category = error.code;
-  else if (error) category = "spawn_error";
-  return `${category}, exit code ${out.exitCode ?? "none"}`;
+  return `${failureCategory(out.spawnError)}, exit code ${out.exitCode ?? "none"}`;
+}
+
+/** `timeout`, Node's error code (`ENOENT`, `ERR_CHILD_PROCESS_STDIO_MAXBUFFER`), `spawn_error`, or `exit`. */
+function failureCategory(error) {
+  if (error?.killed) return "timeout";
+  if (typeof error?.code === "string" && /^[A-Z][A-Z0-9_]*$/.test(error.code)) return error.code;
+  return error ? "spawn_error" : "exit";
 }
 
 /** The real side effects. */
@@ -108,10 +110,15 @@ export class Accshift {
   async runJson(args) {
     const cli = await this.cli();
     const out = await this.io.run(cli, [...args, "--json"]);
-    if (out.spawnError) {
+    if (out.spawnError?.code === "ENOENT") {
       const failure = processFailure(out);
       this.log.error(`accshift CLI could not start (${cli}): ${failure}`);
       throw new CliError("not_installed", failure);
+    }
+    if (out.spawnError) {
+      // accshift is there: a timeout, an output past maxBuffer or a refused
+      // start fails with its category, which the caller logs.
+      throw new CliError(failureCategory(out.spawnError), processFailure(out), out.exitCode);
     }
     return out;
   }

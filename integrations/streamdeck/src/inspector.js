@@ -65,6 +65,7 @@ function requestPlatforms() {
 }
 
 function requestAccounts(platform) {
+  showError("");
   state.accounts = [];
   if (!platform) {
     fill($("account"), accountOptions(state.language, [], state.settings));
@@ -83,6 +84,9 @@ function onPluginMessage(payload) {
     fill($("account"), accountOptions(state.language, payload.items, state.settings));
   } else if (payload.event === "error") {
     showError(payload.message);
+    if (payload.request === "getPlatforms") {
+      fill($("platform"), platformOptions(state.language, [], state.settings.platform));
+    }
     fill($("account"), accountOptions(state.language, [], state.settings));
   }
 }

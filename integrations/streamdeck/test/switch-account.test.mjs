@@ -109,6 +109,25 @@ describe("key press", () => {
     assert.deepEqual(key.events.at(-1), ["title", "Alice"]);
   });
 
+  test("a key gone before the title comes back does not leave a rejection", async () => {
+    const key = fakeKey();
+    const { action, timers } = controller(fakeIo({ installed: false }), fakeLog());
+    await action.keyDown(key, SETTINGS);
+    key.setTitle = async () => {
+      throw new Error("the key is gone");
+    };
+    const rejections = [];
+    const onRejection = (reason) => rejections.push(reason);
+    process.on("unhandledRejection", onRejection);
+    try {
+      timers[0][0]();
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+    assert.deepEqual(rejections, []);
+  });
+
   test("a key without an account alerts and opens nothing", async () => {
     const io = fakeIo();
     const key = fakeKey();
@@ -180,10 +199,40 @@ describe("failure logs", () => {
     const io = fakeIo({ replies: { platforms: { stdout: "", stderr: "", exitCode: null, spawnError } } });
     const log = fakeLog();
     await controller(io, log).action.message({ event: "getPlatforms" }, async () => {});
-    assert.deepEqual(log.lines, [
-      ["error", `accshift CLI could not start (${CLI}): EACCES, exit code none`],
-    ]);
+    assert.deepEqual(log.lines, [["error", "accshift CLI getPlatforms failed: EACCES, exit code none"]]);
     assert.doesNotMatch(log.lines[0][1], leaksAccount);
+  });
+
+  test("a CLI missing at start is reported as not installed", async () => {
+    const spawnError = Object.assign(new Error(`spawn ${CLI} ENOENT`), { code: "ENOENT" });
+    const io = fakeIo({ replies: { platforms: { stdout: "", stderr: "", exitCode: null, spawnError } } });
+    const log = fakeLog();
+    const sent = [];
+    await controller(io, log).action.message({ event: "getPlatforms" }, async (p) => sent.push(p));
+    assert.match(sent[0].message, /accshift is not installed/);
+    assert.deepEqual(log.lines, [["error", `accshift CLI could not start (${CLI}): ENOENT, exit code none`]]);
+  });
+
+  test("a CLI past the timeout or the output limit is a failure, not a missing accshift", async () => {
+    // Real processes through the real limits.
+    const slow = await nodeIo({ timeoutMs: 200 }).run(process.execPath, ["-e", "setTimeout(() => {}, 10000)"]);
+    const loud = await nodeIo().run(process.execPath, [
+      "-e",
+      "process.stdout.write('x'.repeat(9 * 1024 * 1024))",
+    ]);
+    const cases = [
+      [slow, "timeout"],
+      [loud, "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"],
+    ];
+    for (const [reply, category] of cases) {
+      const io = fakeIo({ replies: { platforms: reply } });
+      const log = fakeLog();
+      const sent = [];
+      await controller(io, log).action.message({ event: "getPlatforms" }, async (p) => sent.push(p));
+      assert.equal(sent[0].event, "error");
+      assert.equal(sent[0].message, `accshift did not answer: ${category}, exit code none`);
+      assert.deepEqual(log.lines, [["error", `accshift CLI getPlatforms failed: ${category}, exit code none`]]);
+    }
   });
 
   test("a CLI error envelope is logged by its code and exit code", async () => {

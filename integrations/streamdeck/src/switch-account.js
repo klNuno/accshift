@@ -41,7 +41,8 @@ export class SwitchAccount {
       if (error instanceof CliError && error.code === "not_installed") {
         await action.setTitle(translate(this.language(), "key.notInstalled"));
         this.setTimeout(() => {
-          action.setTitle(settings.accountName ?? "");
+          // The key may be gone by now: a rejection here would end the plugin.
+          action.setTitle(settings.accountName ?? "").catch(() => {});
         }, NOTICE_MS);
       } else if (!(error instanceof CliError)) {
         this.accshift.log.error(`key press failed: ${error?.message ?? error}`);
