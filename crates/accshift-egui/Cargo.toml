@@ -87,6 +87,15 @@ softbuffer = { version = "0.4", optional = true, default-features = false, featu
   "wayland",
   "wayland-dlopen",
 ] }
+# Global shortcuts (window/hotkeys): `global-hotkey` (MIT or Apache-2.0)
+# grabs keys under X11; on Wayland the GlobalShortcuts portal goes over the
+# zbus 5 accshift-app already links.
+global-hotkey = "0.10"
+zbus = "5.9"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Global shortcuts (window/hotkeys): Carbon hotkeys through `global-hotkey`.
+global-hotkey = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 # The OS acrylic behind a transparent window: what Glass Dark uses in Tauri.

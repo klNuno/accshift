@@ -11,6 +11,7 @@ pub mod color;
 pub mod edges;
 #[cfg(windows)]
 pub mod frame;
+pub mod hotkeys;
 pub mod placement;
 #[cfg(all(debug_assertions, windows))]
 pub mod probe;
