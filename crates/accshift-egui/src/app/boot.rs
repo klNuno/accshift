@@ -306,7 +306,13 @@ impl AppModel {
         let mut registry = ThemeRegistry::new();
         registry.apply_custom_theme_payloads(&custom);
         let mut store_ctx = StoreContext::shipped();
-        store_ctx.platform_ids = platforms.iter().map(|p| p.id.clone()).collect();
+        // A descriptor still locked (the restart a restore asked for) keeps
+        // the platform the stored settings name until it reads.
+        store_ctx.platform_ids = platforms::store_ids(
+            &platforms,
+            payload.user_platforms.incomplete,
+            storage.get(accshift_app::storage::CLIENT_STORE_SETTINGS),
+        );
         store_ctx.theme_ids = registry.all_themes().into_iter().map(|t| t.id).collect();
         store_ctx.preferred_languages = preferred_languages();
         let mut stores = ClientStores::new(storage, store_ctx);

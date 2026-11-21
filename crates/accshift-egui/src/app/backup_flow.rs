@@ -227,9 +227,23 @@ enum Stage {
     /// The files may hold the restored setup while the memory still holds
     /// the old one, which must never be written. Only a restart leaves it.
     RestartNeeded {
+        why: RestartWhy,
         /// Why the last restart attempt failed.
         failed: Option<String>,
     },
+}
+
+/// What the files hold when a restart is needed, for the modal's text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RestartWhy {
+    /// The restore went through; this session could not load all of it.
+    Restored,
+    /// The restore job was lost once it ran: the files may hold the backup,
+    /// the old setup or some of each.
+    Unknown,
+    /// The restore failed and could not put every file back: `error` says
+    /// which ones, and where the copy of the old files is.
+    Incomplete { error: String },
 }
 
 /// The backup card's jobs and the boundary's stage.
@@ -266,9 +280,27 @@ impl BackupFlow {
     /// Why the last restart attempt failed, for the modal.
     pub(super) fn restart_failure(&self) -> Option<&str> {
         match &self.stage {
-            Stage::RestartNeeded { failed } => failed.as_deref(),
+            Stage::RestartNeeded { failed, .. } => failed.as_deref(),
             _ => None,
         }
+    }
+
+    /// What the restart modal says the files hold, in `locale`; `None`
+    /// when no restart is needed.
+    pub(super) fn restart_message(&self, locale: Locale) -> Option<String> {
+        let Stage::RestartNeeded { why, .. } = &self.stage else {
+            return None;
+        };
+        Some(match why {
+            RestartWhy::Restored => translate(locale, "settings.backupRestartNeeded"),
+            RestartWhy::Unknown => translate(locale, "settings.backupRestartUnknown"),
+            RestartWhy::Incomplete { error } => with_one(
+                locale,
+                "settings.backupRestartIncomplete",
+                "error",
+                error.clone(),
+            ),
+        })
     }
 
     fn busy(&self) -> bool {
@@ -565,9 +597,9 @@ impl AppModel {
             Poll::Ready(result) => result,
             // It may have died once the files were replaced.
             Poll::Gone => {
-                let text = translate(self.backup_locale(), "settings.backupRestartNeeded");
-                self.backup.set_notice(text, false);
-                self.keep_restored_files();
+                let text = translate(self.backup_locale(), "settings.backupRestartUnknown");
+                self.backup.set_notice(text, true);
+                self.keep_restored_files(RestartWhy::Unknown);
                 ctx.request_repaint();
                 return;
             }
@@ -576,10 +608,12 @@ impl AppModel {
         self.finish_restore(ctx, result);
     }
 
-    /// The files may hold the restored setup: the boundary stays up until
-    /// the restart, and the writes queued for the old stores go.
-    fn keep_restored_files(&mut self) {
-        self.backup.set_stage(Stage::RestartNeeded { failed: None });
+    /// The files may hold the restored setup, as `why` says: the boundary
+    /// stays up until the restart, and the writes queued for the old stores
+    /// go.
+    fn keep_restored_files(&mut self, why: RestartWhy) {
+        self.backup
+            .set_stage(Stage::RestartNeeded { why, failed: None });
         if let Some(b) = self.booted.as_mut() {
             b.stores.discard_pending_saves();
         }
@@ -612,16 +646,21 @@ impl AppModel {
                 // As finish_restore: settings checked against the old
                 // platforms are never adopted, nor written.
                 Some(Ok(restored)) if restored.platforms.is_none() => {
-                    self.keep_restored_files();
+                    self.keep_restored_files(RestartWhy::Restored);
                     return;
                 }
                 Some(Ok(restored)) => Some(restored.read_back.map(|read| read.snapshot)),
                 // The files were not replaced, or all put back: the old
                 // stores stand.
                 Some(Err(error)) if !error.left_restored => None,
-                // Lost, or failed with restored files left.
-                _ => {
-                    self.keep_restored_files();
+                Some(Err(error)) => {
+                    self.keep_restored_files(RestartWhy::Incomplete {
+                        error: error.message,
+                    });
+                    return;
+                }
+                None => {
+                    self.keep_restored_files(RestartWhy::Unknown);
                     return;
                 }
             },
@@ -677,11 +716,13 @@ impl AppModel {
                     locale,
                     "settings.backupRestoreFailed",
                     "error",
-                    error.message,
+                    error.message.clone(),
                 );
                 self.backup.set_notice(text, true);
                 if left_restored {
-                    self.keep_restored_files();
+                    self.keep_restored_files(RestartWhy::Incomplete {
+                        error: error.message,
+                    });
                     ctx.request_repaint();
                 }
                 return;
@@ -690,7 +731,12 @@ impl AppModel {
         let Some(b) = self.booted.as_mut() else {
             return;
         };
+        // The active tab's descriptor, before the restored ones register.
+        let tab = b.nav.active_tab.clone();
+        let mut source_changed = false;
         if let Some(report) = &restored.platforms {
+            source_changed =
+                descriptor_of(b.user_platforms.as_ref(), &tab) != descriptor_of(Some(report), &tab);
             apply_report(b, report);
             if let Some(panel) = self.settings_panel.as_mut() {
                 panel.user_platforms = Some(report.clone());
@@ -699,6 +745,9 @@ impl AppModel {
         match (restored.read_back, restored.platforms.is_some()) {
             (Ok(read), true) => {
                 self.adopt_restored(ctx, read);
+                if source_changed {
+                    self.reload_tab_source(&tab);
+                }
                 let done = with_one(
                     locale,
                     "settings.backupRestored",
@@ -712,7 +761,7 @@ impl AppModel {
                 // files.
                 self.backup
                     .set_notice(translate(locale, "settings.backupRestartNeeded"), false);
-                self.keep_restored_files();
+                self.keep_restored_files(RestartWhy::Restored);
                 ctx.request_repaint();
             }
         }
@@ -736,8 +785,32 @@ impl AppModel {
                 "error",
                 error,
             );
-            self.backup
-                .set_stage(Stage::RestartNeeded { failed: Some(text) });
+            if let Stage::RestartNeeded { failed, .. } = &mut self.backup.stage {
+                *failed = Some(text);
+            }
         }
     }
+
+    /// The active tab `tab` reads its accounts from a restored descriptor
+    /// of the same id: its cards load again from it. A tab the restored
+    /// settings switched away from already loaded the new one.
+    fn reload_tab_source(&mut self, tab: &str) {
+        let Some(b) = self.booted.as_mut() else {
+            return;
+        };
+        if b.nav.active_tab != tab {
+            return;
+        }
+        b.accounts.reload_source(&self.jobs, &mut b.stores, tab);
+    }
+}
+
+/// The descriptor `report` loaded for the platform `id`, as JSON, to tell a
+/// changed one apart; `None` for a platform no descriptor declares.
+fn descriptor_of(report: Option<&UserPlatformReport>, id: &str) -> Option<serde_json::Value> {
+    report?
+        .loaded
+        .iter()
+        .find(|descriptor| descriptor.id == id)
+        .and_then(|descriptor| serde_json::to_value(descriptor).ok())
 }

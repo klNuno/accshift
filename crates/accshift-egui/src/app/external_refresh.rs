@@ -4,15 +4,19 @@
 
 use accshift_app::accounts::loader::LoadOptions;
 use accshift_app::lifecycle::app_shell::{plan_external_refresh, RefreshStep};
+use accshift_app::storage::CLIENT_STORE_SETTINGS;
 use accshift_app::storage::{RefreshPlan, STORAGE_TARGET_CUSTOM_THEMES};
-use accshift_app::types::{ClientStorageSnapshot, StorageManifest};
+use accshift_app::types::{ClientStorageSnapshot, StorageManifest, UserPlatformReport};
 
+use super::settings_panel::apply_report;
 use super::*;
 
 #[derive(Default)]
 pub(super) struct ExternalRefresh {
     window: Option<(bool, bool)>,
     job: Option<RefreshJob>,
+    /// The user descriptors read again: some could not be read before.
+    descriptors: Option<Pending<BackendResult<UserPlatformReport>>>,
 }
 
 enum RefreshJob {
@@ -73,9 +77,10 @@ pub(super) fn read_themes(backend: &dyn Backend) -> ThemesRead {
 }
 
 impl ExternalRefresh {
-    /// A refresh is reading or waiting for the accounts it reloads.
+    /// A refresh is reading or waiting for the accounts it reloads, or
+    /// reading the user descriptors again.
     pub(super) fn running(&self) -> bool {
-        self.job.is_some()
+        self.job.is_some() || self.descriptors.is_some()
     }
 }
 
@@ -104,6 +109,22 @@ impl AppModel {
                 self.jobs.run(|backend| backend.get_storage_manifest()),
             ));
         }
+        // A descriptor that could not be read (locked at boot) is read again
+        // on each focus until the folder reads whole.
+        let unread = self
+            .booted
+            .as_ref()
+            .and_then(|b| b.user_platforms.as_ref())
+            .is_some_and(|report| report.incomplete);
+        if trigger
+            && unread
+            && self.external_refresh.descriptors.is_none()
+            && !self.backup.holds_writes()
+        {
+            self.external_refresh.descriptors =
+                Some(self.jobs.run(|backend| backend.reload_user_platforms()));
+        }
+        self.poll_descriptors(ctx);
         let Some(job) = self.external_refresh.job.take() else {
             return;
         };
@@ -216,6 +237,29 @@ impl AppModel {
                 .loads_in_flight()
                 .then_some(RefreshJob::Accounts),
         };
+    }
+
+    /// The descriptors read again become the user platforms, and the
+    /// settings follow the platforms they now name.
+    fn poll_descriptors(&mut self, ctx: &Context) {
+        let Some(mut pending) = self.external_refresh.descriptors.take() else {
+            return;
+        };
+        match pending.poll() {
+            Poll::Waiting => self.external_refresh.descriptors = Some(pending),
+            Poll::Ready(Ok(report)) => {
+                let Some(b) = self.booted.as_mut() else {
+                    return;
+                };
+                apply_report(b, &report);
+                if let Some(panel) = self.settings_panel.as_mut() {
+                    panel.user_platforms = Some(report);
+                }
+                self.apply_external_refresh(ctx, &[CLIENT_STORE_SETTINGS.to_owned()]);
+            }
+            Poll::Ready(Err(error)) => self.external_refresh_failed(error.message),
+            Poll::Gone => self.external_refresh_failed("descriptor job panicked".into()),
+        }
     }
 
     /// Takes the custom themes read from disk, and the theme they draw.

@@ -904,6 +904,10 @@ enum LostRestore {
     LeftRestored,
 }
 
+/// The error of a restore that could not put every file back, with the
+/// copy of the files from before it.
+const LEFT_RESTORED: &str = "disk full; these files already replaced could not be put back and may hold the restored setup: C:/config/user/client.settings.json. A copy of the files from before the restore is in C:/config/user/backups/pre-restore-1";
+
 /// [`restore_app`] whose restore ends as `how`, with a note typed while it
 /// runs.
 fn lost_restore(ctx: &Context, how: LostRestore) -> (AppModel, Arc<MockBackend>) {
@@ -911,9 +915,7 @@ fn lost_restore(ctx: &Context, how: LostRestore) -> (AppModel, Arc<MockBackend>)
     frame(&mut app, ctx);
     match how {
         LostRestore::Crashed => assert!(mock.crash("load_client_storage_snapshot", true)),
-        LostRestore::LeftRestored => assert!(mock.leave_restored(Some(
-            "disk full; these files already replaced could not be put back"
-        ))),
+        LostRestore::LeftRestored => assert!(mock.leave_restored(Some(LEFT_RESTORED))),
     }
     assert!(mock.hold("backup_restore"));
     app.start_backup_restore("C:/b.json".into());
@@ -992,5 +994,197 @@ fn a_restore_that_put_every_file_back_lets_the_app_go_on() {
     assert!(
         mock.seen(SAVE) >= 1,
         "the edit after a clean failure was lost"
+    );
+}
+
+/// The account reads the mock answered so far, whichever platform asked.
+fn account_reads(mock: &MockBackend) -> usize {
+    mock.seen("platform_get_accounts") + mock.seen("platform_get_startup_snapshot")
+}
+
+/// Frames until no account load is in flight.
+fn settle_accounts(app: &mut AppModel, ctx: &Context) {
+    pump_until(app, ctx, |a| {
+        !a.booted().unwrap().accounts.loading.loads_in_flight()
+    });
+}
+
+#[test]
+fn a_session_mark_written_during_a_restore_reloads_the_accounts() {
+    // Regression (MARK_UNSEEN): the CLI wrote a session mark to the local
+    // config while the restore ran. The stores read back took the config's
+    // new fingerprint as seen but left it out of the changes, so the
+    // accounts never read the mark, nor did the next focus.
+    let ctx = Context::default();
+    let (mut app, mock) = restore_app_with(&ctx, |commands| {
+        // The Riot tab, before and after: no tab change and no store of its
+        // own reloads its accounts.
+        for settings in [
+            "/get_boot_payload/0/result/storageSnapshot/stores/client.settings",
+            "/load_client_storage_snapshot/0/result/stores/client.settings",
+        ] {
+            let settings = commands.pointer_mut(settings).unwrap();
+            settings["enabledPlatforms"] = json!(["steam", "riot"]);
+            settings["defaultPlatformId"] = json!("riot");
+        }
+        commands["load_client_storage_snapshot"][0]["result"]["manifest"]["stores"]
+            ["app.config.local"] = json!("marked-during-the-restore");
+    });
+    frame(&mut app, &ctx);
+    settle_accounts(&mut app, &ctx);
+    let tab = app.booted().unwrap().nav.active_tab.clone();
+    assert_eq!(tab, "riot");
+    let reads = account_reads(&mock);
+    app.start_backup_restore("C:/b.json".into());
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert!(!app.backup.restart_needed());
+    assert_eq!(app.booted().unwrap().nav.active_tab, tab);
+    for _ in 0..10 {
+        frame(&mut app, &ctx);
+    }
+    settle_accounts(&mut app, &ctx);
+    assert!(
+        account_reads(&mock) > reads,
+        "MARK_UNSEEN: the accounts were not read again after the mark"
+    );
+}
+
+#[test]
+fn a_restored_descriptor_of_the_active_tab_reloads_its_accounts() {
+    // Regression (SOURCE_KEPT): the restored descriptor had the active
+    // tab's id and another account source; the service behind the cards
+    // changed, their list stayed the old source's.
+    let ctx = Context::default();
+    let descriptor: Value = serde_json::from_str(DESCRIPTOR).unwrap();
+    let mut other = descriptor.clone();
+    for os in ["windows", "linux", "macos"] {
+        other["os"][os]["state"]["files"][0]["live"] = json!("${LIVE}/other-session.json");
+    }
+    let (mut app, mock) = restore_app_with(&ctx, move |commands| {
+        let boot = &mut commands["get_boot_payload"][0]["result"];
+        boot["userPlatforms"]["loaded"] = json!([descriptor]);
+        let settings = &mut boot["storageSnapshot"]["stores"]["client.settings"];
+        settings["enabledPlatforms"] = json!(["steam", "egui-fixture"]);
+        settings["defaultPlatformId"] = json!("egui-fixture");
+        commands["reload_user_platforms"][0]["result"]["loaded"] = json!([other]);
+    });
+    assert_eq!(app.booted().unwrap().nav.active_tab, "egui-fixture");
+    frame(&mut app, &ctx);
+    settle_accounts(&mut app, &ctx);
+    let reads = account_reads(&mock);
+    app.start_backup_restore("C:/b.json".into());
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert!(!app.backup.restart_needed());
+    assert_eq!(app.booted().unwrap().nav.active_tab, "egui-fixture");
+    for _ in 0..10 {
+        frame(&mut app, &ctx);
+    }
+    settle_accounts(&mut app, &ctx);
+    assert!(
+        account_reads(&mock) > reads,
+        "SOURCE_KEPT: the cards kept the accounts of the old source"
+    );
+}
+
+#[test]
+fn a_descriptor_locked_at_boot_keeps_the_platform_the_settings_enable() {
+    // Regression (BOOT_LOCKED): on the restart a restore asked for, a
+    // descriptor still locked left its platform out of the boot; the
+    // settings in memory dropped it from the enabled ones and the default,
+    // and the next settings save wrote that over the restored file.
+    let ctx = Context::default();
+    let (mut app, mock) = restore_app_with(&ctx, |commands| {
+        let boot = &mut commands["get_boot_payload"][0]["result"];
+        boot["userPlatforms"]["incomplete"] = json!(true);
+        let settings = &mut boot["storageSnapshot"]["stores"]["client.settings"];
+        settings["enabledPlatforms"] = json!(["steam", "egui-fixture"]);
+        settings["defaultPlatformId"] = json!("egui-fixture");
+    });
+    frame(&mut app, &ctx);
+    let b = app.booted().unwrap();
+    assert!(b.platforms.iter().all(|p| p.id != "egui-fixture"));
+    let settings = b.stores.settings().clone();
+    assert_eq!(
+        (
+            settings.enabled_platforms.as_slice(),
+            settings.default_platform_id.as_str()
+        ),
+        (
+            ["steam", "egui-fixture"].map(String::from).as_slice(),
+            "egui-fixture"
+        ),
+        "BOOT_LOCKED: the settings in memory lost the locked platform"
+    );
+    // A settings save meanwhile keeps them.
+    let mut next = settings.clone();
+    next.language = Locale::Fr;
+    app.booted.as_mut().unwrap().stores.save_settings(&next);
+    let saved = app.booted().unwrap().stores.settings();
+    assert_eq!(saved.enabled_platforms, settings.enabled_platforms);
+    assert_eq!(saved.default_platform_id, "egui-fixture");
+
+    // The descriptor reads again: the next focus loads its platform.
+    let reloads = mock.seen("reload_user_platforms");
+    focus(&mut app, &ctx, true);
+    refocus_until(&mut app, &ctx, |a| {
+        a.booted()
+            .unwrap()
+            .platforms
+            .iter()
+            .any(|p| p.id == "egui-fixture")
+    });
+    assert!(mock.seen("reload_user_platforms") > reloads);
+    let b = app.booted().unwrap();
+    assert!(b.user_platforms.as_ref().is_some_and(|r| !r.incomplete));
+    assert_eq!(b.stores.settings().default_platform_id, "egui-fixture");
+    assert!(b
+        .stores
+        .settings()
+        .enabled_platforms
+        .contains(&"egui-fixture".to_string()));
+}
+
+#[test]
+fn the_restart_modal_tells_a_lost_restore_and_a_partial_rollback_apart() {
+    // Regression (RESTART_TEXT): after a lost restore job or a rollback
+    // that left restored files, the modal said "Backup restored" and hid
+    // the rollback's error and where the copy of the old files is.
+    for (how, name) in [
+        (LostRestore::Crashed, "LOST"),
+        (LostRestore::LeftRestored, "PARTIAL"),
+    ] {
+        let ctx = Context::default();
+        let (mut app, _mock) = lost_restore(&ctx, how);
+        pump_until(&mut app, &ctx, |a| a.backup.restart_needed());
+        let locale = app.booted().unwrap().locale;
+        let restored = translate(locale, "settings.backupRestartNeeded");
+        let modal = super::super::shell::restart_modal(&app, locale).unwrap();
+        assert_ne!(
+            modal.message, restored,
+            "RESTART_TEXT {name}: the modal says the backup was restored"
+        );
+        assert_ne!(
+            app.backup.card.notice, restored,
+            "RESTART_TEXT {name}: the card says the backup was restored"
+        );
+        if let LostRestore::LeftRestored = how {
+            assert!(
+                modal.message.contains("disk full")
+                    && modal
+                        .message
+                        .contains("C:/config/user/backups/pre-restore-1"),
+                "RESTART_TEXT {name}: the rollback error is hidden: {}",
+                modal.message
+            );
+        }
+    }
+    // A restore that went through but could not be read back says so.
+    let ctx = Context::default();
+    let (app, _mock) = restored_but_unread(&ctx);
+    let locale = app.booted().unwrap().locale;
+    let modal = super::super::shell::restart_modal(&app, locale).unwrap();
+    assert_eq!(
+        modal.message,
+        translate(locale, "settings.backupRestartNeeded")
     );
 }

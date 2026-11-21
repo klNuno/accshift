@@ -72,12 +72,12 @@ pub(super) struct Stage<'a> {
 
 /// The restart modal of a restore whose stores could not be read back,
 /// its texts resolved.
-pub(super) struct RestartModal {
-    pub(super) title: String,
-    pub(super) message: String,
+pub(in crate::app) struct RestartModal {
+    pub(in crate::app) title: String,
+    pub(in crate::app) message: String,
     /// Why the last restart attempt failed.
-    pub(super) error: Option<String>,
-    pub(super) button: String,
+    pub(in crate::app) error: Option<String>,
+    pub(in crate::app) button: String,
 }
 
 impl Stage<'_> {

@@ -265,15 +265,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     // rendering.
     let suspended = booted.secure.render_suspended();
     // The restart modal stays on top of the stage; the tour waits.
-    let restart = app.backup.restart_needed().then(|| {
-        let text = |key| accshift_app::i18n::translate(fv.locale, key);
-        stage::RestartModal {
-            title: text("settings.backupRestartTitle"),
-            message: text("settings.backupRestartNeeded"),
-            error: app.backup.restart_failure().map(str::to_owned),
-            button: text("settings.backupRestartNow"),
-        }
-    });
+    let restart = restart_modal(app, fv.locale);
     let tour = app
         .onboarding
         .view
@@ -400,6 +392,24 @@ fn boot_error_screen(app: &AppModel, ui: &mut Ui, screen: Rect) -> Vec<Action> {
 }
 
 /// A dialog, the palette or the onboarding's click shield covers the
+/// The restart modal a restore left, its texts in `locale`; `None` when no
+/// restart is needed.
+pub(super) fn restart_modal(
+    app: &AppModel,
+    locale: accshift_app::i18n::Locale,
+) -> Option<stage::RestartModal> {
+    let message = app.backup.restart_message(locale)?;
+    app.backup.restart_needed().then(|| {
+        let text = |key| accshift_app::i18n::translate(locale, key);
+        stage::RestartModal {
+            title: text("settings.backupRestartTitle"),
+            message,
+            error: app.backup.restart_failure().map(str::to_owned),
+            button: text("settings.backupRestartNow"),
+        }
+    })
+}
+
 /// panel: the wheel lands on its overlay, never on the content under it.
 fn covers_panel(app: &AppModel, tour_open: bool, bulk_step: Option<BarStep>) -> bool {
     let dialogs = &app.dialogs;

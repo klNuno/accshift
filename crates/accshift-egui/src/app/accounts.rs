@@ -375,6 +375,16 @@ impl Accounts {
         self.pipeline.clear_collapsed_sections();
     }
 
+    /// The active tab's platform now reads its accounts from another source
+    /// (a restored descriptor of the same id): the old source's accounts
+    /// and everything in flight for them go, and the tab loads again,
+    /// silently.
+    pub fn reload_source(&mut self, jobs: &Jobs, stores: &mut ClientStores, tab: &str) {
+        self.loading.switch_tab(&self.registry, tab);
+        self.navigation.refresh_current_items(stores, tab);
+        self.load(jobs, stores, tab, load_options(true, false));
+    }
+
     /// The refresh button: the active tab again, not silent, with the
     /// "refreshed" toast and the ban check.
     pub fn refresh(&mut self, jobs: &Jobs, stores: &mut ClientStores, tab: &str) {

@@ -117,8 +117,11 @@ pub(super) fn drain_landed<J, T>(
 }
 
 /// The folder's descriptors become the user platforms of the tabs, the
-/// account registry and the stores.
+/// account registry and the stores. While a descriptor could not be read,
+/// the stores keep the platforms the settings name; after such a report,
+/// the settings are sanitized again against the new list.
 pub(in crate::app) fn apply_report(b: &mut Booted, report: &UserPlatformReport) {
+    let was_incomplete = b.user_platforms.as_ref().is_some_and(|r| r.incomplete);
     let loaded: Vec<Value> = report
         .loaded
         .iter()
@@ -131,8 +134,17 @@ pub(in crate::app) fn apply_report(b: &mut Booted, report: &UserPlatformReport) 
         .collect();
     b.accounts.registry.register_user_platforms(&descriptors);
     let mut ctx = b.stores.context().clone();
-    ctx.platform_ids = b.platforms.iter().map(|p| p.id.clone()).collect();
+    ctx.platform_ids = platforms::store_ids(
+        &b.platforms,
+        report.incomplete,
+        b.stores
+            .storage()
+            .get(accshift_app::storage::CLIENT_STORE_SETTINGS),
+    );
     b.stores.set_context(ctx);
+    if was_incomplete {
+        b.stores.resanitize_settings();
+    }
     b.user_platforms = Some(report.clone());
 }
 
