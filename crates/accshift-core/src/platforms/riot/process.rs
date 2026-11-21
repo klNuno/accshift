@@ -146,11 +146,14 @@ pub(super) fn graceful_riot_quit() -> Result<(), String> {
 }
 
 pub(super) fn launch_riot_client(client_path: &Path) -> Result<(), String> {
-    os::detach_stdio(
-        os::hidden_command(client_path)
-            .args(["--launch-product=riot-client", "--launch-patchline=live"]),
-    )
-    .spawn()
-    .map_err(|e| format!("Could not launch Riot Client: {e}"))?;
+    launch_riot_product(client_path, RIOT_CLIENT_PRODUCT)
+}
+
+/// Starts `product_id` on the live patchline through `RiotClientServices.exe`,
+/// which hands it to a running client or opens one.
+pub(super) fn launch_riot_product(client_path: &Path, product_id: &str) -> Result<(), String> {
+    os::detach_stdio(os::hidden_command(client_path).args(launch_args(product_id)))
+        .spawn()
+        .map_err(|e| format!("Could not launch Riot Client: {e}"))?;
     Ok(())
 }
