@@ -491,8 +491,24 @@ impl App {
 
     /// Runs one URL to the end.
     fn run(&mut self, controller: &mut DeepLinkController, url: &str) {
+        controller.on_urls(&[url], Instant::now());
+        self.drive(controller);
+    }
+
+    /// Runs one global shortcut's switch to the end.
+    fn run_shortcut(&mut self, controller: &mut DeepLinkController, platform: &str, id: &str) {
+        controller.on_shortcut(
+            DeepLinkSwitchRequest {
+                platform_id: platform.into(),
+                account_ref: id.into(),
+            },
+            Instant::now(),
+        );
+        self.drive(controller);
+    }
+
+    fn drive(&mut self, controller: &mut DeepLinkController) {
         let now = Instant::now();
-        controller.on_urls(&[url], now);
         let mut actions = controller.poll(&self.view(), now);
         let mut guard = 0;
         while let Some(action) = actions.first().cloned() {
@@ -1023,4 +1039,80 @@ fn a_second_process_reaches_the_first() {
 fn the_current_arguments_and_folder_are_read() {
     assert!(!single_instance::current_args().is_empty());
     assert!(!single_instance::current_cwd().is_empty());
+}
+
+// ------------------------------------------------------------ global shortcuts
+
+#[test]
+fn a_shortcut_switches_without_the_link_confirm() {
+    let mut app = App::new("steam");
+    let mut controller = started();
+    app.run_shortcut(&mut controller, "steam", "account-1");
+    assert_eq!(app.events.len(), 2, "{:?}", app.events);
+    assert_eq!(app.events[0], "switch:account-1");
+    assert!(app.events[1].contains("toast.deepLinkSwitched"));
+}
+
+#[test]
+fn a_shortcut_to_another_tab_changes_it_first() {
+    let mut app = App::new("riot");
+    app.run_shortcut(&mut started(), "steam", "account-1");
+    assert_eq!(
+        &app.events[..3],
+        ["loadPlatform:steam", "tab:steam", "switch:account-1"]
+    );
+}
+
+#[test]
+fn a_shortcut_works_with_deep_links_disabled() {
+    let mut app = App::new("steam");
+    app.settings = settings(false);
+    app.run_shortcut(&mut started(), "steam", "account-1");
+    assert_eq!(app.events[0], "switch:account-1");
+}
+
+#[test]
+fn a_shortcut_is_refused_while_the_pin_locks_the_app() {
+    let mut app = App::new("steam");
+    app.pin_locked = true;
+    app.run_shortcut(&mut started(), "steam", "account-1");
+    assert!(app.events.is_empty(), "{:?}", app.events);
+}
+
+#[test]
+fn a_shortcut_keeps_the_platform_checks() {
+    let mut app = App::new("steam");
+    app.settings = sanitize_settings(
+        &json!({"enabledPlatforms": ["steam"]}),
+        &StoreContext::shipped(),
+    );
+    app.run_shortcut(&mut started(), "riot", "r-1");
+    assert_eq!(app.events.len(), 1);
+    assert!(app.events[0].contains("toast.deepLinkPlatformDisabled"));
+}
+
+#[test]
+fn a_shortcut_to_a_missing_account_says_so() {
+    let mut app = App::new("steam");
+    app.run_shortcut(&mut started(), "steam", "gone");
+    assert_eq!(app.events.len(), 2, "{:?}", app.events);
+    assert_eq!(app.events[0], "loadAccounts");
+    assert!(app.events[1].contains("toast.deepLinkAccountNotFound"));
+}
+
+#[test]
+fn the_controller_tells_a_shortcut_from_a_link() {
+    let mut controller = started();
+    let now = Instant::now();
+    controller.on_shortcut(
+        DeepLinkSwitchRequest {
+            platform_id: "steam".into(),
+            account_ref: "account-1".into(),
+        },
+        now,
+    );
+    assert!(controller.is_shortcut());
+    let mut links = started();
+    links.on_urls(&["accshift://switch/steam/account-1"], now);
+    assert!(!links.is_shortcut());
 }
