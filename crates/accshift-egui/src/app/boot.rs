@@ -261,8 +261,14 @@ impl AppModel {
             migration_toast(&payload.migration),
             stores_reset_toast(&payload.recovered_stores),
         ];
+        // A theme the boot could not read is read again on the next focus,
+        // even when the themes folder did not change meanwhile.
+        let themes_unread = payload.custom_themes_incomplete;
         let hydrated = self.hydrate(payload, &detected);
         self.booted = Some(self.boot_state(ctx, hydrated));
+        if themes_unread {
+            self.unsee_themes();
+        }
         for toast in boot_toasts.into_iter().flatten() {
             self.toasts.push(toast, Instant::now());
         }

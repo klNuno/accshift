@@ -894,3 +894,103 @@ fn focus(app: &mut AppModel, ctx: &Context, focused: bool) {
     let mut output = ctx.run_ui(input, |ui| app.frame(ui));
     output.textures_delta.clear();
 }
+
+/// How a restore that already wrote the files ends without a usable answer.
+#[derive(Clone, Copy)]
+enum LostRestore {
+    /// The job died once the files were written.
+    Crashed,
+    /// The restore failed and could not put every file back.
+    LeftRestored,
+}
+
+/// [`restore_app`] whose restore ends as `how`, with a note typed while it
+/// runs.
+fn lost_restore(ctx: &Context, how: LostRestore) -> (AppModel, Arc<MockBackend>) {
+    let (mut app, mock) = restore_app(ctx);
+    frame(&mut app, ctx);
+    match how {
+        LostRestore::Crashed => assert!(mock.crash("load_client_storage_snapshot", true)),
+        LostRestore::LeftRestored => assert!(mock.leave_restored(Some(
+            "disk full; these files already replaced could not be put back"
+        ))),
+    }
+    assert!(mock.hold("backup_restore"));
+    app.start_backup_restore("C:/b.json".into());
+    pump_until(&mut app, ctx, |_| mock.waiting("backup_restore") == 1);
+    set_note(&mut app, "typed over the restored files");
+    mock.release("backup_restore");
+    (app, mock)
+}
+
+/// A restore lost as `how`, seen in session: the boundary stays up.
+fn keeps_the_boundary(how: LostRestore, name: &str) {
+    let ctx = Context::default();
+    let (mut app, mock) = lost_restore(&ctx, how);
+    pump_until(&mut app, &ctx, |a| {
+        a.backup.restart_needed() || !a.backup.holds_writes()
+    });
+    assert!(app.backup.restart_needed(), "{name}: the boundary lifted");
+    assert!(app.backup.holds_writes());
+    let _ = app.flush_app_state();
+    assert_eq!(mock.seen(SAVE), 0, "{name}: the old stores were written");
+}
+
+/// A restore lost as `how`, waited for by the close: nothing is written.
+fn writes_nothing_on_close(how: LostRestore, name: &str) {
+    let ctx = Context::default();
+    let (mut app, mock) = lost_restore(&ctx, how);
+    let _ = app.flush_app_state();
+    assert_eq!(mock.seen(SAVE), 0, "{name}: the old stores were written");
+    assert!(app.backup.restart_needed(), "{name}: the boundary lifted");
+}
+
+#[test]
+fn a_restore_job_lost_after_its_writes_keeps_the_boundary() {
+    // Regression (CRASHED): a restore job that died after replacing the
+    // files lifted the boundary, and the old stores in memory were written
+    // over the restored files.
+    keeps_the_boundary(LostRestore::Crashed, "CRASHED");
+}
+
+#[test]
+fn a_restore_job_lost_after_its_writes_writes_nothing_on_close() {
+    // Regression (CRASHED_ON_CLOSE): the close took such a job for a
+    // restore that wrote nothing and flushed the old stores.
+    writes_nothing_on_close(LostRestore::Crashed, "CRASHED_ON_CLOSE");
+}
+
+#[test]
+fn a_restore_that_left_restored_files_keeps_the_boundary() {
+    // Regression (LEFT_RESTORED): a failed restore that could not put every
+    // file back lifted the boundary as if nothing were written.
+    keeps_the_boundary(LostRestore::LeftRestored, "LEFT_RESTORED");
+}
+
+#[test]
+fn a_restore_that_left_restored_files_writes_nothing_on_close() {
+    // Regression (LEFT_ON_CLOSE): the same failure waited for by the close.
+    writes_nothing_on_close(LostRestore::LeftRestored, "LEFT_ON_CLOSE");
+}
+
+#[test]
+fn a_restore_that_put_every_file_back_lets_the_app_go_on() {
+    let ctx = Context::default();
+    let (mut app, mock) = restore_app(&ctx);
+    frame(&mut app, &ctx);
+    assert!(mock.fail(
+        "backup_restore",
+        Some("disk full; the files already replaced were put back")
+    ));
+    app.start_backup_restore("C:/b.json".into());
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert!(!app.backup.restart_needed());
+    assert!(app.backup.card.notice.contains("disk full"));
+    set_note(&mut app, "typed after");
+    let _ = app.flush_app_state();
+    assert_eq!(note(&app), "typed after");
+    assert!(
+        mock.seen(SAVE) >= 1,
+        "the edit after a clean failure was lost"
+    );
+}

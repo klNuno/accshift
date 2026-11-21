@@ -25,10 +25,13 @@
 //! snapshot, dropping the writes queued meanwhile, and only then lets writes
 //! and refreshes run again. A custom theme file that cannot be read is left
 //! out without changing the theme the settings name, which applies once it
-//! reads. When the stores cannot be read back, the boundary stays up for
-//! good: a modal asks for the restart that loads them, no edit is taken
+//! reads. When the stores cannot be read back, the descriptors not reloaded
+//! whole, the restore job lost once it ran (it panicked), or the restore
+//! failed and could not put every file back, the boundary stays up for
+//! good: a modal asks for the restart that loads the files, no edit is taken
 //! meanwhile, and the old stores in memory are never written over the
-//! restored files, not even on close.
+//! restored files, not even on close. A restore that failed and put every
+//! file back lets the app go on as before.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -40,7 +43,9 @@ use accshift_app::error::{BackendError, BackendResult};
 use accshift_app::i18n::{translate, Locale, TranslationValue};
 use accshift_app::jobs::{Jobs, Pending, Poll};
 use accshift_app::text::Text;
-use accshift_app::types::{BackupPreview, BackupReport, ClientStorageSnapshot, UserPlatformReport};
+use accshift_app::types::{
+    BackupPreview, BackupReport, ClientStorageSnapshot, RestoreError, UserPlatformReport,
+};
 use egui::Context;
 
 use super::external_refresh::{read_themes, ThemesRead};
@@ -218,10 +223,9 @@ enum Stage {
         failed: Option<String>,
     },
     Exporting(Pending<BackendResult<BackupReport>>),
-    Restoring(Pending<BackendResult<Restored>>),
-    /// The files were restored but the stores could not be read back: the
-    /// memory still holds the old ones, which must never be written. Only a
-    /// restart leaves it.
+    Restoring(Pending<Result<Restored, RestoreError>>),
+    /// The files may hold the restored setup while the memory still holds
+    /// the old one, which must never be written. Only a restart leaves it.
     RestartNeeded {
         /// Why the last restart attempt failed.
         failed: Option<String>,
@@ -326,10 +330,14 @@ fn with_one(locale: Locale, key: &str, name: &str, value: String) -> String {
 }
 
 /// The restore job: the files, then the descriptors, the stores and the
-/// themes read back.
-fn restore_job(b: &dyn Backend, path: &str) -> BackendResult<Restored> {
+/// themes read back. Descriptors not all read count as not reloaded: the
+/// settings would be checked against platforms that may lack one.
+fn restore_job(b: &dyn Backend, path: &str) -> Result<Restored, RestoreError> {
     let report = b.backup_restore(path)?;
-    let platforms = b.reload_user_platforms().ok();
+    let platforms = b
+        .reload_user_platforms()
+        .ok()
+        .filter(|report| !report.incomplete);
     Ok(Restored {
         report,
         platforms,
@@ -555,17 +563,35 @@ impl AppModel {
         let result = match job.poll() {
             Poll::Waiting => return,
             Poll::Ready(result) => result,
-            Poll::Gone => Err(BackendError::new("job panicked")),
+            // It may have died once the files were replaced.
+            Poll::Gone => {
+                let text = translate(self.backup_locale(), "settings.backupRestartNeeded");
+                self.backup.set_notice(text, false);
+                self.keep_restored_files();
+                ctx.request_repaint();
+                return;
+            }
         };
         self.backup.set_stage(Stage::Idle);
         self.finish_restore(ctx, result);
+    }
+
+    /// The files may hold the restored setup: the boundary stays up until
+    /// the restart, and the writes queued for the old stores go.
+    fn keep_restored_files(&mut self) {
+        self.backup.set_stage(Stage::RestartNeeded { failed: None });
+        if let Some(b) = self.booted.as_mut() {
+            b.stores.discard_pending_saves();
+        }
     }
 
     /// On close: waits for an export or a restore job, so the restored
     /// stores are adopted before the last writes. Stores that cannot be
     /// read back drop the writes queued for the old ones, and a restart
     /// still needed keeps the boundary up: a restart that fails leaves the
-    /// app as locked as before. A backup still draining does not start.
+    /// app as locked as before. So does a restore that may have left
+    /// restored files without its answer: lost, or failed without putting
+    /// every file back. A backup still draining does not start.
     /// Teardown only: it lifts any other boundary, so the update install,
     /// the one flush that may leave the app open, is refused while a backup
     /// holds the writes.
@@ -586,14 +612,18 @@ impl AppModel {
                 // As finish_restore: settings checked against the old
                 // platforms are never adopted, nor written.
                 Some(Ok(restored)) if restored.platforms.is_none() => {
-                    if let Some(b) = self.booted.as_mut() {
-                        b.stores.discard_pending_saves();
-                    }
+                    self.keep_restored_files();
                     return;
                 }
                 Some(Ok(restored)) => Some(restored.read_back.map(|read| read.snapshot)),
-                // The files were not replaced: the old stores stand.
-                _ => None,
+                // The files were not replaced, or all put back: the old
+                // stores stand.
+                Some(Err(error)) if !error.left_restored => None,
+                // Lost, or failed with restored files left.
+                _ => {
+                    self.keep_restored_files();
+                    return;
+                }
             },
             Stage::RestartNeeded { .. } => None,
         };
@@ -635,12 +665,14 @@ impl AppModel {
     /// registered, then the themes, then the stores adopted whole. Stores
     /// that cannot be read back, or descriptors that cannot be reloaded
     /// (the restored settings would be checked against the old platforms
-    /// and lose a restored one), ask for the restart that loads them.
-    fn finish_restore(&mut self, ctx: &Context, result: BackendResult<Restored>) {
+    /// and lose a restored one), ask for the restart that loads them, and
+    /// so does a failure that left restored files it could not put back.
+    fn finish_restore(&mut self, ctx: &Context, result: Result<Restored, RestoreError>) {
         let locale = self.backup_locale();
         let restored = match result {
             Ok(restored) => restored,
             Err(error) => {
+                let left_restored = error.left_restored;
                 let text = with_one(
                     locale,
                     "settings.backupRestoreFailed",
@@ -648,6 +680,10 @@ impl AppModel {
                     error.message,
                 );
                 self.backup.set_notice(text, true);
+                if left_restored {
+                    self.keep_restored_files();
+                    ctx.request_repaint();
+                }
                 return;
             }
         };
@@ -673,14 +709,10 @@ impl AppModel {
             }
             _ => {
                 // The old stores must never be written over the restored
-                // files: the boundary stays up until the restart, and the
-                // writes queued for them go.
+                // files.
                 self.backup
                     .set_notice(translate(locale, "settings.backupRestartNeeded"), false);
-                self.backup.set_stage(Stage::RestartNeeded { failed: None });
-                if let Some(b) = self.booted.as_mut() {
-                    b.stores.discard_pending_saves();
-                }
+                self.keep_restored_files();
                 ctx.request_repaint();
             }
         }
