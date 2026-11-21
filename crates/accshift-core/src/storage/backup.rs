@@ -38,11 +38,7 @@
 //! rather than write such a backup. Each file travels as its source text and
 //! is restored byte for byte: parsing it would change what its loader
 //! accepts (a field declared twice, a theme over its size limit, a number
-//! written longer). Format 1 kept each file as a parsed JSON value: such a
-//! backup still restores, a theme without whitespace so it stays under its
-//! loader's size limit. A backup written before that kept a descriptor
-//! under the id it declared and a theme under its id: such a key is
-//! restored as `<id>.json`, as then.
+//! written longer).
 //!
 //! The settings must be a JSON object, checked by the same function on export
 //! and on restore: an export never writes a backup its restore refuses.
@@ -53,12 +49,9 @@ use serde_json::Map;
 
 /// What the `kind` field of a backup file says.
 pub const BACKUP_KIND: &str = "accshift-backup";
-/// The newest backup format this build reads and the one it writes: 2 keeps
-/// each theme and descriptor file as its source text, 1 as a JSON value.
-pub const BACKUP_FORMAT: u32 = 2;
-
-/// The first format whose theme and descriptor files are their source text.
-const SOURCE_FORMAT: u32 = 2;
+/// The backup format this build reads and writes, the first one: each theme
+/// and descriptor file under its file name, as its source text.
+pub const BACKUP_FORMAT: u32 = 1;
 
 /// The stores a backup carries: every store under `user/`.
 pub const BACKUP_STORES: [&str; 8] = [
@@ -90,14 +83,11 @@ pub struct BackupFile {
     #[serde(default)]
     pub stores: BTreeMap<String, Value>,
     /// Custom theme file name (`My Theme.json`) to the file's source text,
-    /// a JSON string; format 1 held the file's JSON itself. A backup
-    /// written before keyed it by its id (`mine`), which restores as
-    /// `mine.json`.
+    /// a JSON string.
     #[serde(default)]
     pub themes: BTreeMap<String, Value>,
     /// User descriptor file name (`My Platform.json`) to the file's source
-    /// text, as [`Self::themes`]. A backup written before keyed it by the
-    /// id it declared (`acme`), which restores as `acme.json`.
+    /// text, as [`Self::themes`].
     #[serde(default)]
     pub descriptors: BTreeMap<String, Value>,
 }
@@ -176,14 +166,6 @@ fn now_s() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
-}
-
-fn is_safe_file_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 64
-        && id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// The entries of `dir`; a folder that is not there has none. Any other
@@ -287,16 +269,9 @@ fn destination_key(name: &str) -> String {
 }
 
 /// The file a descriptor or theme key of a backup restores to: the key
-/// itself, or `<id>.json` for the id a backup written before used. `None`
-/// refuses it.
-fn file_name_of_key(key: &str) -> Option<String> {
-    if is_contained_json_name(key) {
-        Some(key.to_string())
-    } else if is_safe_file_id(key) {
-        Some(format!("{key}.json")).filter(|name| is_contained_json_name(name))
-    } else {
-        None
-    }
+/// itself, a file name. `None` refuses it.
+fn file_name_of_key(key: &str) -> Option<&str> {
+    is_contained_json_name(key).then_some(key)
 }
 
 /// Which files of a folder its loader reads.
@@ -473,8 +448,8 @@ pub fn read_backup(path: &Path) -> Result<BackupFile, String> {
 }
 
 /// What an export and a restore both check: settings that are an object,
-/// file names this OS can write, one per file, and in a format 2 backup a
-/// source text for each file.
+/// file names this OS can write, one per file, and a source text for each
+/// file.
 fn check_contents(backup: &BackupFile) -> Result<(), String> {
     if let Some(settings) = backup.stores.get(STORE_SETTINGS) {
         settings_object(settings)?;
@@ -486,7 +461,7 @@ fn check_contents(backup: &BackupFile) -> Result<(), String> {
         (&backup.descriptors, Loader::Descriptors),
     ] {
         for (key, value) in files {
-            file_bytes(backup.format, value, loader).map_err(|e| format!("`{key}`: {e}"))?;
+            file_bytes(value, loader).map_err(|e| format!("`{key}`: {e}"))?;
         }
     }
     Ok(())
@@ -500,18 +475,11 @@ fn settings_object(settings: &Value) -> Result<&Map<String, Value>, String> {
         .ok_or_else(|| "the settings are not an object".to_string())
 }
 
-/// The bytes a theme or descriptor entry restores: its source text, or for
-/// format 1 its JSON encoded again.
-fn file_bytes(format: u32, value: &Value, loader: Loader) -> Result<Vec<u8>, String> {
-    if format >= SOURCE_FORMAT {
-        return match value {
-            Value::String(text) => Ok(text.as_bytes().to_vec()),
-            _ => Err(format!("the {} file is not a source text", loader.kind())),
-        };
-    }
-    match loader {
-        Loader::Themes => encode_theme(value),
-        Loader::Descriptors => encode(value),
+/// The bytes a theme or descriptor entry restores: its source text.
+fn file_bytes(value: &Value, loader: Loader) -> Result<Vec<u8>, String> {
+    match value {
+        Value::String(text) => Ok(text.as_bytes().to_vec()),
+        _ => Err(format!("the {} file is not a source text", loader.kind())),
     }
 }
 
@@ -528,12 +496,12 @@ fn check_file_names<'a>(
         let Some(name) = file_name_of_key(key) else {
             return Err(format!("the backup names an unsafe {kind} file `{key}`"));
         };
-        if let Some(reason) = unwritable_reason(&name, cfg!(windows)) {
+        if let Some(reason) = unwritable_reason(name, cfg!(windows)) {
             return Err(format!(
                 "the backup holds the {kind} file `{name}`, which this system cannot write: {reason}"
             ));
         }
-        if let Some(first) = names.insert(destination_key(&name), name.clone()) {
+        if let Some(first) = names.insert(destination_key(name), name.to_string()) {
             return Err(format!(
                 "the backup holds the {kind} files `{first}` and `{name}`, which can be one file"
             ));
@@ -659,13 +627,6 @@ fn encode(value: &Value) -> Result<Vec<u8>, String> {
     serde_json::to_vec_pretty(value).map_err(|e| format!("Could not encode a store: {e}"))
 }
 
-/// A format 1 theme's bytes, without the whitespace [`encode`] adds: the
-/// loader skips a file over its size limit, and a theme that loaded under
-/// it must still load once restored.
-fn encode_theme(value: &Value) -> Result<Vec<u8>, String> {
-    serde_json::to_vec(value).map_err(|e| format!("Could not encode a theme: {e}"))
-}
-
 fn read_previous(path: &Path) -> Result<Option<Vec<u8>>, String> {
     match fs::read(path) {
         Ok(bytes) => Ok(Some(bytes)),
@@ -722,9 +683,9 @@ fn plan_restore(app: &dyn AppContext, backup: &BackupFile) -> Result<Vec<Planned
             return Err(format!("the backup names an unsafe theme file `{key}`"));
         };
         plan.push(PlannedWrite::new(
-            themes.join(&name),
-            Some(file_bytes(backup.format, value, Loader::Themes)?),
-            PathBuf::from("themes").join(&name),
+            themes.join(name),
+            Some(file_bytes(value, Loader::Themes)?),
+            PathBuf::from("themes").join(name),
         )?);
     }
     let descriptors = crate::platforms::descriptor::user_dir(app)?;
@@ -735,9 +696,9 @@ fn plan_restore(app: &dyn AppContext, backup: &BackupFile) -> Result<Vec<Planned
             ));
         };
         plan.push(PlannedWrite::whole(
-            descriptors.join(&name),
-            Some(file_bytes(backup.format, value, Loader::Descriptors)?),
-            PathBuf::from("descriptors").join(&name),
+            descriptors.join(name),
+            Some(file_bytes(value, Loader::Descriptors)?),
+            PathBuf::from("descriptors").join(name),
         )?);
     }
     Ok(plan)
@@ -1476,7 +1437,7 @@ mod tests {
         let file = dir.join(format!("descriptor-{n}.json"));
         let body = json!({
             "kind": BACKUP_KIND, "format": 1, "createdAt": 1, "appVersion": "2.0.0",
-            "descriptors": {(name): {"id": "x"}}
+            "descriptors": {(name): r#"{"id":"x"}"#}
         });
         fs::write(&file, serde_json::to_vec(&body).unwrap()).unwrap();
         file
@@ -1505,6 +1466,7 @@ mod tests {
             ".",
             "a\u{0}.json",
             "",
+            "acme",
         ];
         for (n, name) in refused.iter().enumerate() {
             let file = file_with_descriptor(&files.0, n, name);
@@ -1512,15 +1474,13 @@ mod tests {
             assert!(restore_backup(&app, &file).is_err(), "{name:?}");
             assert_eq!(tree(&app.0), before, "{name:?}");
         }
-        // Plain names in any case, any dot inside one, and the bare id of a
-        // backup from before.
+        // Plain names in any case, and any dot inside one.
         for (n, name) in [
             "My Platform.json",
             "acme.JSON",
             "a-b_c.d.json",
             "a..json",
             "..a.json",
-            "acme",
         ]
         .iter()
         .enumerate()
@@ -1528,34 +1488,6 @@ mod tests {
             let file = file_with_descriptor(&files.0, 100 + n, name);
             assert!(preview_backup(&file).is_ok(), "{name:?}");
         }
-    }
-
-    #[test]
-    fn a_backup_from_before_with_files_keyed_by_id_still_restores() {
-        use crate::platforms::descriptor::test_support::fixture;
-        let to = ctx("legacy-to");
-        let acme: Value = serde_json::from_str(&fixture("acme", &to.0)).unwrap();
-        // The shape 98896e50 and 71648f17 wrote: a descriptor under the id
-        // it declares, a theme under its id.
-        let body = json!({
-            "kind": BACKUP_KIND, "format": 1, "createdAt": 1, "appVersion": "2.0.0",
-            "stores": {(STORE_VIEW_MODE): "list"},
-            "themes": {"midnight": {"id": "midnight", "name": "Midnight", "colorScheme": "dark", "tokens": {}}},
-            "descriptors": {"acme": acme}
-        });
-        let file = to.0.join("old.json");
-        fs::write(&file, serde_json::to_vec_pretty(&body).unwrap()).unwrap();
-
-        let report = restore_backup(&to, &file).unwrap();
-        assert_eq!(report.preview.descriptors, 1);
-        assert_eq!(descriptor_files(&to), ["acme.json"]);
-        assert_eq!(
-            loaded_platforms(&to),
-            [("acme".to_string(), "Fixture Launcher".to_string())]
-        );
-        assert_eq!(theme_files(&to), ["midnight.json"]);
-        assert_eq!(theme_ids(&to), ["midnight"]);
-        assert_eq!(store(&to, STORE_VIEW_MODE), Some(json!("list")));
     }
 
     #[test]
@@ -1576,10 +1508,19 @@ mod tests {
         file_with_entries(dir, tag, "descriptors", descriptors)
     }
 
-    /// A backup file holding `entries` as they are under `field`
-    /// (`descriptors` or `themes`).
+    /// A backup file holding `entries` under `field` (`descriptors` or
+    /// `themes`), each as its source text.
     fn file_with_entries(dir: &Path, tag: &str, field: &str, entries: Value) -> PathBuf {
         let file = dir.join(format!("{field}-{tag}.json"));
+        let entries: Map<String, Value> = entries
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(name, value)| match value {
+                Value::String(_) => (name.clone(), value.clone()),
+                other => (name.clone(), Value::String(other.to_string())),
+            })
+            .collect();
         let body = json!({
             "kind": BACKUP_KIND, "format": 1, "createdAt": 1, "appVersion": "2.0.0",
             (field): entries
@@ -1621,9 +1562,8 @@ mod tests {
         let theme: Value = serde_json::from_str(THEME).unwrap();
         for field in ["descriptors", "themes"] {
             for (n, (one, two, one_file, two_file)) in [
-                ("Acme", "acme", "Acme.json", "acme.json"),
+                ("Acme.json", "acme.json", "Acme.json", "acme.json"),
                 ("A.json", "a.json", "A.json", "a.json"),
-                ("acme", "ACME.json", "acme.json", "ACME.json"),
             ]
             .into_iter()
             .enumerate()
@@ -1795,7 +1735,7 @@ mod tests {
         let files = ctx("theme-unwritable-files");
         let theme: Value = serde_json::from_str(THEME).unwrap();
         let before = tree(&to.0);
-        for (n, (key, name)) in [("con", "con.json"), ("a:b.json", "a:b.json")]
+        for (n, (key, name)) in [("con.json", "con.json"), ("a:b.json", "a:b.json")]
             .into_iter()
             .enumerate()
         {
@@ -1803,7 +1743,7 @@ mod tests {
                 &files.0,
                 &n.to_string(),
                 "themes",
-                json!({"ok": theme.clone(), (key): theme.clone()}),
+                json!({"ok.json": theme.clone(), (key): theme.clone()}),
             );
             if cfg!(windows) {
                 assert!(
