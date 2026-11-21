@@ -221,7 +221,8 @@ impl AppModel {
         if !panel.hydrated {
             return;
         }
-        normalize(&mut panel.draft, &b.platforms, b.runtime_os);
+        let waiting = platforms::waiting(&b.platforms, &b.stores.context().platform_ids);
+        normalize(&mut panel.draft, &b.platforms, &waiting, b.runtime_os);
         let pin_committed = panel.commit_pin_code();
         let snapshot = panel.persist_snapshot(&panel.draft);
         if snapshot == panel.last_persisted_snapshot {

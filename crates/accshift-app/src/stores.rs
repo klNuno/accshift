@@ -444,13 +444,6 @@ impl ClientStores {
         self.ctx = ctx;
     }
 
-    /// Sanitizes the stored settings again against the context, for a
-    /// platform list that lost ids it only kept while their descriptors
-    /// could not be read.
-    pub fn resanitize_settings(&mut self) {
-        self.reload(CLIENT_STORE_SETTINGS);
-    }
-
     pub fn storage(&self) -> &ClientStorage {
         &self.storage
     }

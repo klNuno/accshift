@@ -1092,8 +1092,11 @@ fn a_descriptor_locked_at_boot_keeps_the_platform_the_settings_enable() {
     // descriptor still locked left its platform out of the boot; the
     // settings in memory dropped it from the enabled ones and the default,
     // and the next settings save wrote that over the restored file.
+    // Regression (PANEL_SAVE): the settings panel's save of an unrelated
+    // change (a zoom with the panel open, a toggle) normalized its draft
+    // against the loaded platforms only and wrote Steam as the default.
     let ctx = Context::default();
-    let (mut app, mock) = restore_app_with(&ctx, |commands| {
+    let (mut app, _mock) = restore_app_with(&ctx, |commands| {
         let boot = &mut commands["get_boot_payload"][0]["result"];
         boot["userPlatforms"]["incomplete"] = json!(true);
         let settings = &mut boot["storageSnapshot"]["stores"]["client.settings"];
@@ -1101,47 +1104,61 @@ fn a_descriptor_locked_at_boot_keeps_the_platform_the_settings_enable() {
         settings["defaultPlatformId"] = json!("egui-fixture");
     });
     frame(&mut app, &ctx);
+    let kept = |app: &AppModel| {
+        let s = app.booted().unwrap().stores.settings();
+        (s.enabled_platforms.clone(), s.default_platform_id.clone())
+    };
+    let locked = (
+        ["steam", "egui-fixture"].map(String::from).to_vec(),
+        "egui-fixture".to_string(),
+    );
     let b = app.booted().unwrap();
     assert!(b.platforms.iter().all(|p| p.id != "egui-fixture"));
-    let settings = b.stores.settings().clone();
     assert_eq!(
-        (
-            settings.enabled_platforms.as_slice(),
-            settings.default_platform_id.as_str()
-        ),
-        (
-            ["steam", "egui-fixture"].map(String::from).as_slice(),
-            "egui-fixture"
-        ),
+        kept(&app),
+        locked,
         "BOOT_LOCKED: the settings in memory lost the locked platform"
     );
-    // A settings save meanwhile keeps them.
-    let mut next = settings.clone();
+    // A settings save outside the panel keeps them.
+    let mut next = app.booted().unwrap().stores.settings().clone();
     next.language = Locale::Fr;
     app.booted.as_mut().unwrap().stores.save_settings(&next);
-    let saved = app.booted().unwrap().stores.settings();
-    assert_eq!(saved.enabled_platforms, settings.enabled_platforms);
-    assert_eq!(saved.default_platform_id, "egui-fixture");
+    assert_eq!(kept(&app), locked);
 
-    // The descriptor reads again: the next focus loads its platform.
-    let reloads = mock.seen("reload_user_platforms");
-    focus(&mut app, &ctx, true);
-    refocus_until(&mut app, &ctx, |a| {
-        a.booted()
-            .unwrap()
-            .platforms
-            .iter()
-            .any(|p| p.id == "egui-fixture")
+    // The panel's save of a zoom and of a toggle, then its close, too.
+    app.toggle_settings_panel();
+    pump_until(&mut app, &ctx, |a| {
+        a.settings_panel.as_ref().is_some_and(|p| p.hydrated)
     });
-    assert!(mock.seen("reload_user_platforms") > reloads);
-    let b = app.booted().unwrap();
-    assert!(b.user_platforms.as_ref().is_some_and(|r| !r.incomplete));
-    assert_eq!(b.stores.settings().default_platform_id, "egui-fixture");
-    assert!(b
+    let zoom = app.booted().unwrap().stores.settings().ui_scale_percent;
+    app.zoom_key(super::super::ui_scale::ZoomKey::In, Instant::now());
+    pump_until(&mut app, &ctx, |a| {
+        a.booted().unwrap().stores.settings().ui_scale_percent != zoom
+    });
+    app.apply_settings(
+        &ctx,
+        SettingsAction::Toggle(super::super::settings_panel::SettingFlag::ShowUsernames),
+    );
+    frame(&mut app, &ctx);
+    app.toggle_settings_panel();
+    assert!(app.settings_panel.is_none());
+    let s = app.booted().unwrap().stores.settings();
+    assert_ne!(s.ui_scale_percent, zoom, "the zoom was not saved");
+    assert_eq!(
+        kept(&app),
+        locked,
+        "PANEL_SAVE: the panel's save dropped the locked platform"
+    );
+    let stored = app
+        .booted()
+        .unwrap()
         .stores
-        .settings()
-        .enabled_platforms
-        .contains(&"egui-fixture".to_string()));
+        .storage()
+        .get(accshift_app::storage::CLIENT_STORE_SETTINGS)
+        .cloned()
+        .unwrap();
+    assert_eq!(stored["defaultPlatformId"], json!("egui-fixture"));
+    assert_eq!(stored["enabledPlatforms"], json!(["steam", "egui-fixture"]));
 }
 
 #[test]

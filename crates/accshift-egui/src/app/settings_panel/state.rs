@@ -35,7 +35,7 @@ pub struct SettingsPanel {
     pub(super) last_tracked: String,
     pub(super) save_at: Option<Instant>,
     pub(super) last_saved_toast: Option<Instant>,
-    pub(super) hydrated: bool,
+    pub(in crate::app) hydrated: bool,
     pub(super) hydrate_job: Option<Pending<HydrateResult>>,
     pub tab_bar: SettingsTabBar,
     pub ui_scale: NumericInput,
@@ -185,7 +185,8 @@ impl SettingsPanel {
         user_platforms: Option<UserPlatformReport>,
     ) -> Self {
         let mut draft = stores.settings().clone();
-        normalize(&mut draft, platforms, os);
+        let waiting = super::super::platforms::waiting(platforms, &stores.context().platform_ids);
+        normalize(&mut draft, platforms, &waiting, os);
         let enabled = draft.enabled_platforms.clone();
         let hydrate_job = Some(jobs.run(move |backend| {
             let has_key = backend.steam_has_api_key().unwrap_or(false);

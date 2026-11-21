@@ -391,7 +391,6 @@ fn boot_error_screen(app: &AppModel, ui: &mut Ui, screen: Rect) -> Vec<Action> {
         .collect()
 }
 
-/// A dialog, the palette or the onboarding's click shield covers the
 /// The restart modal a restore left, its texts in `locale`; `None` when no
 /// restart is needed.
 pub(super) fn restart_modal(
@@ -410,6 +409,7 @@ pub(super) fn restart_modal(
     })
 }
 
+/// A dialog, the palette or the onboarding's click shield covers the
 /// panel: the wheel lands on its overlay, never on the content under it.
 fn covers_panel(app: &AppModel, tour_open: bool, bulk_step: Option<BarStep>) -> bool {
     let dialogs = &app.dialogs;

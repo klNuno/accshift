@@ -121,8 +121,6 @@ pub fn usable(defs: &[PlatformDef], id: &str, os: RuntimeOs) -> bool {
     defs.iter().any(|def| def.id == id && def.supports(os))
 }
 
-/// The tab the app opens on: the default platform when enabled and usable,
-/// else the first usable enabled one, else the first this OS supports.
 /// The platform ids the settings keep: those of `defs`, and while a
 /// descriptor could not be read (`incomplete`) the ids the stored
 /// `settings` enable or default to, so the settings in memory and the next
@@ -146,6 +144,18 @@ pub fn store_ids(defs: &[PlatformDef], incomplete: bool, settings: Option<&Value
     ids
 }
 
+/// The ids of `store_ids` without a loaded descriptor in `defs`: the
+/// platforms the settings keep while their descriptor is locked.
+pub fn waiting(defs: &[PlatformDef], store_ids: &[String]) -> Vec<String> {
+    store_ids
+        .iter()
+        .filter(|id| !defs.iter().any(|def| def.id == **id))
+        .cloned()
+        .collect()
+}
+
+/// The tab the app opens on: the default platform when enabled and usable,
+/// else the first usable enabled one, else the first this OS supports.
 pub fn initial_tab(
     defs: &[PlatformDef],
     enabled: &[String],
