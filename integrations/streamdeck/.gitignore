@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dev.mtsu.accshift.sdPlugin/bin/
+dev.mtsu.accshift.sdPlugin/logs/
+dev.mtsu.accshift.sdPlugin/ui/inspector.js
+dev.mtsu.accshift.sdPlugin/*.json
+!dev.mtsu.accshift.sdPlugin/manifest.json
+dev.mtsu.accshift.sdPlugin/imgs/plugin/marketplace*.png

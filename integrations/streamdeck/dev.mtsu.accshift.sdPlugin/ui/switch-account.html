@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>accshift</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 8px 12px;
+        background: #2d2d2d;
+        color: #d8d8d8;
+        font: 9pt system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      label {
+        flex: 0 0 80px;
+        text-align: right;
+      }
+      select,
+      button {
+        flex: 1;
+        min-width: 0;
+        background: #3d3d3d;
+        color: #d8d8d8;
+        border: 0;
+        border-radius: 3px;
+        padding: 4px 6px;
+        font: inherit;
+      }
+      button {
+        flex: 0 0 auto;
+        cursor: pointer;
+      }
+      .note,
+      #error {
+        margin: 4px 0 0 88px;
+        line-height: 1.4;
+      }
+      .note {
+        color: #9a9a9a;
+      }
+      #error {
+        color: #f5a623;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="row">
+      <label for="platform" data-i18n="pi.platform"></label>
+      <select id="platform"></select>
+      <button id="refresh" type="button" data-i18n="pi.refresh"></button>
+    </div>
+    <div class="row">
+      <label for="account" data-i18n="pi.account"></label>
+      <select id="account"></select>
+    </div>
+    <p id="error" role="alert" hidden></p>
+    <p class="note" data-i18n="pi.hint"></p>
+    <script src="inspector.js"></script>
+  </body>
+</html>

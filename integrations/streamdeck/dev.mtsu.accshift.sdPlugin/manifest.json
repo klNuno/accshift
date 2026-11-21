@@ -1,0 +1,47 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "Name": "accshift",
+  "Version": "0.1.0.0",
+  "Author": "mtsu",
+  "Description": "Switch game accounts with accshift, one key per account.",
+  "URL": "https://github.com/klNuno/accshift",
+  "UUID": "dev.mtsu.accshift",
+  "Category": "accshift",
+  "CategoryIcon": "imgs/plugin/category-icon",
+  "Icon": "imgs/plugin/marketplace",
+  "CodePath": "bin/plugin.js",
+  "SDKVersion": 3,
+  "Software": {
+    "MinimumVersion": "7.1"
+  },
+  "OS": [
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    }
+  ],
+  "Nodejs": {
+    "Version": "24",
+    "Debug": "disabled"
+  },
+  "Actions": [
+    {
+      "Name": "Switch account",
+      "UUID": "dev.mtsu.accshift.switch",
+      "Icon": "imgs/actions/switch/icon",
+      "Tooltip": "Switch to the chosen account in accshift.",
+      "PropertyInspectorPath": "ui/switch-account.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true,
+      "States": [
+        {
+          "Image": "imgs/actions/switch/key",
+          "TitleAlignment": "bottom",
+          "ShowTitle": true
+        }
+      ]
+    }
+  ]
+}
