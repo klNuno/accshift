@@ -166,6 +166,8 @@
   "settings.backupRestored": "Sauvegarde restaurée. L'ancienne configuration a été copiée dans {path}",
   "settings.backupRestoreFailed": "Échec de la restauration : {error}",
   "settings.backupRestartNeeded": "Sauvegarde restaurée. Redémarrez accshift pour la charger.",
+  "settings.backupRestartUnknown": "accshift a perdu le fil de la restauration. Les fichiers peuvent contenir la sauvegarde, votre configuration précédente ou un mélange des deux. Redémarrez accshift pour charger ce qui est sur le disque ; tout fichier remplacé par la restauration a d'abord été copié sous user/backups dans le dossier d'accshift.",
+  "settings.backupRestartIncomplete": "La restauration a échoué et certains fichiers n'ont pas pu être remis en place : {error}. Redémarrez accshift pour charger ce qui est sur le disque.",
   "settings.backupRestartTitle": "Redémarrage nécessaire",
   "settings.backupRestartNow": "Redémarrer maintenant",
   "settings.backupRestartFailed": "accshift n'a pas pu redémarrer : {error}. Fermez-le puis rouvrez-le.",

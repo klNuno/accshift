@@ -166,6 +166,8 @@
   "settings.backupRestored": "备份已恢复。之前的配置已复制到 {path}",
   "settings.backupRestoreFailed": "恢复失败：{error}",
   "settings.backupRestartNeeded": "备份已恢复。请重启 accshift 以加载。",
+  "settings.backupRestartUnknown": "accshift 已无法追踪此次恢复。文件中可能是备份、之前的配置或两者的混合。请重启 accshift 以加载磁盘上的内容；恢复替换的每个文件都已先复制到 accshift 文件夹的 user/backups 下。",
+  "settings.backupRestartIncomplete": "恢复失败，部分文件无法还原：{error}。请重启 accshift 以加载磁盘上的内容。",
   "settings.backupRestartTitle": "需要重启",
   "settings.backupRestartNow": "立即重启",
   "settings.backupRestartFailed": "accshift 无法重启：{error}。请关闭后重新打开。",

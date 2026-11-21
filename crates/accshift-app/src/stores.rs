@@ -444,6 +444,13 @@ impl ClientStores {
         self.ctx = ctx;
     }
 
+    /// Sanitizes the stored settings again against the context, for a
+    /// platform list that lost ids it only kept while their descriptors
+    /// could not be read.
+    pub fn resanitize_settings(&mut self) {
+        self.reload(CLIENT_STORE_SETTINGS);
+    }
+
     pub fn storage(&self) -> &ClientStorage {
         &self.storage
     }
@@ -492,14 +499,26 @@ impl ClientStores {
 
     /// Takes a whole snapshot read after a restore: every store and the
     /// manifest, the debounced writes dropped, the typed stores rebuilt
-    /// with the current context. Returns every client store id.
+    /// with the current context. Returns the targets other than client
+    /// stores whose fingerprint the snapshot changed (a session mark the CLI
+    /// wrote meanwhile), then every client store id: the manifest now takes
+    /// them as seen, so the caller is the last one to hear of them.
     pub fn adopt_snapshot(&mut self, snapshot: ClientStorageSnapshot) -> Vec<String> {
+        let other_targets: Vec<String> =
+            crate::storage::diff_manifests(self.storage.manifest(), &snapshot.manifest)
+                .into_iter()
+                .filter(|key| !crate::storage::is_client_store_id(key))
+                .collect();
         self.storage.discard_pending_saves();
         self.storage.apply_snapshot(snapshot);
         self.sync();
-        crate::storage::CLIENT_STORE_IDS
-            .iter()
-            .map(|id| id.to_string())
+        other_targets
+            .into_iter()
+            .chain(
+                crate::storage::CLIENT_STORE_IDS
+                    .iter()
+                    .map(|id| id.to_string()),
+            )
             .collect()
     }
 

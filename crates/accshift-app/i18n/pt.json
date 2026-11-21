@@ -166,6 +166,8 @@
   "settings.backupRestored": "Cópia restaurada. A configuração anterior foi copiada para {path}",
   "settings.backupRestoreFailed": "Falha no restauro: {error}",
   "settings.backupRestartNeeded": "Cópia restaurada. Reinicie o accshift para a carregar.",
+  "settings.backupRestartUnknown": "O accshift perdeu o rasto do restauro. Os ficheiros podem conter a cópia, a sua configuração anterior ou uma mistura das duas. Reinicie o accshift para carregar o que está no disco; cada ficheiro que o restauro substituiu foi antes copiado para user/backups, na pasta do accshift.",
+  "settings.backupRestartIncomplete": "O restauro falhou e alguns ficheiros não puderam ser repostos: {error}. Reinicie o accshift para carregar o que está no disco.",
   "settings.backupRestartTitle": "Reinício necessário",
   "settings.backupRestartNow": "Reiniciar agora",
   "settings.backupRestartFailed": "O accshift não conseguiu reiniciar: {error}. Feche-o e volte a abri-lo.",

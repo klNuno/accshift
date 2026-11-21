@@ -166,6 +166,8 @@
   "settings.backupRestored": "Копия восстановлена. Прежние настройки скопированы в {path}",
   "settings.backupRestoreFailed": "Не удалось восстановить: {error}",
   "settings.backupRestartNeeded": "Копия восстановлена. Перезапустите accshift, чтобы загрузить её.",
+  "settings.backupRestartUnknown": "accshift потерял связь с восстановлением. Файлы могут содержать копию, прежние настройки или их смесь. Перезапустите accshift, чтобы загрузить то, что на диске; каждый файл, который заменило восстановление, сначала был скопирован в user/backups в папке accshift.",
+  "settings.backupRestartIncomplete": "Восстановление не удалось, и некоторые файлы не удалось вернуть: {error}. Перезапустите accshift, чтобы загрузить то, что на диске.",
   "settings.backupRestartTitle": "Требуется перезапуск",
   "settings.backupRestartNow": "Перезапустить",
   "settings.backupRestartFailed": "Не удалось перезапустить accshift: {error}. Закройте его и откройте снова.",
