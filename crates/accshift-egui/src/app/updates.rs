@@ -43,7 +43,9 @@ pub(super) struct Updates {
     /// A normal run: [`Self::relaunch`] starts accshift again. Mock and
     /// scene runs only count the request.
     relaunches: bool,
-    /// The relaunches asked for in a run that does not relaunch.
+    /// The relaunches asked for in a run that does not relaunch, for the
+    /// tests.
+    #[cfg(test)]
     relaunch_requests: usize,
 }
 
@@ -57,6 +59,7 @@ impl Updates {
             running: None,
             main_tasks: mpsc::channel(),
             relaunches: false,
+            #[cfg(test)]
             relaunch_requests: 0,
         }
     }
@@ -72,6 +75,7 @@ impl Updates {
             running: None,
             main_tasks: mpsc::channel(),
             relaunches: true,
+            #[cfg(test)]
             relaunch_requests: 0,
         }
     }
@@ -79,10 +83,14 @@ impl Updates {
     /// Starts accshift again and exits, as the update relaunch does, the
     /// window hidden first. Returns only when no new process started; the
     /// app then stays open as the single instance. The caller flushed what
-    /// had to be written. A mock or scene run counts the request and stays.
+    /// had to be written. A mock or scene run stays; a test counts the
+    /// request.
     pub(super) fn relaunch(&mut self, ctx: &Context) -> Result<(), String> {
         if !self.relaunches {
-            self.relaunch_requests += 1;
+            #[cfg(test)]
+            {
+                self.relaunch_requests += 1;
+            }
             return Ok(());
         }
         let args: Vec<_> = std::env::args_os().collect();
