@@ -32,7 +32,13 @@ override it.
 ```bash
 accshift platforms               # list platforms known to this build
 accshift list <platform>         # list accounts for a platform
-accshift list <platform> --folder <name>
+accshift list <platform> --folder <name-or-id>
+accshift folders <platform>      # folder tree with ids and account counts
+accshift current [platform]      # account signed in on each platform
+accshift search <query>          # accounts on every platform by name or note
+accshift personas                # personas saved in the app
+accshift persona <name-or-id>    # switch every account of a persona
+accshift completions <bash|zsh|fish|powershell>
 accshift switch <platform> <account-id>
     [--online | --invisible]
     [--graceful | --force]
@@ -49,9 +55,124 @@ Every one of these needs the "Allow the accshift CLI" toggle in the app
 (Settings > General > Integrations). With it off they all exit 7 and do
 nothing, `diag` included.
 
-`--folder` matches a name within the selected platform, without case
-sensitivity, and includes accounts in nested folders. Duplicate names are
-ambiguous and cause an error. Folder IDs and paths are not accepted.
+`--folder` takes a folder id (from `accshift folders`) or a name within the
+selected platform, matched without case sensitivity, and includes accounts in
+nested folders. An id wins over a name. A name two folders share is refused
+with `ambiguous_folder` (exit 1), and the error lists each candidate's id and
+path; the JSON error carries them under `error.details.candidates`. A
+resolved folder's path is in the JSON `data.folderPath`.
+
+```
+$ accshift list steam --folder main
+error: Folder name 'main' matches 2 folders on steam. Pass one of these ids with --folder:
+  mbx41k2q9f  Main
+  mbx5c7aa1z  Smurfs / main
+  code: ambiguous_folder
+
+$ accshift list steam --folder mbx5c7aa1z
+Folder: Smurfs / main
+...
+```
+
+### folders
+
+`folders <platform>` prints the platform's folder tree, depth first, siblings
+in the order the app shows them. `ACCOUNTS` counts the folder and everything
+nested in it, as the folder store records them. JSON gives each folder its
+`id`, `name`, `parentId`, `path`, `depth`, `accounts` (placed directly) and
+`totalAccounts`.
+
+```
+$ accshift folders steam
+ID          FOLDER    ACCOUNTS
+mbx5c7aa1z  Smurfs    2
+mbx6d0p3kk    main    1
+mbx41k2q9f  Main      2
+
+Folders: 3
+```
+
+### current
+
+`current` asks each platform which account is signed in, with the same
+detection the app uses for its "current" badge. `current <platform>` asks one.
+A platform that cannot tell (client not installed, never signed in) answers
+`unknown` rather than failing, so the command exits 0. JSON entries hold
+`platform`, `status` (`known` or `unknown`), `accountId` (the id `switch`
+takes) and `name`.
+
+```
+$ accshift current
+PLATFORM    ACCOUNT  NAME
+steam       alice    Alice
+riot        unknown
+battle-net  unknown
+```
+
+### search
+
+`search <query>` looks through every platform's accounts for the text, without
+case sensitivity, in the account id, its display name (persona name, label,
+BattleTag), its secondary id (Riot ID, Steam ID, Roblox username) and its note
+from the app. It exits 0 with no match. A platform whose accounts cannot be read is listed in
+`skipped` (on stderr for people).
+
+```
+$ accshift search smurf
+PLATFORM  ID     NAME   NOTE
+steam     carol  Carol  Faceit smurf
+
+Matches: 1
+```
+
+### personas and persona
+
+`personas` lists the personas saved in the app with their assignments.
+`persona <name-or-id>` switches every account of that persona, in the
+persona's order, with the same platform switch, Steam settings, PIN prompt,
+operation lock and exit codes as `switch`. A platform this build does not have
+is skipped and reported, as the app does. The switch stops at the first
+failure, and the report says which platforms switched, which one failed and
+why, and which were not tried; the exit code is the failed step's (3 for an
+account no longer listed, 1 for a platform error). A name two personas share
+is refused with `ambiguous_persona` and their ids.
+
+```
+$ accshift persona Main
+Switched to Main: steam (76561198000000001), riot (6b1f...).
+
+$ accshift persona Main
+error: Main stopped at riot (6b1f...): Riot profile not found
+Switched before the failure: steam (76561198000000001)
+Not tried: epic (e1)
+  code: unknown_account
+```
+
+The JSON error carries the whole report under `error.details.report`:
+`succeeded`, `failed` (`platformId`, `accountId`, `code`, `message`),
+`notTried` and `skipped`.
+
+### completions
+
+`completions <shell>` prints a completion script generated from the same
+definition the binary parses with, for `bash`, `zsh`, `fish` or `powershell`.
+It always prints the raw script, piped or not, and like every subcommand it
+needs the "Allow the accshift CLI" toggle.
+
+```bash
+accshift completions bash > ~/.local/share/bash-completion/completions/accshift
+accshift completions zsh > "${fpath[1]}/_accshift"
+accshift completions fish > ~/.config/fish/completions/accshift.fish
+accshift completions powershell >> $PROFILE
+```
+
+### Language
+
+The text `folders`, `current`, `search`, `personas`, `persona` and the
+`--folder` errors print for people follows the app's language (Settings),
+else the OS language: English, French, Spanish, Portuguese, Brazilian
+Portuguese, Russian or Chinese. The older commands still print English. JSON output, error messages included, is always English, so a script
+reads the same text on every machine; its contract is the `code`.
 
 The full `diag` command reference is in [logging.md](./logging.md).
 

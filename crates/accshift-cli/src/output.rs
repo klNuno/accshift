@@ -60,6 +60,23 @@ pub fn emit_err(format: Format, command: &str, code: &str, message: &str) {
     }
 }
 
+/// An error carrying structured detail for scripts, under `error.details`
+/// in JSON. On a terminal the message says it all.
+pub fn emit_err_with(format: Format, command: &str, code: &str, message: &str, details: Value) {
+    match format {
+        Format::Json => {
+            let envelope = json!({
+                "schema": SCHEMA,
+                "ok": false,
+                "command": command,
+                "error": { "code": code, "message": message, "details": details },
+            });
+            eprintln!("{envelope}");
+        }
+        Format::Human => emit_err(format, command, code, message),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Human renderers
 // ---------------------------------------------------------------------------
@@ -118,18 +135,9 @@ pub fn render_accounts(
     current: Option<&str>,
     folder_filter: Option<&std::collections::HashSet<String>>,
 ) {
-    let mut rows: Vec<AccountRow> = accounts
-        .iter()
-        .filter_map(|a| extract_row(platform_id, a))
-        .filter(|r| match folder_filter {
-            Some(ids) => ids.contains(&r.folder_id),
-            None => true,
-        })
-        .collect();
-
     // Most-recently used first so the active account is at the top. The
     // current account marker already floats it; this matters for siblings.
-    rows.sort_by_key(|r| std::cmp::Reverse(r.sort_key));
+    let rows = account_rows(platform_id, accounts, folder_filter);
 
     if rows.is_empty() {
         println!("No accounts configured.");
@@ -140,7 +148,7 @@ pub fn render_accounts(
     let primary_header = primary_header_for(platform_id);
     let secondary_header = secondary_header_for(platform_id);
 
-    let id_w = column_width(&rows, |r| &r.id, id_header);
+    let id_w = column_width(&rows, |r| &r.switch_id, id_header);
     let primary_w = column_width(&rows, |r| &r.primary, primary_header);
 
     // The "  " leading gutter holds the "*" marker for the current account.
@@ -153,7 +161,7 @@ pub fn render_accounts(
 
     for row in &rows {
         let marker = if current
-            .map(|c| c.eq_ignore_ascii_case(&row.id))
+            .map(|c| c.eq_ignore_ascii_case(&row.switch_id) || c == row.storage_id)
             .unwrap_or(false)
         {
             "*"
@@ -162,7 +170,7 @@ pub fn render_accounts(
         };
         println!(
             "{marker} {}  {}  {}",
-            pad(&row.id, id_w),
+            pad(&row.switch_id, id_w),
             pad(&row.primary, primary_w),
             row.secondary,
         );
@@ -223,16 +231,23 @@ pub fn render_dry_run(plan: &DryRunPlan) {
 // ---------------------------------------------------------------------------
 
 pub struct AccountRow {
-    pub id: String,
+    /// The id `accshift switch` takes for this account: the account name for
+    /// Steam, the stored id everywhere else.
+    pub switch_id: String,
     pub primary: String,
     pub secondary: String,
     /// Higher means more recent. Used for descending sort.
     pub sort_key: u64,
-    /// The ID used by the GUI folder store to reference this account.
-    /// Differs from `id` for Steam (account_name vs steam_id) and Roblox.
-    pub folder_id: String,
+    /// The id the GUI stores the account under (folders, notes, personas),
+    /// the app adapter's `PlatformAccount.id`. Differs from `switch_id` for
+    /// Steam (Steam ID against account name).
+    pub storage_id: String,
 }
 
+/// One row of a platform's `get_accounts` payload, read with the field
+/// names the core services serialize: snake_case for Steam and Riot,
+/// camelCase for Roblox, Battle.net and every descriptor platform (shipped
+/// or user). `None` when the row has no id.
 pub fn extract_row(platform_id: &str, account: &Value) -> Option<AccountRow> {
     let get = |key: &str| {
         account
@@ -241,107 +256,88 @@ pub fn extract_row(platform_id: &str, account: &Value) -> Option<AccountRow> {
             .map(String::from)
             .unwrap_or_default()
     };
-    let get_num = |key: &str| account.get(key).and_then(Value::as_u64).unwrap_or(0);
+    let get_num = |key: &str| account.get(key).and_then(Value::as_u64);
 
     match platform_id {
         "steam" => {
-            let steam_id = get("steam_id");
+            let steam_id = nonempty(get("steam_id"))?;
             Some(AccountRow {
-                id: nonempty(get("account_name"))?,
+                switch_id: nonempty(get("account_name"))?,
                 primary: get("persona_name"),
                 secondary: steam_id.clone(),
-                sort_key: get_num("last_login_at"),
-                folder_id: steam_id,
+                sort_key: get_num("last_login_at").unwrap_or(0),
+                storage_id: steam_id,
             })
         }
         "roblox" => {
-            let user_id = get("user_id");
+            let user_id = nonempty(get("userId"))?;
+            let username = get("username");
             Some(AccountRow {
-                id: nonempty(get("username"))?,
-                primary: get("display_name"),
-                secondary: user_id.clone(),
-                sort_key: get_num("last_used_at"),
-                folder_id: user_id,
+                switch_id: user_id.clone(),
+                primary: first_nonempty(get("displayName"), username.clone()),
+                secondary: username,
+                sort_key: get_num("lastLoginAt").unwrap_or(0),
+                storage_id: user_id,
             })
         }
         "riot" => {
             let pid = nonempty(get("id"))?;
             Some(AccountRow {
-                id: pid.clone(),
+                switch_id: pid.clone(),
                 primary: get("label"),
                 secondary: format_riot_tag(&get("account_name"), &get("account_tag_line")),
-                sort_key: get_num("last_used_at"),
-                folder_id: pid,
+                sort_key: get_num("last_used_at")
+                    .or_else(|| get_num("last_captured_at"))
+                    .unwrap_or(0),
+                storage_id: pid,
             })
         }
         "battle-net" => {
             let email = nonempty(get("email"))?;
             Some(AccountRow {
-                id: email.clone(),
-                primary: get("battle_tag"),
+                switch_id: email.clone(),
+                primary: get("battleTag"),
                 secondary: String::new(),
-                sort_key: get_num("last_used_at"),
-                folder_id: email,
+                sort_key: get_num("lastLoginAt").unwrap_or(0),
+                storage_id: email,
             })
         }
-        "ubisoft" => {
-            let uuid = nonempty(get("uuid"))?;
-            Some(AccountRow {
-                id: uuid.clone(),
-                primary: get("label"),
-                secondary: String::new(),
-                sort_key: get_num("last_used_at"),
-                folder_id: uuid,
-            })
-        }
-        "epic" => {
-            let account_id = nonempty(get("account_id"))?;
-            Some(AccountRow {
-                id: account_id.clone(),
-                primary: get("label"),
-                secondary: String::new(),
-                sort_key: get_num("last_used_at"),
-                folder_id: account_id,
-            })
-        }
-        "gog" | "jagex" => {
-            let account_id = nonempty(get("account_id"))?;
-            Some(AccountRow {
-                id: account_id.clone(),
-                primary: get("label"),
-                secondary: String::new(),
-                sort_key: get_num("last_used_at"),
-                folder_id: account_id,
-            })
-        }
-        "discord" => {
-            let account_id = nonempty(get("account_id"))?;
-            Some(AccountRow {
-                id: account_id.clone(),
-                primary: get("label"),
-                secondary: String::new(),
-                sort_key: get_num("last_used_at"),
-                folder_id: account_id,
-            })
-        }
+        // Epic, GOG, Jagex, Discord, Ubisoft and user platforms: the
+        // descriptor engine's `DescriptorAccount`.
         _ => {
-            // Best-effort fallback for unknown platforms: show the raw JSON.
-            let id = nonempty(
-                account
-                    .get("id")
-                    .or_else(|| account.get("username"))
-                    .and_then(Value::as_str)
-                    .map(String::from)
-                    .unwrap_or_default(),
-            )?;
+            let account_id = nonempty(get("accountId"))?;
             Some(AccountRow {
-                id: id.clone(),
-                primary: account.to_string(),
+                switch_id: account_id.clone(),
+                primary: first_nonempty(get("label"), account_id.clone()),
                 secondary: String::new(),
-                sort_key: 0,
-                folder_id: id,
+                sort_key: get_num("lastUsedAt").unwrap_or(0),
+                storage_id: account_id,
             })
         }
+    }
+}
+
+/// The rows `list` shows: every readable account, or those whose stored id
+/// the folder holds, most recent first.
+pub fn account_rows(
+    platform_id: &str,
+    accounts: &[Value],
+    folder_filter: Option<&std::collections::HashSet<String>>,
+) -> Vec<AccountRow> {
+    let mut rows: Vec<AccountRow> = accounts
+        .iter()
+        .filter_map(|a| extract_row(platform_id, a))
+        .filter(|r| folder_filter.is_none_or(|ids| ids.contains(&r.storage_id)))
+        .collect();
+    rows.sort_by_key(|r| std::cmp::Reverse(r.sort_key));
+    rows
+}
+
+fn first_nonempty(first: String, fallback: String) -> String {
+    if first.trim().is_empty() {
+        fallback
+    } else {
+        first
     }
 }
 
@@ -365,12 +361,11 @@ fn format_riot_tag(name: &str, tag: &str) -> String {
 fn id_header_for(platform_id: &str) -> &'static str {
     match platform_id {
         "steam" => "ACCOUNT",
-        "roblox" => "USERNAME",
+        "roblox" => "USER ID",
         "riot" => "PROFILE ID",
         "battle-net" => "EMAIL",
         "ubisoft" => "UUID",
-        "epic" | "gog" | "jagex" | "discord" => "ACCOUNT ID",
-        _ => "ID",
+        _ => "ACCOUNT ID",
     }
 }
 
@@ -387,10 +382,18 @@ fn primary_header_for(platform_id: &str) -> &'static str {
 fn secondary_header_for(platform_id: &str) -> &'static str {
     match platform_id {
         "steam" => "STEAM ID",
-        "roblox" => "USER ID",
+        "roblox" => "USERNAME",
         "riot" => "RIOT ID",
         _ => "",
     }
+}
+
+pub fn column_width_of<F: Fn(&T) -> &str, T>(rows: &[T], field: F, header: &str) -> usize {
+    rows.iter()
+        .map(|r| display_width(field(r)))
+        .max()
+        .unwrap_or(0)
+        .max(display_width(header))
 }
 
 fn column_width<F: Fn(&AccountRow) -> &str>(rows: &[AccountRow], field: F, header: &str) -> usize {
@@ -407,7 +410,7 @@ fn display_width(s: &str) -> usize {
 }
 
 /// Right-pad `s` with spaces so its rendered width equals `target`.
-fn pad(s: &str, target: usize) -> String {
+pub fn pad(s: &str, target: usize) -> String {
     let w = display_width(s);
     if w >= target {
         s.to_string()

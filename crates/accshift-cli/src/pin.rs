@@ -22,7 +22,12 @@ use std::time::SystemTime;
 /// result. Otherwise an exit code the caller should return without switching.
 /// Wrong codes share the GUI's on-disk wait, so a script cannot try codes
 /// faster than the lock screen allows.
-pub fn enforce(ctx: &dyn AppContext, format: Format, lock: PinLock) -> Result<PinLock, u8> {
+pub fn enforce(
+    ctx: &dyn AppContext,
+    format: Format,
+    command: &str,
+    lock: PinLock,
+) -> Result<PinLock, u8> {
     let stored_hash = match lock {
         PinLock::Off => return Ok(PinLock::Off),
         PinLock::On(hash) => hash,
@@ -31,7 +36,7 @@ pub fn enforce(ctx: &dyn AppContext, format: Format, lock: PinLock) -> Result<Pi
             // letting the switch through.
             emit_err(
                 format,
-                "switch",
+                command,
                 "pin_required",
                 "PIN lock is enabled but no valid PIN hash is configured. Set a PIN in the app first.",
             );
@@ -41,7 +46,7 @@ pub fn enforce(ctx: &dyn AppContext, format: Format, lock: PinLock) -> Result<Pi
             // Nobody can tell whether a PIN was set: never read that as "no".
             emit_err(
                 format,
-                "switch",
+                command,
                 "pin_required",
                 &format!(
                     "Could not read the app settings ({reason}). The PIN lock stays enforced."
@@ -51,7 +56,7 @@ pub fn enforce(ctx: &dyn AppContext, format: Format, lock: PinLock) -> Result<Pi
         }
     };
 
-    let attempt = match read_pin(format) {
+    let attempt = match read_pin(format, command) {
         Some(p) => p,
         None => return Err(exit::PIN_DENIED),
     };
@@ -61,7 +66,7 @@ pub fn enforce(ctx: &dyn AppContext, format: Format, lock: PinLock) -> Result<Pi
         Ok(ThrottledVerdict::RetryLater(wait)) => {
             emit_err(
                 format,
-                "switch",
+                command,
                 "pin_retry_later",
                 &format!(
                     "Too many incorrect PINs. Try again in {} s.",
@@ -71,7 +76,7 @@ pub fn enforce(ctx: &dyn AppContext, format: Format, lock: PinLock) -> Result<Pi
             return Err(exit::PIN_DENIED);
         }
         Err(e) => {
-            emit_err(format, "switch", "io", &e.message);
+            emit_err(format, command, "io", &e.message);
             return Err(exit::PIN_DENIED);
         }
     };
@@ -106,7 +111,7 @@ pub fn enforce(ctx: &dyn AppContext, format: Format, lock: PinLock) -> Result<Pi
         PinVerdict::Rejected => {
             emit_err(
                 format,
-                "switch",
+                command,
                 "pin_invalid",
                 "Incorrect PIN. The account switch was cancelled.",
             );
@@ -120,13 +125,13 @@ pub fn enforce(ctx: &dyn AppContext, format: Format, lock: PinLock) -> Result<Pi
 /// `accshift-cli`); if suppression fails for any reason we fall back to a
 /// visible prompt and say so, rather than pretending the input is hidden.
 /// Returns `None` if no PIN could be read (no stdin, EOF).
-fn read_pin(format: Format) -> Option<String> {
+fn read_pin(format: Format, command: &str) -> Option<String> {
     // Only prompt interactively on a real TTY. In a pipe there is no human to
     // answer, so refuse rather than block or silently pass.
     if !std::io::stdin().is_terminal() {
         emit_err(
             format,
-            "switch",
+            command,
             "pin_required",
             "PIN lock is enabled. Run this command from an interactive terminal to enter the PIN.",
         );
@@ -157,7 +162,7 @@ fn read_pin(format: Format) -> Option<String> {
         Ok(0) => None, // EOF, no input
         Ok(_) => Some(line),
         Err(e) => {
-            emit_err(format, "switch", "io", &e.to_string());
+            emit_err(format, command, "io", &e.to_string());
             None
         }
     }
@@ -297,7 +302,7 @@ mod tests {
     #[test]
     fn no_pin_lets_the_switch_through_without_a_prompt() {
         assert_eq!(
-            enforce(&NoDirs, Format::Json, PinLock::Off),
+            enforce(&NoDirs, Format::Json, "switch", PinLock::Off),
             Ok(PinLock::Off)
         );
     }
@@ -305,11 +310,16 @@ mod tests {
     #[test]
     fn a_misconfigured_or_unreadable_lock_fails_closed() {
         assert_eq!(
-            enforce(&NoDirs, Format::Json, PinLock::Misconfigured),
+            enforce(&NoDirs, Format::Json, "switch", PinLock::Misconfigured),
             Err(exit::PIN_DENIED)
         );
         assert_eq!(
-            enforce(&NoDirs, Format::Json, PinLock::Unreadable("corrupt".into())),
+            enforce(
+                &NoDirs,
+                Format::Json,
+                "switch",
+                PinLock::Unreadable("corrupt".into())
+            ),
             Err(exit::PIN_DENIED)
         );
     }
