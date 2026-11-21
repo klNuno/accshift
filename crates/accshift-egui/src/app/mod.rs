@@ -45,6 +45,7 @@ mod saves;
 mod secure;
 pub mod settings_panel;
 mod shell;
+pub mod shortcuts;
 mod theme;
 pub mod theme_editor;
 mod ui_scale;
@@ -314,6 +315,8 @@ pub struct AppModel {
     personas: personas::PersonasState,
     /// The deep link controller, listening from the start.
     deep_links: deep_link::DeepLinks,
+    /// The global shortcuts, their capture and the tab's lists.
+    shortcuts: shortcuts::Shortcuts,
     /// The updater and its start timer.
     updates: updates::Updates,
     /// The Liquid Glass wallpaper backdrop.

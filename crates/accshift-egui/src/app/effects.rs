@@ -68,7 +68,9 @@ impl AppModel {
                     self.settle_deep_link_confirm(ctx, ticket, allowed);
                 }
                 AppEffect::CustomMenu(id) => {
-                    if !field_menu::run(ctx, &id) {
+                    if let Some(target) = accshift_app::shortcuts::parse_account_menu_id(&id) {
+                        self.open_shortcut_capture(target);
+                    } else if !field_menu::run(ctx, &id) {
                         self.apply_persona_menu(ctx, &id);
                     }
                 }
@@ -123,11 +125,13 @@ impl AppModel {
         self.toasts.push(toast, Instant::now());
     }
 
-    /// Drops an account from the active tab's grid and folders.
+    /// Drops an account from the active tab's grid, folders and shortcuts.
     fn remove_account(&mut self, account_id: &str) {
         if let Some(b) = self.booted.as_mut() {
             b.accounts
                 .remove_account(&mut b.stores, &b.nav.active_tab, account_id);
+            let tab = b.nav.active_tab.clone();
+            super::shortcuts::edit_shortcuts(&mut b.stores, |s| s.remove_account(&tab, account_id));
         }
     }
 

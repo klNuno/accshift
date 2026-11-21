@@ -46,11 +46,13 @@ impl AppModel {
         self.track_drag(&ctx);
         self.update_accounts(&ctx);
         self.tick_personas(&ctx);
+        self.tick_shortcuts(&ctx);
         self.tick_deep_links(&ctx);
         self.tick_updates(&ctx);
         self.tick_toasts(&ctx);
         // The window-level key handling, before any widget reads keys.
         self.track_card_focus(&ctx);
+        self.capture_shortcut_keys(&ctx);
         self.dispatch_keys(&ctx);
         self.dispatch_mouse_back(&ctx);
         self.mount_dialogs();

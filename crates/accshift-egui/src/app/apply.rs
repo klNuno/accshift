@@ -125,8 +125,19 @@ impl AppModel {
             }
             return;
         }
+        self.switch_loaded_account(id);
+    }
+
+    /// The card's switch of an account of the active tab, also run by a
+    /// global shortcut once its walk reached the tab: a card still in setup
+    /// does nothing, a conflicting add flow is dropped. True when the switch
+    /// started.
+    pub(super) fn switch_loaded_account(&mut self, id: &str) -> bool {
+        let Some(b) = self.booted.as_mut() else {
+            return false;
+        };
         if b.accounts.is_pending_setup(id) {
-            return;
+            return false;
         }
         let tab = b.nav.active_tab.clone();
         b.accounts
@@ -139,9 +150,7 @@ impl AppModel {
             .iter()
             .find(|a| a.id == id)
             .cloned();
-        if let Some(account) = account {
-            self.switch_account(&account);
-        }
+        account.is_some_and(|account| self.switch_account(&account))
     }
 
     /// A card click: drops a setup of the tab unless it is this card's.

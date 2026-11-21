@@ -43,7 +43,7 @@ enum Waiting {
 /// The controller and what it waits for.
 #[derive(Default)]
 pub(super) struct DeepLinks {
-    controller: DeepLinkController,
+    pub(super) controller: DeepLinkController,
     waiting: Option<Waiting>,
 }
 
@@ -264,7 +264,13 @@ impl AppModel {
                     self.step_deep_link(ctx, Step::Answer(DeepLinkAnswer::TabChanged));
                 }
                 DeepLinkAction::Switch(account) => {
-                    if self.switch_account(&account) {
+                    // A shortcut switches as the account's card does.
+                    let started = if self.deep_links.controller.is_shortcut() {
+                        self.switch_loaded_account(&account.id)
+                    } else {
+                        self.switch_account(&account)
+                    };
+                    if started {
                         self.deep_links.waiting = Some(Waiting::Switch(account.id));
                     } else {
                         self.step_deep_link(ctx, Step::Answer(DeepLinkAnswer::Switched(false)));

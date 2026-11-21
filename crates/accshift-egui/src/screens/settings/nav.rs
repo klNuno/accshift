@@ -34,6 +34,9 @@ const ICON_GENERAL: &[u8] = svg14!(
 const ICON_PLATFORMS: &[u8] =
     svg14!("<path d=\"M3 3h7v7H3z M14 3h7v7h-7z M14 14h7v7h-7z M3 14h7v7H3z\"/>");
 const ICON_PRIVACY: &[u8] = svg14!("<path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\"/>");
+const ICON_SHORTCUTS: &[u8] = svg14!(
+    "<rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"2\"/><path d=\"M6 8h.01 M10 8h.01 M14 8h.01 M18 8h.01 M8 12h.01 M12 12h.01 M16 12h.01 M7 16h10\"/>"
+);
 const ICON_HELP: &[u8] = svg14!(
     "<circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3\"/><line x1=\"12\" y1=\"17\" x2=\"12.01\" y2=\"17\"/>"
 );
@@ -260,6 +263,7 @@ fn nav_item(ui: &mut Ui, rect: Rect, tab: &TabDef, f: &Frame) -> bool {
             let svg = match tab.id.as_str() {
                 "platforms" => ICON_PLATFORMS,
                 "privacy" => ICON_PRIVACY,
+                "shortcuts" => ICON_SHORTCUTS,
                 _ => ICON_GENERAL,
             };
             let a = if active { 1.0 } else { 0.75 };

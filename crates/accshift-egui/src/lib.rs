@@ -34,6 +34,9 @@ pub struct Shell {
     pub window: Option<window::Host>,
     /// [`Self::close`] ran: the close button and an OS quit both call it.
     closed: bool,
+    /// The runner's way back for a global shortcut, until the app takes
+    /// it ([`AppModel::set_hotkey_registrar`]).
+    hotkeys: Option<window::hotkeys::Deliver>,
 }
 
 impl Shell {
@@ -44,12 +47,27 @@ impl Shell {
             held: Vec::new(),
             window: None,
             closed: false,
+            hotkeys: None,
         }
     }
 
     pub fn with_window(mut self, host: window::Host) -> Self {
         self.window = Some(host);
         self
+    }
+
+    /// The runner's sender of delivered shortcut ids: the app of a normal
+    /// run gets OS registrations; scenes and the bench keep the fake.
+    pub fn set_hotkey_deliver(&mut self, deliver: window::hotkeys::Deliver) {
+        self.hotkeys = Some(deliver);
+    }
+
+    /// A global shortcut fired: what the window does now.
+    pub fn hotkey(&mut self, ctx: &egui::Context, id: u32) -> app::shortcuts::WindowOp {
+        match &mut self.screen {
+            Screen::App(app) => app.hotkey(ctx, id),
+            _ => app::shortcuts::WindowOp::None,
+        }
     }
 
     /// Whether the window reveals itself on boot. False for a `--tray`
@@ -206,6 +224,11 @@ impl Shell {
                         run.skip(&why);
                     }
                 }
+            }
+        }
+        if let (Some(_), Screen::App(app)) = (&self.window, &mut self.screen) {
+            if let Some(deliver) = self.hotkeys.take() {
+                app.set_hotkey_registrar(Box::new(move || window::hotkeys::registrar(deliver)));
             }
         }
         let launched = self

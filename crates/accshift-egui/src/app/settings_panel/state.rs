@@ -115,13 +115,14 @@ pub struct TabDef {
     pub accent: Option<crate::theme::Rgba>,
 }
 
-/// The sidebar's tabs: the three core ones, then each shipped platform
+/// The sidebar's tabs: the four core ones, then each shipped platform
 /// with a settings tab that is enabled, in registry order.
 pub fn visible_tabs(platforms: &[PlatformDef], enabled: &[String]) -> Vec<TabDef> {
     let mut tabs: Vec<TabDef> = [
         ("general", "settings.general"),
         ("platforms", "settings.platforms"),
         ("privacy", "settings.privacy"),
+        ("shortcuts", "settings.shortcuts"),
     ]
     .iter()
     .map(|(id, key)| TabDef {

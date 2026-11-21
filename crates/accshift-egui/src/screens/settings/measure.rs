@@ -4,7 +4,8 @@
 use egui::{pos2, vec2, Context, Pos2, Rect};
 
 use super::{
-    hint_style, platform_tab, platforms_tab, steam_tab, theme_grid, CardSpec, Control, Ctx, Item,
+    hint_style, platform_tab, platforms_tab, shortcuts_tab, steam_tab, theme_grid, CardSpec,
+    Control, Ctx, Item,
 };
 use crate::ui::components::controls::card;
 use crate::ui::components::controls::{button, scroll, slider, text_input, toggle};
@@ -74,6 +75,7 @@ pub(super) fn item_height(ctx: &Context, c: &Ctx, item: &Item, width: f32) -> f3
         Item::Platforms(item) => platforms_tab::height(ctx, c, item, width),
         Item::Platform(item) => platform_tab::height(ctx, c, item, width),
         Item::Steam(item) => steam_tab::height(ctx, c, item, width),
+        Item::Shortcuts(item) => shortcuts_tab::height(ctx, c, item, width),
     }
 }
 

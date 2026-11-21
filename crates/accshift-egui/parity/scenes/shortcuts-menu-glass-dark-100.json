@@ -1,0 +1,80 @@
+{
+  "id": "shortcuts-menu-glass-dark-100",
+  "scenario": "dev",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "personasEnabled": true
+    },
+    "PERSONAS": [
+      {
+        "id": "persona-main",
+        "name": "Main",
+        "color": "",
+        "assignments": [
+          {
+            "platformId": "steam",
+            "accountId": "76561198100000001"
+          },
+          {
+            "platformId": "riot",
+            "accountId": "riot-1"
+          }
+        ]
+      },
+      {
+        "id": "persona-smurfs",
+        "name": "Smurfs",
+        "color": "#8b5cf6",
+        "assignments": [
+          {
+            "platformId": "steam",
+            "accountId": "76561198100000002"
+          }
+        ]
+      }
+    ]
+  },
+  "steps": [
+    {
+      "wait": 900
+    },
+    {
+      "rclick": [
+        205,
+        140
+      ]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "menu"
+    },
+    {
+      "click": [
+        270,
+        416
+      ]
+    },
+    {
+      "move": [
+        430,
+        5
+      ]
+    },
+    {
+      "wait": 800
+    },
+    {
+      "shot": "from-menu"
+    }
+  ]
+}

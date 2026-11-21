@@ -35,6 +35,9 @@ pub enum UserEvent {
     VBlank,
     /// The tray icon was clicked or its menu chosen ([`crate::window::tray`]).
     Tray(TrayAction),
+    /// A global shortcut fired, by its registration id
+    /// ([`crate::window::hotkeys`]).
+    Hotkey(u32),
 }
 
 impl From<accesskit_winit::Event> for UserEvent {
@@ -652,14 +655,43 @@ impl Runner {
         self.close(event_loop);
     }
 
-    /// Show and focus the window again from the tray.
+    /// Show and focus the window again from the tray or a shortcut.
     fn reveal(&mut self) {
         if let Some(live) = &mut self.live {
             live.window.set_visible(true);
+            if live.window.is_minimized() == Some(true) {
+                live.window.set_minimized(false);
+            }
             live.window.focus_window();
             live.shown = true;
         }
         self.heal();
+    }
+
+    /// The show/hide shortcut: a window in front hides, to the tray when the
+    /// app uses one (close to tray, a `--tray` launch), else minimized; any
+    /// other window comes back to the front.
+    fn toggle_window(&mut self) {
+        let Some(live) = &self.live else { return };
+        let window = &live.window;
+        let in_front = live.shown
+            && window.is_visible() != Some(false)
+            && window.is_minimized() != Some(true)
+            && window.has_focus();
+        if !in_front {
+            self.reveal();
+            return;
+        }
+        if self.tray.is_none() && live.shell.wants_close_to_tray() {
+            self.ensure_tray();
+        }
+        if let Some(live) = &self.live {
+            if self.tray.is_some() {
+                live.window.set_visible(false);
+            } else {
+                live.window.set_minimized(true);
+            }
+        }
     }
 
     /// The title bar's close button or the system's (Alt+F4, the taskbar):
@@ -956,7 +988,13 @@ impl ApplicationHandler<UserEvent> for Runner {
             self.frame_interval = interval;
         }
 
-        let shell = init(&self.ctx, &window);
+        let mut shell = init(&self.ctx, &window);
+        let hotkeys = Mutex::new(self.proxy.clone());
+        shell.set_hotkey_deliver(Arc::new(move |id| {
+            if let Ok(proxy) = hotkeys.lock() {
+                let _ = proxy.send_event(UserEvent::Hotkey(id));
+            }
+        }));
         let mut info = ViewportInfo::default();
         egui_winit::update_viewport_info(&mut info, &self.ctx, &window, true);
         self.live = Some(Live {
@@ -1033,6 +1071,16 @@ impl ApplicationHandler<UserEvent> for Runner {
                 TrayAction::Open => self.reveal(),
                 TrayAction::Quit => self.close(event_loop),
             },
+            UserEvent::Hotkey(id) => {
+                use crate::app::shortcuts::WindowOp;
+                let Some(live) = &mut self.live else { return };
+                match live.shell.hotkey(&self.ctx, id) {
+                    WindowOp::None => {}
+                    WindowOp::Reveal => self.reveal(),
+                    WindowOp::Toggle => self.toggle_window(),
+                }
+                self.repaint_at(Instant::now());
+            }
         }
     }
 

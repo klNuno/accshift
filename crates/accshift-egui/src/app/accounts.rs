@@ -511,6 +511,11 @@ impl Accounts {
                 LoadingEvent::AccountsLoaded { platform_id } => {
                     if platform_id == tab {
                         self.navigation.refresh_current_items(stores, tab);
+                        super::shortcuts::prune_accounts(
+                            stores,
+                            tab,
+                            self.loading.loader.accounts(),
+                        );
                     }
                 }
                 LoadingEvent::Cs2Check { steam_id } => checks.push(steam_id),

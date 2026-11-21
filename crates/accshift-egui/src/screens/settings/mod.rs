@@ -21,6 +21,7 @@
 //!   and [`steam_tab`] build each tab's cards; a platform without settings
 //!   of its own (a user descriptor) shows an empty grid.
 //! - [`measure`] sizes the items and places the cards in the grid.
+//! - [`shortcuts_tab`]: the global shortcuts and their capture boxes.
 //! - [`rows`] paints one item, [`theme_grid`] the theme picker.
 
 mod general_tab;
@@ -30,6 +31,7 @@ mod platform_tab;
 mod platforms_tab;
 mod privacy_tab;
 mod rows;
+mod shortcuts_tab;
 mod steam_tab;
 mod theme_grid;
 
@@ -51,6 +53,7 @@ use crate::ui::components::controls::{scroll, FocusCtx};
 use crate::ui::text::{LineHeight, TextStyle};
 
 use measure::wrapped_height;
+pub use shortcuts_tab::{ShortcutRow, ShortcutsView};
 
 /// The gap inside a field: between its label, its control and the hint
 /// that closes it.
@@ -68,6 +71,8 @@ pub struct View {
     /// The viewport width in CSS px: it picks the narrow layout and whether
     /// a wide card spans two columns.
     pub viewport_width: f32,
+    /// The Shortcuts tab's rows, set by the app after [`View::new`].
+    pub shortcuts: ShortcutsView,
 }
 
 impl View {
@@ -79,6 +84,7 @@ impl View {
             platforms: booted.platforms.clone(),
             runtime_os: booted.runtime_os,
             viewport_width,
+            shortcuts: ShortcutsView::default(),
         }
     }
 
@@ -131,6 +137,8 @@ enum Item {
     Platform(platform_tab::Item),
     /// One of the Steam tab's own items.
     Steam(steam_tab::Item),
+    /// One of the Shortcuts tab's own items.
+    Shortcuts(shortcuts_tab::Item),
 }
 
 /// The space above `item` when it follows another one in a card.
@@ -420,6 +428,7 @@ fn tab_cards(c: &Ctx, tab: &str, platform: Option<&PlatformDef>) -> Vec<CardSpec
         ("general", _) => general_tab::cards(c.panel, c.view, c.locale),
         ("platforms", _) => platforms_tab::cards(c.panel, c.view, c.locale),
         ("privacy", _) => privacy_tab::cards(c.panel, c.locale),
+        ("shortcuts", _) => shortcuts_tab::cards(c),
         (_, Some(p)) => platform_tab::cards(c.panel, c.view, c.locale, p),
         _ => Vec::new(),
     }

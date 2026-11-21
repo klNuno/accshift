@@ -1,0 +1,116 @@
+{
+  "id": "shortcuts-glass-dark-100",
+  "scenario": "dev",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "personasEnabled": true
+    },
+    "PERSONAS": [
+      {
+        "id": "persona-main",
+        "name": "Main",
+        "color": "",
+        "assignments": [
+          {
+            "platformId": "steam",
+            "accountId": "76561198100000001"
+          },
+          {
+            "platformId": "riot",
+            "accountId": "riot-1"
+          }
+        ]
+      },
+      {
+        "id": "persona-smurfs",
+        "name": "Smurfs",
+        "color": "#8b5cf6",
+        "assignments": [
+          {
+            "platformId": "steam",
+            "accountId": "76561198100000002"
+          }
+        ]
+      }
+    ]
+  },
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [
+        87,
+        18
+      ]
+    },
+    {
+      "move": [
+        430,
+        5
+      ]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "click": [
+        75,
+        212
+      ]
+    },
+    {
+      "move": [
+        430,
+        5
+      ]
+    },
+    {
+      "wait": 800
+    },
+    {
+      "shot": "empty"
+    },
+    {
+      "click": [
+        340,
+        193
+      ]
+    },
+    {
+      "move": [
+        430,
+        5
+      ]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "listening"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "move": [
+        481,
+        117
+      ]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "shot": "info"
+    }
+  ]
+}
