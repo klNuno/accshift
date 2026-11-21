@@ -14,9 +14,10 @@
 //! another kind, one that does not parse or one whose settings are not an
 //! object is refused before anything is written. It then copies the current
 //! files and their `.bak` recovery copies to
-//! `user/backups/pre-restore-<timestamp>/`, writes each store atomically and
-//! puts the files it already replaced back when a later write fails, or says
-//! which of them it could not put back. Stores
+//! `user/backups/pre-restore-<timestamp>/`, writes each file through a temp
+//! file renamed over it, never copied over, and puts the files it already
+//! replaced back when a write fails, or says which of them it could not put
+//! back. Stores
 //! are replaced, bar the settings fields of this PC, which are never removed
 //! or replaced; themes and descriptors are added or overwritten by file
 //! name, and never deleted. Account ids the file names are kept as
@@ -33,8 +34,9 @@
 //! Linux name holding `:` restored on Windows, a name too long), or
 //! may name the same file as another one in its folder (`A.json` and
 //! `a.json`, refused on every OS since a Linux folder can sit on a
-//! filesystem that ignores case). A descriptor replaces the file before it
-//! whole or not at all. A backup written before kept a descriptor under the
+//! filesystem that ignores case); the export runs the same checks and fails
+//! rather than write such a backup. A theme is written without the
+//! whitespace a store gets, so it stays under its loader's size limit. A backup written before kept a descriptor under the
 //! id it declared and a theme under its id: such a key is restored as
 //! `<id>.json`, as then.
 
@@ -368,7 +370,22 @@ pub fn build_backup(app: &dyn AppContext, created_at: u64) -> Result<BackupFile,
 /// Writes the backup of the current setup to `target`.
 pub fn export_backup(app: &dyn AppContext, target: &Path) -> Result<BackupReport, String> {
     let backup = build_backup(app, now_s())?;
-    let body = serde_json::to_vec_pretty(&backup)
+    write_backup(&backup, target)?;
+    Ok(BackupReport {
+        preview: preview_of(&backup, target),
+        pre_restore_dir: String::new(),
+    })
+}
+
+/// Writes `backup` to `target`, unless a restore would refuse it: the
+/// checks [`read_backup`] makes run first, so two files only a
+/// case-sensitive folder keeps apart (`A.json`, `a.json`) fail the export
+/// rather than make a backup no restore reads, even on this PC.
+fn write_backup(backup: &BackupFile, target: &Path) -> Result<(), String> {
+    check_file_names(backup.themes.keys(), Loader::Themes)
+        .and_then(|()| check_file_names(backup.descriptors.keys(), Loader::Descriptors))
+        .map_err(|e| format!("{e}; a restore would refuse it"))?;
+    let body = serde_json::to_vec_pretty(backup)
         .map_err(|e| format!("Could not encode the backup: {e}"))?;
     // read_backup refuses a bigger file: it would export but never restore.
     if body.len() as u64 > MAX_JSON_STORE_BYTES {
@@ -377,11 +394,7 @@ pub fn export_backup(app: &dyn AppContext, target: &Path) -> Result<BackupReport
             body.len()
         ));
     }
-    write_bytes_atomic(target, &body)?;
-    Ok(BackupReport {
-        preview: preview_of(&backup, target),
-        pre_restore_dir: String::new(),
-    })
+    write_bytes_atomic(target, &body)
 }
 
 /// Reads and checks a backup file: refused when it is too big, does not
@@ -505,9 +518,6 @@ struct PlannedWrite {
     /// Where the copy of `previous` goes under the pre-restore folder; the
     /// one of `previous_bak` goes next to it.
     copy_as: PathBuf,
-    /// A descriptor, which its loader reads without the `.bak` recovery:
-    /// replaced whole or not at all, never copied over.
-    whole: bool,
 }
 
 impl PlannedWrite {
@@ -544,22 +554,36 @@ impl PlannedWrite {
             bak_path,
             previous_bak,
             copy_as,
-            whole,
         })
     }
 
-    /// Writes `bytes` to the file, as its kind requires.
+    /// Writes `bytes` to the file, renamed over it or not at all: a write
+    /// that fails leaves the file and its `.bak` as they were, never a copy
+    /// over either. A `.bak` older than the bytes written then goes, as
+    /// after any atomic write; the rollback puts back the one it replaced.
     fn put(&self, bytes: &[u8]) -> Result<(), String> {
-        if self.whole {
-            write_bytes_replacing(&self.path, bytes)
-        } else {
-            write_bytes_atomic(&self.path, bytes)
+        write_bytes_replacing(&self.path, bytes)?;
+        if self.bak_path != self.path {
+            let _ = fs::remove_file(&self.bak_path);
         }
+        Ok(())
+    }
+
+    /// Whether `path` holds `bytes`, `None` meaning no file.
+    fn holds(path: &Path, bytes: Option<&Vec<u8>>) -> bool {
+        matches!(read_previous(path), Ok(now) if now.as_ref() == bytes)
     }
 }
 
 fn encode(value: &Value) -> Result<Vec<u8>, String> {
     serde_json::to_vec_pretty(value).map_err(|e| format!("Could not encode a store: {e}"))
+}
+
+/// A theme file's bytes, without the whitespace [`encode`] adds: the
+/// loader skips a file over its size limit, and a theme that loaded under
+/// it must still load once restored.
+fn encode_theme(value: &Value) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(value).map_err(|e| format!("Could not encode a theme: {e}"))
 }
 
 fn read_previous(path: &Path) -> Result<Option<Vec<u8>>, String> {
@@ -621,7 +645,7 @@ fn plan_restore(app: &dyn AppContext, backup: &BackupFile) -> Result<Vec<Planned
         };
         plan.push(PlannedWrite::new(
             themes.join(&name),
-            Some(encode(value)?),
+            Some(encode_theme(value)?),
             PathBuf::from("themes").join(&name),
         )?);
     }
@@ -688,19 +712,25 @@ fn remove_if_there(path: &Path) -> Result<(), String> {
 }
 
 /// Puts the files of `written` back as they were; answers each file it could
-/// not put back, with why.
+/// not put back, with why. A file that still holds its old bytes, as the one
+/// whose write failed does, is left alone.
 fn put_back(written: &[&PlannedWrite]) -> Vec<String> {
     let mut failures = Vec::new();
     for write in written.iter().rev() {
+        let unchanged = PlannedWrite::holds(&write.path, write.previous.as_ref());
         let result = injected(Step::PutBack, &write.path).and_then(|()| match &write.previous {
+            _ if unchanged => Ok(()),
             Some(bytes) => write.put(bytes),
             None => remove_if_there(&write.path),
         });
         if let Err(error) = result {
             failures.push(format!("{} ({error})", write.path.display()));
         }
-        // Written last: the atomic write above drops a stale .bak.
+        // Written last: putting the file back drops a stale .bak.
         if let Some(bytes) = &write.previous_bak {
+            if PlannedWrite::holds(&write.bak_path, Some(bytes)) {
+                continue;
+            }
             if let Err(error) = fs::write(&write.bak_path, bytes) {
                 failures.push(format!("{} ({error})", write.bak_path.display()));
             }
@@ -757,6 +787,8 @@ pub fn restore_backup_at(
 
     let mut written = Vec::new();
     for write in &plan {
+        // Counted before its write: a write that fails is put back too.
+        written.push(write);
         let result = injected(Step::Write, &write.path).and_then(|()| match &write.next {
             Some(bytes) => write.put(bytes),
             None => remove_if_there(&write.path),
@@ -764,7 +796,6 @@ pub fn restore_backup_at(
         if let Err(error) = result {
             return Err(failed_restore(error, &written, &copy_dir));
         }
-        written.push(write);
         if write.next.is_none() && write.bak_path != write.path {
             // A stale .bak would bring the removed store back on the next
             // read: one that stays fails the restore.
@@ -1826,6 +1857,132 @@ mod tests {
         let error = result.unwrap_err();
         assert!(error.contains("too big"), "{error}");
         assert!(!exists);
+    }
+
+    #[test]
+    fn an_export_refuses_two_files_a_restore_would_take_for_one() {
+        // Regression: a case-sensitive folder keeps `A.json` and `a.json`
+        // apart; the export wrote both and every restore refused the file,
+        // even on this PC.
+        let app = ctx("export-case");
+        let theme: Value = serde_json::from_str(THEME).unwrap();
+        for field in ["themes", "descriptors"] {
+            let mut backup = build_backup(&app, 1).unwrap();
+            let entries = if field == "themes" {
+                &mut backup.themes
+            } else {
+                &mut backup.descriptors
+            };
+            entries.insert("A.json".into(), theme.clone());
+            entries.insert("a.json".into(), theme.clone());
+            let target = app.0.join(format!("{field}.json"));
+            let error = write_backup(&backup, &target).unwrap_err();
+            assert!(error.contains("`A.json`"), "{error}");
+            assert!(error.contains("`a.json`"), "{error}");
+            assert!(!target.exists(), "{field}: a backup no restore reads");
+        }
+        // The same through the folder, where it keeps both names.
+        let dir = themes_dir(&app).unwrap();
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("A.json"), THEME).unwrap();
+        fs::write(dir.join("a.json"), THEME).unwrap();
+        let target = app.0.join("out.json");
+        let result = export_backup(&app, &target);
+        if fs::read_dir(&dir).unwrap().count() == 2 {
+            let error = result.unwrap_err();
+            assert!(error.contains("`A.json`") && error.contains("`a.json`"));
+            assert!(!target.exists());
+        } else {
+            // One file under either name: the backup restores.
+            result.unwrap();
+            preview_backup(&target).unwrap();
+        }
+        let _ = fs::remove_dir_all(&app.0);
+    }
+
+    #[test]
+    fn a_theme_at_the_loaders_size_limit_still_loads_once_restored() {
+        // Regression: the restore wrote the theme pretty-printed, over the
+        // 64 KiB the loader reads, so a theme that loaded was left out.
+        let from = ctx("theme-limit-from");
+        let dir = themes_dir(&from).unwrap();
+        fs::create_dir_all(&dir).unwrap();
+        let tokens: Map<String, Value> = (0..4000)
+            .map(|n| (format!("k{n:04}"), json!("x")))
+            .collect();
+        let mut theme = json!({
+            "schemaVersion": 1, "id": "big", "name": "Big", "colorScheme": "dark",
+            "tokens": tokens, "css": ""
+        });
+        let limit = crate::themes::MAX_THEME_FILE_BYTES as usize;
+        let short = limit - serde_json::to_vec(&theme).unwrap().len();
+        theme["css"] = json!("x".repeat(short));
+        let body = serde_json::to_vec(&theme).unwrap();
+        assert_eq!(body.len(), limit);
+        fs::write(dir.join("big.json"), &body).unwrap();
+        let ids = |app: &Ctx| -> Vec<String> {
+            crate::themes::list_custom_themes(app)
+                .unwrap()
+                .into_iter()
+                .map(|t| t.id)
+                .collect()
+        };
+        assert_eq!(ids(&from), ["big"]);
+        let file = from.0.join("b.json");
+        export_backup(&from, &file).unwrap();
+
+        let to = ctx("theme-limit-to");
+        restore_backup(&to, &file).unwrap();
+        let restored = fs::read(themes_dir(&to).unwrap().join("big.json")).unwrap();
+        assert!(restored.len() <= limit, "{} bytes", restored.len());
+        assert_eq!(
+            ids(&to),
+            ["big"],
+            "THEME_LIMIT: the restored theme no longer loads"
+        );
+        let _ = fs::remove_dir_all(&from.0);
+        let _ = fs::remove_dir_all(&to.0);
+    }
+
+    #[test]
+    fn a_write_that_fails_leaves_its_file_and_recovery_copy_as_they_were() {
+        // Regression: a failed rename fell back to copying over the file,
+        // which first copied the file over its `.bak`; the failed entry was
+        // then left out of the rollback, so that `.bak` stayed clobbered.
+        let to = ctx("write-fails");
+        let view = client_store_path(&to, STORE_VIEW_MODE).unwrap();
+        fs::create_dir_all(view.parent().unwrap()).unwrap();
+        fs::write(&view, br#""grid""#).unwrap();
+        fs::write(backup_path(&view), br#""older""#).unwrap();
+        let readonly = |on: bool| {
+            let mut perms = fs::metadata(&view).unwrap().permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            perms.set_readonly(on);
+            fs::set_permissions(&view, perms).unwrap();
+        };
+        let file = to.0.join("view.json");
+        let body = json!({
+            "kind": BACKUP_KIND, "format": 1, "createdAt": 1, "appVersion": "2.0.0",
+            "stores": {(STORE_VIEW_MODE): "list"}
+        });
+        fs::write(&file, serde_json::to_vec(&body).unwrap()).unwrap();
+        // No rename lands, and the file refuses a copy over it.
+        readonly(true);
+        force_rename_failures(true);
+        let result = restore_backup(&to, &file);
+        force_rename_failures(false);
+        readonly(false);
+        let primary = fs::read(&view).unwrap();
+        let bak = fs::read(backup_path(&view)).ok();
+        let _ = fs::remove_dir_all(&to.0);
+        let error = result.unwrap_err();
+        assert!(error.contains("were put back"), "{error}");
+        assert_eq!(primary, br#""grid""#);
+        assert_eq!(
+            bak.as_deref(),
+            Some(&br#""older""#[..]),
+            "the recovery copy was written over"
+        );
     }
 
     /// Runs `body` with `faults` injected on this thread.
