@@ -28,8 +28,12 @@ pub enum RegisterError {
     Failed(String),
 }
 
-/// The OS layer: one registration per id. An id is never reused while it is
-/// registered.
+/// The highest id handed to a [`Registrar`]: Windows takes hotkey ids up to
+/// `0xBFFF` from an app.
+pub const MAX_ID: u32 = 0xBFFF;
+
+/// The OS layer: one registration per id, in `1..=`[`MAX_ID`]. An id is
+/// never reused while it is registered.
 pub trait Registrar {
     fn availability(&self) -> Availability;
     fn register(&mut self, id: u32, combo: &Combo) -> Result<(), RegisterError>;
@@ -140,6 +144,17 @@ impl ShortcutService {
             .collect()
     }
 
+    /// The next free id, in `1..=MAX_ID`, wrapping past the last.
+    fn take_id(&mut self) -> u32 {
+        loop {
+            let id = self.next_id;
+            self.next_id = if id >= MAX_ID { 1 } else { id + 1 };
+            if !self.registered.iter().any(|entry| entry.id == id) {
+                return id;
+            }
+        }
+    }
+
     fn apply(&mut self) {
         let available = self.available();
         let duplicates = self.duplicates();
@@ -176,8 +191,7 @@ impl ShortcutService {
             {
                 continue;
             }
-            let id = self.next_id;
-            self.next_id = self.next_id.wrapping_add(1).max(1);
+            let id = self.take_id();
             match self.registrar.register(id, &combo) {
                 Ok(()) => self.registered.push(Registered { id, target, combo }),
                 Err(RegisterError::Taken) => refused.push((target, RowStatus::Taken)),

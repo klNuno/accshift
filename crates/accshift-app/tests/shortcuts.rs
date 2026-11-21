@@ -4,8 +4,8 @@
 
 use accshift_app::settings::sanitize_settings;
 use accshift_app::shortcuts::{
-    bindings, Combo, FakeRegistrar, GlobalShortcuts, Key, RowStatus, ShortcutService,
-    ShortcutTarget,
+    account_menu_id, bindings, parse_account_menu_id, Combo, FakeRegistrar, GlobalShortcuts, Key,
+    RowStatus, ShortcutService, ShortcutTarget,
 };
 use accshift_app::stores::StoreContext;
 use serde_json::json;
@@ -15,7 +15,6 @@ fn ctx() -> StoreContext {
         platform_ids: vec!["steam".into(), "riot".into()],
         theme_ids: vec!["dark".into()],
         preferred_languages: vec!["en".into()],
-        ..StoreContext::default()
     }
 }
 
@@ -212,7 +211,7 @@ fn stale_persona_bindings_are_dropped() {
             &ShortcutTarget::Persona {
                 persona_id: id.into(),
             },
-            Some(combo(&format!("Ctrl+Alt+{}", &id[..1].to_uppercase()))),
+            Some(combo(&format!("Ctrl+Alt+{}", id[..1].to_uppercase()))),
         );
     }
     assert!(shortcuts.prune_personas(&["kept", "other"]));
@@ -391,4 +390,20 @@ fn service_without_os_support_marks_every_row_unavailable() {
         service.status(&ShortcutTarget::OpenPalette),
         Some(RowStatus::Unavailable)
     );
+}
+
+#[test]
+fn account_menu_id_names_its_account_and_parses_back() {
+    let id = account_menu_id("steam", "76561198100000001");
+    assert_eq!(
+        parse_account_menu_id(&id),
+        Some(account("steam", "76561198100000001"))
+    );
+    // A user platform id with a colon keeps the account part whole.
+    assert_eq!(
+        parse_account_menu_id(&account_menu_id("custom", "a:b")),
+        Some(account("custom", "a:b"))
+    );
+    assert_eq!(parse_account_menu_id("account.rename"), None);
+    assert_eq!(parse_account_menu_id("account.shortcut:steam"), None);
 }

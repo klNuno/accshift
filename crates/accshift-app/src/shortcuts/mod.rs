@@ -40,6 +40,23 @@ pub enum ShortcutTarget {
     Persona { persona_id: String },
 }
 
+/// The `Custom` menu command of an account's "Set global shortcut" entry.
+const ACCOUNT_MENU_PREFIX: &str = "account.shortcut:";
+
+/// The menu command id of an account's "Set global shortcut" entry.
+pub fn account_menu_id(platform_id: &str, account_id: &str) -> String {
+    format!("{ACCOUNT_MENU_PREFIX}{platform_id}:{account_id}")
+}
+
+/// The account an [`account_menu_id`] names. Platform ids hold no `:`.
+pub fn parse_account_menu_id(id: &str) -> Option<ShortcutTarget> {
+    let (platform_id, account_id) = id.strip_prefix(ACCOUNT_MENU_PREFIX)?.split_once(':')?;
+    Some(ShortcutTarget::Account {
+        platform_id: platform_id.to_string(),
+        account_id: account_id.to_string(),
+    })
+}
+
 /// One account's binding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

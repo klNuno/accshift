@@ -254,10 +254,18 @@ fn account_menu(
         stores,
         input_dialog: true,
     };
-    build_account_context_menu(account, adapter, &ctx, &appearance, Some(&folders))
-        .into_iter()
-        .map(Into::into)
-        .collect()
+    let mut entries: Vec<AppMenuEntry> =
+        build_account_context_menu(account, adapter, &ctx, &appearance, Some(&folders))
+            .into_iter()
+            .map(Into::into)
+            .collect();
+    entries.push(AppMenuEntry::Separator);
+    entries.push(AppMenuEntry::item(
+        "account.shortcut",
+        Text::key("context.menu.setGlobalShortcut"),
+        AppMenuCommand::Custom(crate::shortcuts::account_menu_id(adapter.id(), &account.id)),
+    ));
+    entries
 }
 
 impl AppDialogs {
