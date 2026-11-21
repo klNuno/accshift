@@ -24,6 +24,21 @@ pub(super) fn capture_profile(_backend: &RealBackend, _profile_id: &str) -> Back
     Err(super::not_registered("riot_capture_profile"))
 }
 
+/// Backs `Backend::riot_check_sessions`: the profiles whose saved session is
+/// past its restore window, read from the snapshots on this thread.
+#[cfg(windows)]
+pub(super) fn check_sessions(backend: &RealBackend) -> BackendResult<Vec<String>> {
+    Ok(accshift_core::platforms::riot::expired_profile_ids(
+        backend.ctx.clone(),
+    )?)
+}
+
+/// Off Windows the command does not exist.
+#[cfg(not(windows))]
+pub(super) fn check_sessions(_backend: &RealBackend) -> BackendResult<Vec<String>> {
+    Err(super::not_registered("riot_check_sessions"))
+}
+
 /// Backs `Backend::riot_get_installed_games`: read from the Riot Client
 /// metadata, empty when it cannot be read.
 #[cfg(windows)]

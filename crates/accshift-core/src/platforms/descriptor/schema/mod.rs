@@ -143,6 +143,34 @@ pub struct OsProfile {
     pub launch: Option<Launch>,
     #[serde(default)]
     pub setup: Setup,
+    /// Offline session reads on the account's snapshot. Optional: a
+    /// descriptor without it shows no session chip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<SessionRules>,
+}
+
+/// What a snapshot says about the session, read offline.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionRules {
+    /// Any match means the launcher does not remember the sign-in: the
+    /// account shows "password needed".
+    #[serde(default)]
+    pub not_remembered: Vec<IniCheck>,
+}
+
+/// One `key=value` read in an INI file of the snapshot.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IniCheck {
+    /// A file item's `snapshot` name: the read never leaves the snapshot.
+    pub snapshot: String,
+    pub section: String,
+    pub key: String,
+    /// The value that matches, case-insensitive. Empty matches a key present
+    /// with an empty value. A missing key or section never matches.
+    #[serde(default)]
+    pub equals: String,
 }
 
 /// The sandbox. Every path a descriptor reads or writes as state must sit

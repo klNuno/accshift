@@ -29,6 +29,7 @@ pub(super) fn portable_config(config: &AppConfig) -> AppConfig {
     portable.window_x = None;
     portable.window_y = None;
     portable.window_scale = None;
+    portable.session_marks.clear();
     for account in &mut portable.roblox.accounts {
         account.cookie_encrypted.clear();
     }
@@ -145,6 +146,7 @@ pub(super) fn local_config(config: &AppConfig) -> AppConfig {
     local.window_x = config.window_x;
     local.window_y = config.window_y;
     local.window_scale = config.window_scale;
+    local.session_marks = config.session_marks.clone();
     local.roblox.accounts = config
         .roblox
         .accounts
@@ -199,6 +201,8 @@ pub(super) fn merge_split_configs(portable: AppConfig, mut local: AppConfig) -> 
     overwrite_if_set(&mut merged.window_x, local.window_x);
     overwrite_if_set(&mut merged.window_y, local.window_y);
     overwrite_if_set(&mut merged.window_scale, local.window_scale);
+    // The portable file never carries marks: the local file is the record.
+    merged.session_marks = local.session_marks;
 
     for local_account in local.roblox.accounts {
         if local_account.user_id.trim().is_empty() {

@@ -73,6 +73,16 @@ pub fn services() -> &'static [&'static DescriptorService] {
     &embedded().0
 }
 
+/// The accounts of a shipped descriptor platform whose snapshot says the
+/// launcher does not keep the sign-in. An unknown platform reads as none.
+pub fn not_remembered_ids(app: &dyn AppContext, platform_id: &str) -> Vec<String> {
+    services()
+        .iter()
+        .find(|service| service.id() == platform_id)
+        .map(|service| service.not_remembered_ids(app))
+        .unwrap_or_default()
+}
+
 /// Why each shipped descriptor that did not validate was dropped.
 fn embedded_rejections() -> &'static [String] {
     &embedded().1

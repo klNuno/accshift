@@ -118,3 +118,12 @@ pub struct RobloxAccount {
 pub struct RobloxProfileInfo {
     pub avatar_url: Option<String>,
 }
+
+/// One account's session mark, as `session_marks` answers it. `state` is
+/// `expired` or `passwordNeeded`; another value marks nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMarkInfo {
+    pub account_id: String,
+    pub state: String,
+}

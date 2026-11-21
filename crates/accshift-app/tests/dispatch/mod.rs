@@ -129,6 +129,8 @@ pub fn dispatch(
         "cs2_bridge_check" => json(b.cs2_bridge_check(&a.str("steamId"))),
         "cs2_bridge_test" => json(b.cs2_bridge_test()),
         "riot_capture_profile" => json(b.riot_capture_profile(&a.str("profileId"))),
+        "riot_check_sessions" => json(b.riot_check_sessions()),
+        "session_marks" => json(b.session_marks(&a.str("platformId"))),
         "riot_get_installed_games" => json(b.riot_get_installed_games()),
         "riot_switch_profile_and_launch_game" => {
             json(b.riot_switch_profile_and_launch_game(&a.str("profileId"), &a.str("productId")))
@@ -308,6 +310,8 @@ pub const COMMANDS: &[&str] = &[
     "cs2_bridge_check",
     "cs2_bridge_test",
     "riot_capture_profile",
+    "riot_check_sessions",
+    "session_marks",
     "riot_get_installed_games",
     "riot_switch_profile_and_launch_game",
     "roblox_add_account_by_cookie",

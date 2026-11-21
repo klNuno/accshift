@@ -92,6 +92,10 @@ pub(super) fn update_profile_state(
     if let Some(identity) = identity {
         apply_detected_identity(profile, identity);
     }
+    // A new capture holds a fresh session: the old mark no longer applies.
+    if matches!(captured_at, Some(Some(_))) {
+        crate::platforms::session_marks::clear_mark_in(cfg, "riot", profile_id);
+    }
     Ok(())
 }
 

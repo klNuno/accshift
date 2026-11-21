@@ -50,6 +50,7 @@ mod identity;
 mod operations;
 mod reads;
 mod restore;
+mod session;
 mod snapshot;
 mod state_item;
 
