@@ -185,6 +185,15 @@ pub trait Backend: Send + Sync {
     fn session_watches_running(&self) -> bool {
         false
     }
+    /// The Riot games installed on this machine, in menu order.
+    fn riot_get_installed_games(&self) -> BackendResult<Vec<RiotGame>>;
+    /// Switches to the profile, then starts `product_id` instead of the bare
+    /// Riot Client. Refused behind the PIN like a switch.
+    fn riot_switch_profile_and_launch_game(
+        &self,
+        profile_id: &str,
+        product_id: &str,
+    ) -> BackendResult<()>;
     fn roblox_add_account_by_cookie(&self, cookie: &str) -> BackendResult<RobloxAccount>;
     fn roblox_get_profile_info(&self, user_id: &str) -> BackendResult<RobloxProfileInfo>;
     /// User ids whose stored session is dead.

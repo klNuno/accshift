@@ -589,6 +589,28 @@ impl Backend for Scripted {
         }
         self.inner.session_marks(platform_id)
     }
+    fn riot_get_installed_games(&self) -> BackendResult<Vec<RiotGame>> {
+        self.record("riot_get_installed_games", String::new());
+        if let Some(answer) = self.next("riot_get_installed_games") {
+            return answer;
+        }
+        self.inner.riot_get_installed_games()
+    }
+    fn riot_switch_profile_and_launch_game(
+        &self,
+        profile_id: &str,
+        product_id: &str,
+    ) -> BackendResult<()> {
+        self.record(
+            "riot_switch_profile_and_launch_game",
+            format!("{:?}", (&profile_id, &product_id)),
+        );
+        if let Some(answer) = self.next("riot_switch_profile_and_launch_game") {
+            return answer;
+        }
+        self.inner
+            .riot_switch_profile_and_launch_game(profile_id, product_id)
+    }
     fn roblox_add_account_by_cookie(&self, cookie: &str) -> BackendResult<RobloxAccount> {
         self.record("roblox_add_account_by_cookie", format!("{:?}", (&cookie,)));
         if let Some(answer) = self.next("roblox_add_account_by_cookie") {

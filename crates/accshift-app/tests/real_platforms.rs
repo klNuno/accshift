@@ -391,6 +391,11 @@ fn a_second_app_holding_the_lock_blocks_every_mutating_command() {
     ];
     #[cfg(windows)]
     refused.push(real.riot_capture_profile("profile").unwrap_err());
+    #[cfg(windows)]
+    refused.push(
+        real.riot_switch_profile_and_launch_game("profile", "valorant")
+            .unwrap_err(),
+    );
     for error in refused {
         assert_eq!(error.message, CONTENDED);
     }
@@ -461,6 +466,14 @@ fn a_locked_pin_refuses_the_switch_and_the_game_launch() {
         .steam_switch_account_and_launch_game("alpha", "730", false, "", "")
         .unwrap_err();
     assert_eq!(error.message, PIN_LOCKED_MESSAGE);
+    #[cfg(windows)]
+    {
+        let error = real
+            .riot_switch_profile_and_launch_game("profile", "valorant")
+            .unwrap_err();
+        assert_eq!(error.message, PIN_LOCKED_MESSAGE);
+        assert!(error.is_pin_locked());
+    }
 }
 
 // ---------------------------------------------------------------- descriptors
@@ -536,6 +549,26 @@ fn riot_and_roblox_check_their_arguments_first() {
             .message,
         "Riot profile not found"
     );
+    // The game launch checks its id, its product and the profile before it
+    // looks at the install or a process.
+    assert_eq!(
+        real.riot_switch_profile_and_launch_game(" padded", "valorant")
+            .unwrap_err()
+            .message,
+        "Invalid Riot profile id"
+    );
+    assert_eq!(
+        real.riot_switch_profile_and_launch_game("unknown-profile", "riot-client")
+            .unwrap_err()
+            .message,
+        "Unknown Riot game: riot-client"
+    );
+    assert_eq!(
+        real.riot_switch_profile_and_launch_game("unknown-profile", "valorant")
+            .unwrap_err()
+            .message,
+        "Riot profile not found"
+    );
     // Empty once the paste prefixes are stripped: refused before Roblox. A
     // bare warning banner is not stripped (cookie.rs lines 32-37) and would
     // reach roblox.com, so it is not in this list.
@@ -564,6 +597,16 @@ fn riot_and_roblox_are_not_registered_off_windows() {
     assert_eq!(
         real.riot_capture_profile("p").unwrap_err().message,
         "Command riot_capture_profile not found"
+    );
+    assert_eq!(
+        real.riot_get_installed_games().unwrap_err().message,
+        "Command riot_get_installed_games not found"
+    );
+    assert_eq!(
+        real.riot_switch_profile_and_launch_game("p", "valorant")
+            .unwrap_err()
+            .message,
+        "Command riot_switch_profile_and_launch_game not found"
     );
     assert_eq!(
         real.roblox_check_sessions().unwrap_err().message,

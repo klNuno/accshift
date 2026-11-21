@@ -184,7 +184,18 @@ pub const OPERATIONS: &[&str] = &[
 ];
 
 /// Every CLI subcommand name that may reach the network.
-pub const CLI_COMMANDS: &[&str] = &["list", "switch", "platforms", UNKNOWN_CODE];
+pub const CLI_COMMANDS: &[&str] = &[
+    "list",
+    "switch",
+    "platforms",
+    "folders",
+    "current",
+    "search",
+    "personas",
+    "persona",
+    "completions",
+    UNKNOWN_CODE,
+];
 
 /// UI languages the app ships. An unlisted value becomes `other` rather than
 /// travelling as typed.

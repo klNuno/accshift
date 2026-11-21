@@ -524,7 +524,18 @@ export const OPERATIONS: ReadonlySet<string> = new Set([
   "other",
 ]);
 
-export const CLI_COMMANDS: ReadonlySet<string> = new Set(["list", "switch", "platforms", "other"]);
+export const CLI_COMMANDS: ReadonlySet<string> = new Set([
+  "list",
+  "switch",
+  "platforms",
+  "folders",
+  "current",
+  "search",
+  "personas",
+  "persona",
+  "completions",
+  "other",
+]);
 
 export const UI_LANGUAGES: ReadonlySet<string> = new Set([
   "en",

@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::os;
 use crate::snapshot_crypto::{self, decrypted_copy_file, encrypted_copy_file, DirCopyOptions};
 
+mod games;
 mod identity;
 mod local_api;
 mod paths;
@@ -27,6 +28,8 @@ mod snapshot;
 mod switch;
 mod yaml;
 
+#[allow(unused_imports)]
+use self::games::*;
 #[allow(unused_imports)]
 use self::identity::*;
 #[allow(unused_imports)]
@@ -46,8 +49,11 @@ use self::setup::*;
 #[allow(unused_imports)]
 use self::snapshot::*;
 #[allow(unused_imports)]
+use self::switch::*;
+#[allow(unused_imports)]
 use self::yaml::*;
 
+pub use self::games::{get_installed_games, switch_profile_and_launch_game, RiotGame};
 pub use self::rollback::{sweep_rollback_dirs, RollbackSweepStats};
 pub use self::session::{expired_profile_ids, session_health, SessionHealth};
 pub use self::setup::{
@@ -357,6 +363,8 @@ impl PlatformService for RiotService {
     }
 }
 
+#[cfg(test)]
+mod games_tests;
 #[cfg(test)]
 mod local_api_tests;
 #[cfg(test)]
