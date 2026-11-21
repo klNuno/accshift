@@ -44,7 +44,7 @@ fn legacy_schema_version() -> u32 {
 
 /// A theme file has no business being larger than this. Refusing early keeps a
 /// pathological file out of the boot payload, which is read on every launch.
-const MAX_THEME_FILE_BYTES: u64 = 64 * 1024;
+pub(crate) const MAX_THEME_FILE_BYTES: u64 = 64 * 1024;
 
 fn themes_dir(app: &dyn AppContext) -> Result<PathBuf, String> {
     crate::storage::themes_dir(app)
@@ -64,6 +64,17 @@ fn is_usable(theme: &CustomTheme) -> bool {
         && theme.tokens.is_object()
 }
 
+/// The custom themes as [`read_custom_themes`] lists them, and whether that
+/// list holds every theme file there.
+#[derive(Debug, Clone, Default)]
+pub struct CustomThemeList {
+    pub themes: Vec<CustomTheme>,
+    /// False when a theme file that is there could not be read (locked,
+    /// denied) and was left out: a reader that keeps this list reads the
+    /// folder again later rather than take it for the whole.
+    pub complete: bool,
+}
+
 /// The custom themes: every `.json` file of the themes folder that holds a
 /// usable theme, sorted by name. A file that is not one (not JSON, the wrong
 /// shape, an unsafe id, too big), a folder, a file gone since the folder was
@@ -73,18 +84,36 @@ fn is_usable(theme: &CustomTheme) -> bool {
 /// that cannot be listed is an error. The backup export reads the folder
 /// on its own terms and fails on such a file.
 pub fn list_custom_themes(app: &dyn AppContext) -> Result<Vec<CustomTheme>, String> {
+    Ok(read_custom_themes(app)?.themes)
+}
+
+/// [`list_custom_themes`], saying whether a file that is there could not be
+/// read and was left out.
+pub fn read_custom_themes(app: &dyn AppContext) -> Result<CustomThemeList, String> {
     let dir = themes_dir(app)?;
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(CustomThemeList {
+                themes: vec![],
+                complete: true,
+            })
+        }
         Err(e) => return Err(format!("Could not read themes directory: {e}")),
     };
-    let mut themes: Vec<CustomTheme> = entries
-        .flatten()
-        .filter_map(|entry| read_theme_file(&entry.path()).ok().flatten())
-        .collect();
+    let mut complete = true;
+    let mut themes: Vec<CustomTheme> = Vec::new();
+    for entry in entries {
+        let read = entry
+            .map_err(|e| e.to_string())
+            .and_then(|entry| read_theme_file(&entry.path()));
+        match read {
+            Ok(theme) => themes.extend(theme),
+            Err(_) => complete = false,
+        }
+    }
     themes.sort_by_cached_key(|t| t.name.to_lowercase());
-    Ok(themes)
+    Ok(CustomThemeList { themes, complete })
 }
 
 /// The theme `path` holds; `None` when it is not a usable theme file or is
@@ -332,8 +361,12 @@ mod tests {
             let _held =
                 crate::test_fs::Unreadable::new(&dir.join("mine.json"), theme("mine").as_bytes());
             assert_eq!(ids(list_custom_themes(&ctx).unwrap()), ["other"]);
+            // Told apart from the whole folder, so a reader reads it again.
+            assert!(!read_custom_themes(&ctx).unwrap().complete);
         }
         assert_eq!(ids(list_custom_themes(&ctx).unwrap()), ["mine", "other"]);
+        // Files that are not themes leave the list whole.
+        assert!(read_custom_themes(&ctx).unwrap().complete);
 
         let _ = fs::remove_dir_all(&root);
     }

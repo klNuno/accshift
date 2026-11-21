@@ -22,7 +22,8 @@
 //!   the CS2 bridge on with the rows given, [`MockBackend::set_onboarding`]
 //!   reports the first-run onboarding as never done and
 //!   [`MockBackend::set_setup`] walks an add-account setup through the
-//!   statuses given.
+//!   statuses given;
+//! - [`MockBackend::lock_theme`] makes a theme file read as locked.
 //!
 //! - `scenario`: loading the scenario file and looking up its records.
 //! - `overrides`: scripted failures, latency and the scene overrides.
@@ -108,6 +109,8 @@ struct MockState {
     setup_step: usize,
     /// What `get_desktop_wallpaper` answers.
     wallpaper: Option<Value>,
+    /// Theme ids whose file reads as locked: see [`MockBackend::lock_theme`].
+    locked_themes: BTreeSet<String>,
     /// How many times each command was called, refused ones included.
     seen: BTreeMap<String, usize>,
 }

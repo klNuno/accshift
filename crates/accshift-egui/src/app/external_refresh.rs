@@ -21,10 +21,9 @@ enum RefreshJob {
         /// `None` when only the themes are read again, for a selected
         /// theme the list did not have.
         plan: Option<RefreshPlan>,
-        /// The themes fingerprint before the plan marked the new one as
-        /// seen: put back when the themes cannot be read, so the next
-        /// focus reads them again.
-        themes_seen: Option<Option<String>>,
+        /// The plan took the new themes fingerprint as seen: taken back
+        /// when the job fails before the themes are read.
+        themes_seen: bool,
         pending: Pending<BackendResult<RefreshContents>>,
     },
     Accounts,
@@ -32,7 +31,45 @@ enum RefreshJob {
 
 struct RefreshContents {
     snapshot: Option<ClientStorageSnapshot>,
-    themes: Option<Vec<CustomThemePayload>>,
+    /// `None` when the themes were not read.
+    themes: Option<ThemesRead>,
+}
+
+/// The custom themes as read from disk.
+pub(super) struct ThemesRead {
+    /// `None` when the folder could not be listed: the themes already
+    /// loaded stay.
+    pub(super) themes: Option<Vec<CustomThemePayload>>,
+    /// Every theme file there was read. Otherwise the themes fingerprint is
+    /// not taken as seen, so the next focus reads them again.
+    pub(super) whole: bool,
+}
+
+/// What the app holds for the themes fingerprint until they are read whole:
+/// no folder fingerprint (`dir:...`, or empty for no folder) is this one,
+/// so the next manifest always differs from it.
+const THEMES_UNREAD: &str = "unread";
+
+/// Reads the custom themes. A theme file that cannot be read is left out
+/// and makes the read partial; a list that fails whole keeps the themes
+/// already loaded.
+pub(super) fn read_themes(backend: &dyn Backend) -> ThemesRead {
+    match backend.read_custom_themes() {
+        Ok(list) => ThemesRead {
+            themes: Some(
+                list.themes
+                    .iter()
+                    .filter_map(|t| serde_json::to_value(t).ok())
+                    .filter_map(|v| serde_json::from_value(v).ok())
+                    .collect(),
+            ),
+            whole: list.complete,
+        },
+        Err(_) => ThemesRead {
+            themes: None,
+            whole: false,
+        },
+    }
 }
 
 impl ExternalRefresh {
@@ -81,13 +118,6 @@ impl AppModel {
                     // fingerprint unchanged.
                     let theme_missing =
                         b.registry.document(&b.stores.settings().theme_id).is_none();
-                    let themes_seen = b
-                        .stores
-                        .storage()
-                        .manifest()
-                        .stores
-                        .get(STORAGE_TARGET_CUSTOM_THEMES)
-                        .cloned();
                     let plan = b.stores.begin_refresh(&manifest);
                     let themes_changed = plan.as_ref().is_some_and(|plan| {
                         plan.changed
@@ -106,25 +136,12 @@ impl AppModel {
                             } else {
                                 None
                             };
-                            let themes = if themes_needed {
-                                // A theme file that cannot be read is left
-                                // out of the list; a list that fails whole
-                                // keeps the themes already loaded.
-                                backend.list_custom_themes().ok().map(|themes| {
-                                    themes
-                                        .iter()
-                                        .filter_map(|t| serde_json::to_value(t).ok())
-                                        .filter_map(|v| serde_json::from_value(v).ok())
-                                        .collect()
-                                })
-                            } else {
-                                None
-                            };
+                            let themes = themes_needed.then(|| read_themes(backend));
                             Ok(RefreshContents { snapshot, themes })
                         });
                         Some(RefreshJob::Snapshot {
                             plan,
-                            themes_seen: themes_changed.then_some(themes_seen),
+                            themes_seen: themes_changed,
                             pending,
                         })
                     }
@@ -149,12 +166,12 @@ impl AppModel {
                     pending,
                 }),
                 Poll::Ready(Ok(contents)) => {
-                    match &contents.themes {
-                        Some(themes) => self.apply_theme_payloads(themes),
-                        None => {
-                            if let Some(seen) = themes_seen {
-                                self.unsee_themes(seen);
-                            }
+                    if let Some(read) = &contents.themes {
+                        if let Some(themes) = &read.themes {
+                            self.apply_theme_payloads(themes);
+                        }
+                        if !read.whole {
+                            self.unsee_themes();
                         }
                     }
                     let Some(plan) = plan else {
@@ -174,11 +191,18 @@ impl AppModel {
                         .loads_in_flight()
                         .then_some(RefreshJob::Accounts)
                 }
+                // The themes were never read: the next focus reads them.
                 Poll::Ready(Err(error)) => {
+                    if themes_seen {
+                        self.unsee_themes();
+                    }
                     self.external_refresh_failed(error.message);
                     None
                 }
                 Poll::Gone => {
+                    if themes_seen {
+                        self.unsee_themes();
+                    }
                     self.external_refresh_failed("snapshot job panicked".into());
                     None
                 }
@@ -216,25 +240,20 @@ impl AppModel {
         }
     }
 
-    /// Puts back the themes fingerprint `seen` before a refresh that could
-    /// not read them: the next focus finds the folder changed again and
-    /// reads it, rather than taking themes it never loaded as current.
-    fn unsee_themes(&mut self, seen: Option<String>) {
+    /// Takes back the themes fingerprint after themes not read whole (a
+    /// file locked, the folder unreadable, the read never reached): the next
+    /// focus finds the folder changed and reads it again, rather than take
+    /// themes it never loaded as current.
+    pub(super) fn unsee_themes(&mut self) {
         let Some(b) = self.booted.as_mut() else {
             return;
         };
         let storage = b.stores.storage_mut();
         let mut manifest = storage.manifest().clone();
-        match seen {
-            Some(fingerprint) => {
-                manifest
-                    .stores
-                    .insert(STORAGE_TARGET_CUSTOM_THEMES.to_owned(), fingerprint);
-            }
-            None => {
-                manifest.stores.remove(STORAGE_TARGET_CUSTOM_THEMES);
-            }
-        }
+        manifest.stores.insert(
+            STORAGE_TARGET_CUSTOM_THEMES.to_owned(),
+            THEMES_UNREAD.to_owned(),
+        );
         storage.replace_manifest(manifest);
     }
 

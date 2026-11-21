@@ -104,6 +104,22 @@ impl MockBackend {
         self.lock().pin_hash = pin_hash_of(settings);
     }
 
+    /// The file of theme `id` reads as locked while `locked`: it is left out
+    /// of `list_custom_themes`, and `read_custom_themes` says the list is
+    /// not whole. Returns false on the frozen scenario.
+    pub fn lock_theme(&self, id: &str, locked: bool) -> bool {
+        if self.frozen() {
+            return false;
+        }
+        let mut state = self.lock();
+        if locked {
+            state.locked_themes.insert(id.into());
+        } else {
+            state.locked_themes.remove(id);
+        }
+        true
+    }
+
     /// How many times `command` was called so far, whatever it answered: a
     /// test's proof that the app sent something the mock refuses to fake.
     pub fn seen(&self, command: &str) -> usize {

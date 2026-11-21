@@ -41,9 +41,9 @@ use accshift_app::i18n::{translate, Locale, TranslationValue};
 use accshift_app::jobs::{Jobs, Pending, Poll};
 use accshift_app::text::Text;
 use accshift_app::types::{BackupPreview, BackupReport, ClientStorageSnapshot, UserPlatformReport};
-use accshift_theme::CustomThemePayload;
 use egui::Context;
 
+use super::external_refresh::{read_themes, ThemesRead};
 use super::settings_panel::{apply_report, restore_confirm, BackupState};
 use super::AppModel;
 
@@ -191,11 +191,11 @@ pub(super) struct Restored {
 }
 
 /// The stores and the custom themes as now on disk, read together: the
-/// restored settings may name a restored theme. `themes` is `None` when the
-/// themes folder cannot be listed: the themes loaded stay.
+/// restored settings may name a restored theme. Themes not read whole leave
+/// their fingerprint unseen, so the next focus reads them again.
 pub(super) struct ReadBack {
     snapshot: ClientStorageSnapshot,
-    themes: Option<Vec<CustomThemePayload>>,
+    themes: ThemesRead,
 }
 
 /// What a boundary is held for.
@@ -341,13 +341,7 @@ fn restore_job(b: &dyn Backend, path: &str) -> BackendResult<Restored> {
 /// stores cannot be read.
 fn read_back(b: &dyn Backend) -> BackendResult<ReadBack> {
     let snapshot = b.load_client_storage_snapshot()?;
-    let themes = b.list_custom_themes().ok().map(|themes| {
-        themes
-            .iter()
-            .filter_map(|t| serde_json::to_value(t).ok())
-            .filter_map(|v| serde_json::from_value(v).ok())
-            .collect()
-    });
+    let themes = read_themes(b);
     Ok(ReadBack { snapshot, themes })
 }
 
@@ -589,6 +583,14 @@ impl AppModel {
                 None
             }
             Stage::Restoring(job) => match job.wait() {
+                // As finish_restore: settings checked against the old
+                // platforms are never adopted, nor written.
+                Some(Ok(restored)) if restored.platforms.is_none() => {
+                    if let Some(b) = self.booted.as_mut() {
+                        b.stores.discard_pending_saves();
+                    }
+                    return;
+                }
                 Some(Ok(restored)) => Some(restored.read_back.map(|read| read.snapshot)),
                 // The files were not replaced: the old stores stand.
                 _ => None,
@@ -614,7 +616,7 @@ impl AppModel {
     /// Takes the restored themes, then the restored stores, which may name
     /// one of them, and refreshes what reads them.
     fn adopt_restored(&mut self, ctx: &Context, read: ReadBack) {
-        if let Some(themes) = &read.themes {
+        if let Some(themes) = &read.themes.themes {
             self.apply_theme_payloads(themes);
         }
         let changed = self
@@ -622,11 +624,18 @@ impl AppModel {
             .as_mut()
             .map(|b| b.stores.adopt_snapshot(read.snapshot))
             .unwrap_or_default();
+        // The snapshot's manifest holds the restored themes' fingerprint.
+        if !read.themes.whole {
+            self.unsee_themes();
+        }
         self.apply_external_refresh(ctx, &changed);
     }
 
     /// A restore job ended: on success the restored descriptors are
-    /// registered, then the themes, then the stores adopted whole.
+    /// registered, then the themes, then the stores adopted whole. Stores
+    /// that cannot be read back, or descriptors that cannot be reloaded
+    /// (the restored settings would be checked against the old platforms
+    /// and lose a restored one), ask for the restart that loads them.
     fn finish_restore(&mut self, ctx: &Context, result: BackendResult<Restored>) {
         let locale = self.backup_locale();
         let restored = match result {
@@ -645,29 +654,24 @@ impl AppModel {
         let Some(b) = self.booted.as_mut() else {
             return;
         };
-        let platforms_read = restored.platforms.is_some();
         if let Some(report) = &restored.platforms {
             apply_report(b, report);
             if let Some(panel) = self.settings_panel.as_mut() {
                 panel.user_platforms = Some(report.clone());
             }
         }
-        let done = if platforms_read {
-            with_one(
-                locale,
-                "settings.backupRestored",
-                "path",
-                restored.report.pre_restore_dir,
-            )
-        } else {
-            translate(locale, "settings.backupRestartNeeded")
-        };
-        match restored.read_back {
-            Ok(read) => {
+        match (restored.read_back, restored.platforms.is_some()) {
+            (Ok(read), true) => {
                 self.adopt_restored(ctx, read);
+                let done = with_one(
+                    locale,
+                    "settings.backupRestored",
+                    "path",
+                    restored.report.pre_restore_dir,
+                );
                 self.backup.set_notice(done, false);
             }
-            Err(_) => {
+            _ => {
                 // The old stores must never be written over the restored
                 // files: the boundary stays up until the restart, and the
                 // writes queued for them go.

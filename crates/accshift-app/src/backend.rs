@@ -191,9 +191,19 @@ pub trait Backend: Send + Sync {
 
     // ---------------------------------------------------------------- themes
 
-    /// Every usable theme file; an error when one that is there cannot be
-    /// read, so a partial list is never taken for the whole folder.
+    /// Every usable theme file. One that is there but cannot be read is
+    /// left out; only a folder that cannot be listed is an error.
     fn list_custom_themes(&self) -> BackendResult<Vec<CustomTheme>>;
+    /// [`Self::list_custom_themes`], saying whether a theme file was left
+    /// out because it could not be read: a reader that keeps such a list
+    /// reads the folder again later. Not a command of its own; the answer of
+    /// a backend that cannot tell is the whole list.
+    fn read_custom_themes(&self) -> BackendResult<CustomThemeList> {
+        Ok(CustomThemeList {
+            themes: self.list_custom_themes()?,
+            complete: true,
+        })
+    }
     fn save_custom_theme(&self, theme: &CustomTheme) -> BackendResult<()>;
     fn delete_custom_theme(&self, theme_id: &str) -> BackendResult<()>;
 

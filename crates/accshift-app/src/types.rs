@@ -24,7 +24,7 @@ pub use accshift_core::platforms::{
 pub use accshift_core::storage::{
     BackupPreview, BackupReport, ClientStorageSnapshot, StorageManifest,
 };
-pub use accshift_core::themes::CustomTheme;
+pub use accshift_core::themes::{CustomTheme, CustomThemeList};
 
 /// `get_boot_payload`: everything the UI needs before the window shows.
 #[derive(Debug, Clone, Serialize, Deserialize)]

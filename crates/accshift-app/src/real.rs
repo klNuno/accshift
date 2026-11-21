@@ -391,6 +391,9 @@ impl Backend for RealBackend {
     fn list_custom_themes(&self) -> BackendResult<Vec<CustomTheme>> {
         utility::list_themes(&self.ctx)
     }
+    fn read_custom_themes(&self) -> BackendResult<CustomThemeList> {
+        utility::read_themes(&self.ctx)
+    }
     fn save_custom_theme(&self, theme: &CustomTheme) -> BackendResult<()> {
         utility::save_theme(&self.ctx, theme)
     }

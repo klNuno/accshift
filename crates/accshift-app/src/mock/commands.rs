@@ -315,7 +315,17 @@ impl Backend for MockBackend {
         self.call("roblox_check_sessions", json!({}))
     }
     fn list_custom_themes(&self) -> BackendResult<Vec<CustomTheme>> {
-        self.call("list_custom_themes", json!({}))
+        let mut themes: Vec<CustomTheme> = self.call("list_custom_themes", json!({}))?;
+        let locked = self.lock().locked_themes.clone();
+        themes.retain(|theme| !locked.contains(&theme.id));
+        Ok(themes)
+    }
+    fn read_custom_themes(&self) -> BackendResult<CustomThemeList> {
+        let themes = self.list_custom_themes()?;
+        Ok(CustomThemeList {
+            themes,
+            complete: self.lock().locked_themes.is_empty(),
+        })
     }
     fn save_custom_theme(&self, theme: &CustomTheme) -> BackendResult<()> {
         self.call("save_custom_theme", json!({ "theme": theme }))
