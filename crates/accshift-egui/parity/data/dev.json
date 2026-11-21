@@ -682,6 +682,12 @@
             "label": "setup pending",
             "snapshot_state": "setup_pending",
             "last_used_at": null
+          },
+          {
+            "id": "riot-5",
+            "label": "expired",
+            "snapshot_state": "ready",
+            "last_used_at": 1760000000000
           }
         ]
       },
@@ -806,6 +812,12 @@
               "label": "setup pending",
               "snapshot_state": "setup_pending",
               "last_used_at": null
+            },
+            {
+              "id": "riot-5",
+              "label": "expired",
+              "snapshot_state": "ready",
+              "last_used_at": 1760000000000
             }
           ],
           "currentProfile": "riot-1"
@@ -838,10 +850,52 @@
         }
       }
     ],
+    "riot_check_sessions": [
+      {
+        "args": {},
+        "result": [
+          "riot-5"
+        ]
+      }
+    ],
+    "session_marks": [
+      {
+        "args": {
+          "platformId": "steam"
+        },
+        "result": [
+          {
+            "accountId": "76561198100000006",
+            "state": "passwordNeeded"
+          },
+          {
+            "accountId": "76561198100000007",
+            "state": "expired"
+          }
+        ]
+      }
+    ],
     "roblox_check_sessions": [
       {
         "args": {},
         "result": []
+      }
+    ],
+    "riot_get_installed_games": [
+      {
+        "args": {},
+        "result": [
+          {
+            "productId": "valorant",
+            "patchline": "live",
+            "name": "VALORANT"
+          },
+          {
+            "productId": "league_of_legends",
+            "patchline": "live",
+            "name": "League of Legends"
+          }
+        ]
       }
     ],
     "roblox_get_profile_info": [],
@@ -1143,6 +1197,7 @@
   "skipped": {
     "pin_lock": "PIN session state",
     "pin_unlock": "PIN session state, reads the live settings store",
-    "platform_switch_account": "changes the current account after switchDelayMs; modelled from spec"
+    "platform_switch_account": "changes the current account after switchDelayMs; modelled from spec",
+    "riot_switch_profile_and_launch_game": "switches the Riot profile like platform_switch_account; starts no game"
   }
 }

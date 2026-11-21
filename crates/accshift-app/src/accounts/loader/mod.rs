@@ -51,6 +51,11 @@ pub trait LoaderHooks: ProfileSource {
     fn cached_warning_states(&self) -> Option<BTreeMap<String, WarningPresentation>>;
     /// Whether the adapter loads warnings.
     fn has_warnings(&self) -> bool;
+    /// The session warnings the load or switch job just recomputed (Riot),
+    /// applied when it lands; `None` for the other adapters.
+    fn session_warning_states(&self) -> Option<BTreeMap<String, WarningPresentation>> {
+        None
+    }
 }
 
 /// The flags of a load. `Default` is all false.

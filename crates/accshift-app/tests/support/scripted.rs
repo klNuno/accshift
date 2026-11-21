@@ -11,12 +11,15 @@ use accshift_app::{Backend, BackendError, BackendResult};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 pub struct Scripted {
     pub inner: MockBackend,
     log: Mutex<Vec<(String, String)>>,
     script: Mutex<BTreeMap<String, VecDeque<Result<Value, String>>>>,
+    marks_revision: AtomicU64,
+    watches_running: AtomicBool,
 }
 
 impl Scripted {
@@ -25,7 +28,20 @@ impl Scripted {
             inner,
             log: Mutex::new(Vec::new()),
             script: Mutex::new(BTreeMap::new()),
+            marks_revision: AtomicU64::new(0),
+            watches_running: AtomicBool::new(false),
         }
+    }
+
+    /// What a session watch ending in the background does: the stored marks
+    /// changed after the switch returned.
+    pub fn bump_marks_revision(&self) {
+        self.marks_revision.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// A post-switch session watch runs (or ended), whatever started it.
+    pub fn set_watches_running(&self, running: bool) {
+        self.watches_running.store(running, Ordering::SeqCst);
     }
 
     /// Queues one answer for `command`: `Ok(json)` or `Err(message)`.
@@ -584,6 +600,51 @@ impl Backend for Scripted {
             return answer;
         }
         self.inner.riot_capture_profile(profile_id)
+    }
+    fn riot_check_sessions(&self) -> BackendResult<Vec<String>> {
+        self.record("riot_check_sessions", String::new());
+        if let Some(answer) = self.next("riot_check_sessions") {
+            return answer;
+        }
+        self.inner.riot_check_sessions()
+    }
+    fn session_marks_revision(&self) -> u64 {
+        self.marks_revision.load(Ordering::SeqCst)
+    }
+    fn session_watches_running(&self) -> bool {
+        self.watches_running.load(Ordering::SeqCst)
+    }
+    fn session_marks(
+        &self,
+        platform_id: &str,
+    ) -> BackendResult<Vec<accshift_app::types::SessionMarkInfo>> {
+        self.record("session_marks", platform_id.to_string());
+        if let Some(answer) = self.next("session_marks") {
+            return answer;
+        }
+        self.inner.session_marks(platform_id)
+    }
+    fn riot_get_installed_games(&self) -> BackendResult<Vec<RiotGame>> {
+        self.record("riot_get_installed_games", String::new());
+        if let Some(answer) = self.next("riot_get_installed_games") {
+            return answer;
+        }
+        self.inner.riot_get_installed_games()
+    }
+    fn riot_switch_profile_and_launch_game(
+        &self,
+        profile_id: &str,
+        product_id: &str,
+    ) -> BackendResult<()> {
+        self.record(
+            "riot_switch_profile_and_launch_game",
+            format!("{:?}", (&profile_id, &product_id)),
+        );
+        if let Some(answer) = self.next("riot_switch_profile_and_launch_game") {
+            return answer;
+        }
+        self.inner
+            .riot_switch_profile_and_launch_game(profile_id, product_id)
     }
     fn roblox_add_account_by_cookie(&self, cookie: &str) -> BackendResult<RobloxAccount> {
         self.record("roblox_add_account_by_cookie", format!("{:?}", (&cookie,)));

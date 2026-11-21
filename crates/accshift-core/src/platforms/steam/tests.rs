@@ -406,3 +406,52 @@ fn a_linux_data_folder_with_only_the_launcher_script_is_never_signed_in() {
         SteamFolder::NotSteam
     );
 }
+
+#[test]
+fn a_setup_that_signs_an_account_in_lifts_its_stored_mark() {
+    let tmp = TempRoot::new("setup-clears-mark");
+    let config_dir = tmp.0.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("loginusers.vdf"),
+        "\"users\"\n{\n\t\"76561198000000009\"\n\t{\n\t\t\"AccountName\"\t\t\"readded\"\n\t\t\"PersonaName\"\t\t\"Readded\"\n\t\t\"RememberPassword\"\t\t\"1\"\n\t\t\"MostRecent\"\t\t\"1\"\n\t\t\"Timestamp\"\t\t\"1700000000\"\n\t}\n}\n",
+    )
+    .unwrap();
+    let app_dir = tmp.0.join("app");
+    std::fs::create_dir_all(&app_dir).unwrap();
+    let app: AppCtx = std::sync::Arc::new(LockCtx(app_dir));
+    // The account was forgotten with an expired mark, then added again.
+    config::update_config(app.as_ref(), |cfg| {
+        crate::platforms::session_marks::set_mark_in(
+            cfg,
+            "steam",
+            "76561198000000009",
+            crate::platforms::session_marks::SessionMark::default(),
+        );
+        crate::platforms::session_marks::set_mark_in(
+            cfg,
+            "steam",
+            "76561198000000010",
+            crate::platforms::session_marks::SessionMark::default(),
+        );
+    })
+    .unwrap();
+    let setup_id = format!("steam-setup-test-{}", Uuid::new_v4());
+    insert_test_job(&setup_id);
+    {
+        let mut jobs = steam_setup_jobs().lock().unwrap();
+        let job = jobs.get_mut(&setup_id).unwrap();
+        job.steam_path = tmp.0.clone();
+        job.launch_started = true;
+    }
+
+    let status = get_account_setup_status(app.clone(), setup_id.clone()).unwrap();
+    assert_eq!(status.state, "ready");
+    assert_eq!(status.account_id, "76561198000000009");
+
+    // What the next account reload reads: the fresh account has no mark.
+    let marks = config::load_config(app.as_ref()).session_marks;
+    assert!(!marks["steam"].contains_key("76561198000000009"));
+    assert!(marks["steam"].contains_key("76561198000000010"));
+    assert!(take_test_job(&setup_id).is_none());
+}

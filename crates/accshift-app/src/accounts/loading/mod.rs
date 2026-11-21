@@ -40,7 +40,10 @@ use crate::text::Text;
 use crate::time::Clock;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// How often the UI wakes while a session watch runs, to land its verdict.
+const MARKS_FOLLOW_TICK: Duration = Duration::from_secs(1);
 
 /// Implemented and supported on this OS.
 pub fn is_platform_usable(registry: &PlatformRegistry, platform_id: &str, os: RuntimeOs) -> bool {
@@ -113,6 +116,10 @@ impl LoaderHooks for AdapterHooks<'_> {
     fn has_warnings(&self) -> bool {
         self.adapter.has_warnings()
     }
+
+    fn session_warning_states(&self) -> Option<BTreeMap<String, WarningPresentation>> {
+        self.adapter.session_warning_states()
+    }
 }
 
 /// What [`AccountLoading::poll`] and the handlers read from the app.
@@ -174,6 +181,14 @@ pub struct AccountLoading {
     deferred_runs: Vec<RefreshTicket>,
     /// The sticky `toast.banChecking` is up.
     ban_checking_toast: bool,
+    /// Toasts raised by a handler, sent with the next poll's events.
+    notices: Vec<Toast>,
+    /// The backend's session marks revision this loading last saw.
+    marks_seen: Option<u64>,
+    /// A session watch was running at the last poll.
+    marks_watch_running: bool,
+    /// A reread of the session marks a watch changed, by platform.
+    marks_reload: Option<(String, Pending<()>)>,
 }
 
 impl AccountLoading {
@@ -192,6 +207,10 @@ impl AccountLoading {
             deferred_background: Vec::new(),
             deferred_runs: Vec::new(),
             ban_checking_toast: false,
+            notices: Vec::new(),
+            marks_seen: None,
+            marks_watch_running: false,
+            marks_reload: None,
         }
     }
 
@@ -218,7 +237,8 @@ impl AccountLoading {
             && self.profiles.is_empty()
             && self.warnings.is_empty()
             && self.deferred_background.is_empty()
-            && self.deferred_runs.is_empty())
+            && self.deferred_runs.is_empty()
+            && self.marks_reload.is_none())
             || self.loader.avatars().has_pending()
     }
 
@@ -229,10 +249,11 @@ impl AccountLoading {
             || !self.deferred_runs.is_empty()
             || self.loader.avatars().has_pending())
         .then_some(now);
-        match (soon, self.priming.next_deadline()) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        }
+        let marks = self.marks_watch_running.then(|| now + MARKS_FOLLOW_TICK);
+        [soon, self.priming.next_deadline(), marks]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     fn expiry(&self, ctx: &LoadingContext<'_>) -> CacheExpiry {

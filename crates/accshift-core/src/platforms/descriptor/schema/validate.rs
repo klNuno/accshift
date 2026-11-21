@@ -126,6 +126,10 @@ impl OsProfile {
             path.validate(source, &format!("{field}.detect.pathExists[{index}]"))?;
         }
 
+        if let Some(session) = &self.session {
+            session.validate(source, &format!("{field}.session"), &self.state)?;
+        }
+
         match &self.executable {
             Some(executable) => executable.validate(source, &format!("{field}.executable"), os)?,
             None => {
@@ -568,5 +572,55 @@ impl Condition {
                 Ok(())
             }
         }
+    }
+}
+
+/// At most this many offline reads per descriptor.
+const MAX_SESSION_CHECKS: usize = 8;
+
+impl SessionRules {
+    pub(super) fn validate(
+        &self,
+        source: &str,
+        field: &str,
+        state: &State,
+    ) -> Result<(), DescriptorError> {
+        if self.not_remembered.len() > MAX_SESSION_CHECKS {
+            return Err(DescriptorError::new(
+                source,
+                format!("{field}.notRemembered"),
+                format!(
+                    "expected at most {MAX_SESSION_CHECKS} checks, found {}",
+                    self.not_remembered.len()
+                ),
+            ));
+        }
+        for (index, check) in self.not_remembered.iter().enumerate() {
+            let at = format!("{field}.notRemembered[{index}]");
+            if !state
+                .files
+                .iter()
+                .any(|file| file.snapshot == check.snapshot)
+            {
+                return Err(DescriptorError::new(
+                    source,
+                    format!("{at}.snapshot"),
+                    format!(
+                        "expected the snapshot name of a `state.files` item, found `{}`",
+                        check.snapshot
+                    ),
+                ));
+            }
+            for (name, value) in [("section", &check.section), ("key", &check.key)] {
+                if value.trim().is_empty() {
+                    return Err(DescriptorError::new(
+                        source,
+                        format!("{at}.{name}"),
+                        "expected a non-empty name, found an empty string",
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }

@@ -692,3 +692,342 @@ fn the_setup_poll_logs_only_when_its_view_changes() {
     };
     assert!(observation_changed(&mut last, &other_setup));
 }
+
+// -- Re-selecting the current profile keeps its live session -------------
+
+/// Points the live Riot files of this thread at `root` until dropped.
+struct LiveRoot;
+
+impl LiveRoot {
+    fn at(root: &Path) -> Self {
+        TEST_LIVE_ROOT.with(|live| *live.borrow_mut() = Some(root.to_path_buf()));
+        Self
+    }
+}
+
+impl Drop for LiveRoot {
+    fn drop(&mut self) {
+        TEST_LIVE_ROOT.with(|live| *live.borrow_mut() = None);
+    }
+}
+
+struct SwitchFixture {
+    root: PathBuf,
+    ctx: TempCtx,
+    install: PathBuf,
+    settings: PathBuf,
+    _live: LiveRoot,
+}
+
+impl SwitchFixture {
+    /// Profile `id` has a snapshot holding `token-t0`; the live session,
+    /// flushed by a client that is now closed, holds `token-t1`.
+    fn new(tag: &str, id: &str) -> Self {
+        let root = scratch(tag);
+        let live = LiveRoot::at(&root.join("live"));
+        let install = root.join("install");
+        let settings = live_path_for(&RIOT_SNAPSHOT_ITEMS[0], Some(&install))
+            .unwrap()
+            .unwrap();
+        assert!(settings.starts_with(&root), "{settings:?}");
+        let fx = Self {
+            ctx: TempCtx { root: root.clone() },
+            root,
+            install,
+            settings,
+            _live: live,
+        };
+        fx.write_live("token-t0");
+        backup_live_snapshot(&fx.ctx, id, Some(&fx.install)).unwrap();
+        fx.write_live("token-t1");
+        fx
+    }
+
+    fn write_live(&self, token: &str) {
+        fs::create_dir_all(self.settings.parent().unwrap()).unwrap();
+        fs::write(
+            &self.settings,
+            format!("private: {token}\nsessions: {{}}\n"),
+        )
+        .unwrap();
+    }
+
+    fn live(&self) -> String {
+        fs::read_to_string(&self.settings).unwrap()
+    }
+
+    fn snapshot(&self, id: &str) -> String {
+        let out = self.root.join("snapshot-check.yaml");
+        decrypted_copy_file(
+            &profile_snapshot_path(&self.ctx, id)
+                .unwrap()
+                .join("RiotGamesPrivateSettings.yaml"),
+            &out,
+        )
+        .unwrap();
+        fs::read_to_string(&out).unwrap()
+    }
+}
+
+impl Drop for SwitchFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+#[test]
+fn reselecting_the_current_profile_never_restores_its_older_snapshot() {
+    // A game launched on the current profile A with the client closed. The
+    // live tokens (T1) may be A's, rotated after its snapshot (T0), or those
+    // of an account B signed in inside the client: nothing can tell them
+    // apart, so neither side is overwritten and the game does not start.
+    let id = "riot-profile-current";
+    let fx = SwitchFixture::new("reselect-closed", id);
+    let mut cfg = config_with(vec![profile(id, "ready", "puuid-a")], id);
+    let before = find_profile(&cfg, id).unwrap().clone();
+
+    let work = switch_after_quit(&fx.ctx, &mut cfg, id, Some(&fx.install), None).unwrap();
+
+    assert_eq!(work, SwitchWork::KeptUnconfirmed);
+    assert!(
+        fx.live().contains("token-t1"),
+        "T0 replaced T1: {}",
+        fx.live()
+    );
+    assert!(
+        fx.snapshot(id).contains("token-t0"),
+        "an unconfirmed session overwrote the profile's snapshot"
+    );
+    let saved = find_profile(&cfg, id).unwrap();
+    assert_eq!(saved.snapshot_state, before.snapshot_state);
+    assert_eq!(saved.account_puuid, "puuid-a");
+    assert_eq!(saved.last_captured_at, before.last_captured_at);
+    assert_eq!(cfg.riot.current_profile_id, id);
+}
+
+/// Runs `finish_switch` for the current profile `id` with the client closed
+/// (no identity before the quit). `answers` are what the reopened client
+/// reports, one per poll, the last one repeated. Returns the result and the
+/// process events, each launch tagged with the live session it started on.
+fn reselect_closed(
+    fx: &SwitchFixture,
+    id: &str,
+    product: &str,
+    answers: Vec<Option<RiotDetectedIdentity>>,
+) -> (Result<(), String>, Vec<String>) {
+    reselect_closed_as(fx, profile(id, "ready", "puuid-a"), product, answers)
+}
+
+/// `reselect_closed` for a given current profile.
+fn reselect_closed_as(
+    fx: &SwitchFixture,
+    current: RiotProfileConfig,
+    product: &str,
+    answers: Vec<Option<RiotDetectedIdentity>>,
+) -> (Result<(), String>, Vec<String>) {
+    let id = current.id.clone();
+    let mut cfg = config_with(vec![current], &id);
+    let events = std::cell::RefCell::new(Vec::new());
+    let polls = std::cell::Cell::new(0usize);
+    let launch = |product: &str| {
+        let token = if fx.live().contains("token-t0") {
+            "t0"
+        } else {
+            "t1"
+        };
+        events
+            .borrow_mut()
+            .push(format!("launch {product} on {token}"));
+        Ok(())
+    };
+    let quit = || {
+        events.borrow_mut().push("quit".to_string());
+        Ok(())
+    };
+    let identity = || {
+        let index = polls.get().min(answers.len() - 1);
+        polls.set(polls.get() + 1);
+        answers[index].clone()
+    };
+    let io = SwitchIo {
+        launch: &launch,
+        quit: &quit,
+        identity: &identity,
+        wait: Duration::from_millis(200),
+        poll: Duration::from_millis(5),
+    };
+    let result = finish_switch(
+        &fx.ctx,
+        &mut cfg,
+        &id,
+        Some(&fx.install),
+        None,
+        product,
+        &io,
+    );
+    (result, events.into_inner())
+}
+
+#[test]
+fn a_confirmed_current_account_gets_its_game_in_the_same_request() {
+    let id = "riot-profile-current";
+    let fx = SwitchFixture::new("resolve-match", id);
+
+    let (result, events) =
+        reselect_closed(&fx, id, "valorant", vec![None, None, Some(live("puuid-a"))]);
+
+    assert_eq!(result, Ok(()));
+    assert_eq!(
+        events,
+        vec!["launch riot-client on t1", "launch valorant on t1"]
+    );
+    assert!(fx.live().contains("token-t1"));
+    assert!(fx.snapshot(id).contains("token-t0"));
+}
+
+#[test]
+fn another_confirmed_account_is_quit_and_the_profile_restored_before_the_game() {
+    let id = "riot-profile-current";
+    let fx = SwitchFixture::new("resolve-mismatch", id);
+
+    let (result, events) = reselect_closed(&fx, id, "valorant", vec![Some(live("puuid-b"))]);
+
+    assert_eq!(result, Ok(()));
+    assert_eq!(
+        events,
+        vec!["launch riot-client on t1", "quit", "launch valorant on t0"]
+    );
+    assert!(
+        fx.snapshot(id).contains("token-t0"),
+        "the other account's session was saved into the profile"
+    );
+}
+
+#[test]
+fn an_account_never_confirmed_changes_nothing_and_is_an_error() {
+    let id = "riot-profile-current";
+    for product in ["valorant", RIOT_CLIENT_PRODUCT] {
+        let fx = SwitchFixture::new(&format!("resolve-unknown-{product}"), id);
+
+        let (result, events) = reselect_closed(&fx, id, product, vec![None]);
+
+        let error = result.expect_err("an unconfirmed account reported success");
+        assert!(error.starts_with(RIOT_ACCOUNT_UNCONFIRMED), "{error}");
+        assert_eq!(events, vec!["launch riot-client on t1"], "{product}");
+        assert!(fx.live().contains("token-t1"));
+        assert!(fx.snapshot(id).contains("token-t0"));
+    }
+}
+
+#[test]
+fn reselecting_the_current_profile_with_its_account_signed_in_keeps_the_session() {
+    let id = "riot-profile-current";
+    let fx = SwitchFixture::new("reselect-match", id);
+    let mut cfg = config_with(vec![profile(id, "ready", "puuid-a")], id);
+
+    let work = switch_after_quit(
+        &fx.ctx,
+        &mut cfg,
+        id,
+        Some(&fx.install),
+        Some(&live("puuid-a")),
+    )
+    .unwrap();
+
+    assert_eq!(work, SwitchWork::Switched);
+    assert!(fx.live().contains("token-t1"));
+    assert!(fx.snapshot(id).contains("token-t1"));
+    assert_eq!(find_profile(&cfg, id).unwrap().snapshot_state, "ready");
+}
+
+#[test]
+fn reselecting_the_current_profile_over_another_account_restores_the_profile() {
+    // The live session is proven to be another account's: keeping it would
+    // open the game on that account, so the profile's snapshot comes back
+    // and the other account's session is not saved into it.
+    let id = "riot-profile-current";
+    let fx = SwitchFixture::new("reselect-mismatch", id);
+    let mut cfg = config_with(vec![profile(id, "ready", "puuid-a")], id);
+
+    let work = switch_after_quit(
+        &fx.ctx,
+        &mut cfg,
+        id,
+        Some(&fx.install),
+        Some(&live("puuid-b")),
+    )
+    .unwrap();
+
+    assert_eq!(work, SwitchWork::Switched);
+    assert!(fx.live().contains("token-t0"), "{}", fx.live());
+    assert!(fx.snapshot(id).contains("token-t0"));
+}
+
+// -- A ready profile without a recorded account ---------------------------
+
+#[test]
+fn a_ready_profile_without_an_account_never_adopts_the_signed_in_one() {
+    // Possible since 1.0.5: a capture could mark a profile ready without a
+    // puuid. B is signed in; its tokens must not replace A's snapshot.
+    let id = "riot-profile-current";
+    let fx = SwitchFixture::new("unrecorded-known", id);
+    let mut cfg = config_with(vec![profile(id, "ready", "")], id);
+
+    let error = switch_after_quit(
+        &fx.ctx,
+        &mut cfg,
+        id,
+        Some(&fx.install),
+        Some(&live("puuid-b")),
+    )
+    .expect_err("the signed-in account was adopted");
+
+    assert!(error.starts_with(RIOT_PROFILE_WITHOUT_ACCOUNT), "{error}");
+    assert!(fx.live().contains("token-t1"));
+    assert!(fx.snapshot(id).contains("token-t0"));
+    assert_eq!(find_profile(&cfg, id).unwrap().account_puuid, "");
+}
+
+#[test]
+fn a_ready_profile_without_an_account_is_refused_once_the_client_answers() {
+    let id = "riot-profile-current";
+    let fx = SwitchFixture::new("unrecorded-closed", id);
+
+    let (result, events) = reselect_closed_as(
+        &fx,
+        profile(id, "ready", ""),
+        "valorant",
+        vec![None, Some(live("puuid-b"))],
+    );
+
+    let error = result.expect_err("the game started on the signed-in account");
+    assert!(error.starts_with(RIOT_PROFILE_WITHOUT_ACCOUNT), "{error}");
+    assert_eq!(events, vec!["launch riot-client on t1"]);
+    assert!(fx.live().contains("token-t1"));
+    assert!(fx.snapshot(id).contains("token-t0"));
+}
+
+#[test]
+fn a_profile_still_being_added_adopts_the_signed_in_account() {
+    // No saved session yet: the account signed in is the one being added.
+    let id = "riot-profile-current";
+    let fx = SwitchFixture::new("unrecorded-adding", id);
+    fs::remove_dir_all(profile_snapshot_path(&fx.ctx, id).unwrap()).unwrap();
+    let mut cfg = config_with(vec![profile(id, "awaiting_capture", "")], id);
+
+    let work = switch_after_quit(
+        &fx.ctx,
+        &mut cfg,
+        id,
+        Some(&fx.install),
+        Some(&live("puuid-b")),
+    )
+    .unwrap();
+
+    assert_eq!(work, SwitchWork::Switched);
+    assert!(fx.live().contains("token-t1"));
+    assert!(fx.snapshot(id).contains("token-t1"));
+    let saved = find_profile(&cfg, id).unwrap();
+    assert_eq!(saved.account_puuid, "puuid-b");
+    assert_eq!(saved.snapshot_state, "ready");
+}

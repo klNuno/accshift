@@ -46,6 +46,7 @@ pub mod descriptor;
 pub mod riot;
 #[cfg(windows)]
 pub mod roblox;
+pub mod session_marks;
 pub(crate) mod setup_jobs;
 pub mod steam;
 

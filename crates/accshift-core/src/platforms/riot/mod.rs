@@ -15,17 +15,21 @@ use uuid::Uuid;
 use crate::os;
 use crate::snapshot_crypto::{self, decrypted_copy_file, encrypted_copy_file, DirCopyOptions};
 
+mod games;
 mod identity;
 mod local_api;
 mod paths;
 mod process;
 mod profiles;
 mod rollback;
+mod session;
 mod setup;
 mod snapshot;
 mod switch;
 mod yaml;
 
+#[allow(unused_imports)]
+use self::games::*;
 #[allow(unused_imports)]
 use self::identity::*;
 #[allow(unused_imports)]
@@ -39,13 +43,19 @@ use self::profiles::*;
 #[allow(unused_imports)]
 use self::rollback::*;
 #[allow(unused_imports)]
+use self::session::*;
+#[allow(unused_imports)]
 use self::setup::*;
 #[allow(unused_imports)]
 use self::snapshot::*;
 #[allow(unused_imports)]
+use self::switch::*;
+#[allow(unused_imports)]
 use self::yaml::*;
 
+pub use self::games::{get_installed_games, switch_profile_and_launch_game, RiotGame};
 pub use self::rollback::{sweep_rollback_dirs, RollbackSweepStats};
+pub use self::session::{expired_profile_ids, session_health, SessionHealth};
 pub use self::setup::{
     begin_profile_setup, cancel_profile_setup, capture_profile, get_profile_setup_status,
 };
@@ -230,6 +240,7 @@ pub fn get_current_profile(app_handle: AppCtx) -> Result<String, String> {
 
 pub fn forget_profile(app_handle: AppCtx, profile_id: String) -> Result<(), String> {
     let profile_id = normalize_profile_id(&profile_id)?;
+    crate::platforms::session_marks::supersede_watch(&app_handle, "riot");
     config::update_config(&app_handle, |cfg| {
         cfg.riot
             .profiles
@@ -353,9 +364,13 @@ impl PlatformService for RiotService {
 }
 
 #[cfg(test)]
+mod games_tests;
+#[cfg(test)]
 mod local_api_tests;
 #[cfg(test)]
 mod rollback_tests;
+#[cfg(test)]
+mod session_expiry_tests;
 #[cfg(test)]
 mod session_tests;
 #[cfg(test)]

@@ -1,0 +1,934 @@
+//! Tests of the folder, current, search, persona and completion commands.
+
+use crate::commands::{self, CompletionShell, StepFailure};
+use crate::folders::{self, FolderLookupError, FolderStore};
+use crate::i18n::{self, Tr};
+use crate::output::Format;
+use crate::personas::{self, Assignment, PersonaLookupError};
+use crate::{exit, Command};
+use accshift_core::app_dirs::{AppDirs, BaseDirs};
+use accshift_core::storage::{client_store_path, STORE_FOLDERS, STORE_PERSONAS, STORE_SETTINGS};
+use serde_json::{json, Value};
+use std::collections::{BTreeSet, HashMap};
+use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new(tag: &str) -> Self {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "accshift-cli-cmd-test-{tag}-{}-{n}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create scratch dir");
+        Self(dir)
+    }
+
+    fn dirs(&self) -> AppDirs {
+        let root = Some(self.0.clone());
+        AppDirs::new(BaseDirs {
+            config: root.clone(),
+            data: root.clone(),
+            local_data: root.clone(),
+            cache: root,
+        })
+    }
+
+    fn write(&self, store: &str, value: &Value) -> AppDirs {
+        let ctx = self.dirs();
+        let path = client_store_path(&ctx, store).expect("store path");
+        fs::create_dir_all(path.parent().expect("store parent")).expect("store dir");
+        fs::write(&path, value.to_string()).expect("write store");
+        ctx
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Two "Main" folders on Steam, one nested in "Smurfs", plus a Riot folder
+/// of the same name that must not count.
+fn duplicate_names() -> Value {
+    json!({
+        "version": 1,
+        "folders": [
+            { "id": "f-main", "name": "Main", "parentId": null, "platform": "steam" },
+            { "id": "f-smurfs", "name": "Smurfs", "parentId": null, "platform": "steam" },
+            { "id": "f-main-2", "name": "main", "parentId": "f-smurfs", "platform": "steam" },
+            { "id": "f-riot", "name": "Main", "parentId": null, "platform": "riot" }
+        ],
+        "itemOrder": {
+            "root:steam": [
+                { "type": "folder", "id": "f-smurfs" },
+                { "type": "folder", "id": "f-main" },
+                { "type": "account", "id": "765" }
+            ],
+            "f-main": [{ "type": "account", "id": "761" }, { "type": "account", "id": "762" }],
+            "f-smurfs": [{ "type": "account", "id": "763" }, { "type": "folder", "id": "f-main-2" }],
+            "f-main-2": [{ "type": "account", "id": "764" }]
+        }
+    })
+}
+
+#[test]
+fn a_name_two_folders_share_is_refused_with_their_ids_and_paths() {
+    let store = FolderStore::from_value(&duplicate_names());
+    let error = folders::resolve(&store, "steam", "MAIN").expect_err("ambiguous");
+    assert_eq!(
+        error,
+        FolderLookupError::Ambiguous(vec![
+            ("f-main".into(), "Main".into()),
+            ("f-main-2".into(), "Smurfs / main".into()),
+        ])
+    );
+}
+
+#[test]
+fn a_folder_id_picks_one_of_the_duplicates() {
+    let store = FolderStore::from_value(&duplicate_names());
+    let folder = folders::resolve(&store, "steam", "f-main-2").expect("by id");
+    assert_eq!(folder.id, "f-main-2");
+    // Padding copied from the `folders` table trims as a name does.
+    let padded = folders::resolve(&store, "steam", " f-main-2 ").expect("padded id");
+    assert_eq!(padded.id, "f-main-2");
+    let ids = folders::accounts_in_folder(&store, &folder.id);
+    assert_eq!(ids, ["764".to_string()].into_iter().collect());
+    // The id of another platform's folder is not this platform's.
+    assert!(matches!(
+        folders::resolve(&store, "steam", "f-riot"),
+        Err(FolderLookupError::NotFound(_))
+    ));
+}
+
+#[test]
+fn a_unique_name_still_resolves_and_includes_subfolders() {
+    let store = FolderStore::from_value(&duplicate_names());
+    let folder = folders::resolve(&store, "steam", " smurfs ").expect("by name");
+    let ids = folders::accounts_in_folder(&store, &folder.id);
+    assert_eq!(
+        ids,
+        ["763".to_string(), "764".to_string()].into_iter().collect()
+    );
+    assert_eq!(
+        folders::resolve(&store, "epic", "x"),
+        Err(FolderLookupError::NoneConfigured)
+    );
+}
+
+#[test]
+fn the_folder_tree_follows_the_app_order_with_depth_and_counts() {
+    let store = FolderStore::from_value(&duplicate_names());
+    let tree = folders::tree(&store, "steam");
+    let summary: Vec<(&str, usize, usize, usize)> = tree
+        .iter()
+        .map(|n| (n.id.as_str(), n.depth, n.accounts, n.total_accounts))
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            ("f-smurfs", 0, 1, 2),
+            ("f-main-2", 1, 1, 1),
+            ("f-main", 0, 2, 2),
+        ]
+    );
+    assert_eq!(tree[1].path, "Smurfs / main");
+    assert_eq!(tree[1].parent_id.as_deref(), Some("f-smurfs"));
+}
+
+#[test]
+fn a_parent_cycle_still_lists_every_folder() {
+    let store = FolderStore::from_value(&json!({
+        "folders": [
+            { "id": "a", "name": "A", "parentId": "b", "platform": "steam" },
+            { "id": "b", "name": "B", "parentId": "a", "platform": "steam" }
+        ],
+        "itemOrder": {}
+    }));
+    let ids: BTreeSet<String> = folders::tree(&store, "steam")
+        .into_iter()
+        .map(|n| n.id)
+        .collect();
+    assert_eq!(
+        ids,
+        ["a".to_string(), "b".to_string()].into_iter().collect()
+    );
+}
+
+#[test]
+fn the_folder_reader_keeps_what_the_app_keeps() {
+    let raw = json!({
+        "folders": [
+            { "id": " a ", "name": " A ", "parentId": " ", "platform": "steam" },
+            { "id": "", "name": "no id", "platform": "steam" },
+            { "id": "b", "name": "B", "parentId": "a", "platform": "steam" },
+            { "id": "c", "name": "", "platform": "steam" },
+            "not a folder"
+        ],
+        "itemOrder": {
+            "root:steam": [{ "type": "folder", "id": "a" }, { "type": "folder", "id": "gone" }],
+            "a": [{ "type": "account", "id": " 1 " }, { "type": "weird", "id": "2" }],
+            "dead": [{ "type": "account", "id": "3" }],
+            "root:": [{ "type": "account", "id": "4" }]
+        }
+    });
+    let app = accshift_app::folders::sanitize_folder_store(&raw);
+    let cli = FolderStore::from_value(&raw);
+    let app_folders: Vec<(String, String, Option<String>, String)> = app
+        .folders
+        .iter()
+        .map(|f| {
+            (
+                f.id.clone(),
+                f.name.clone(),
+                f.parent_id.clone(),
+                f.platform.clone(),
+            )
+        })
+        .collect();
+    let cli_folders: Vec<(String, String, Option<String>, String)> = cli
+        .folders
+        .iter()
+        .map(|f| {
+            (
+                f.id.clone(),
+                f.name.clone(),
+                f.parent_id.clone(),
+                f.platform.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(cli_folders, app_folders);
+    let app_order: BTreeSet<(String, Vec<(String, String)>)> = app
+        .item_order
+        .iter()
+        .map(|(k, v)| {
+            let kind =
+                |i: &accshift_app::folders::ItemRef| json!(i.kind).as_str().map(str::to_string);
+            let items = v.iter().map(|i| (kind(i).expect("type"), i.id.clone()));
+            (k.clone(), items.collect())
+        })
+        .collect();
+    let cli_order: BTreeSet<(String, Vec<(String, String)>)> = cli
+        .item_order
+        .iter()
+        .map(|(k, v)| {
+            let items = v.iter().map(|i| (i.kind.clone(), i.id.clone()));
+            (k.clone(), items.collect())
+        })
+        .collect();
+    assert_eq!(cli_order, app_order);
+}
+
+#[test]
+fn list_with_an_ambiguous_folder_exits_before_reading_accounts() {
+    let scratch = Scratch::new("ambiguous");
+    let ctx = scratch.write(STORE_FOLDERS, &duplicate_names());
+    assert_eq!(
+        commands::folder_filter(&ctx, Format::Json, "steam", "main").map(|_| ()),
+        Err(exit::GENERIC)
+    );
+    let (ids, path) =
+        commands::folder_filter(&ctx, Format::Json, "steam", "f-main").expect("by id");
+    assert_eq!(path, "Main");
+    assert_eq!(ids.len(), 2);
+}
+
+#[test]
+fn a_corrupt_folder_store_is_an_io_error_not_a_missing_folder() {
+    let scratch = Scratch::new("corrupt-folders");
+    let ctx = scratch.dirs();
+    let path = client_store_path(&ctx, STORE_FOLDERS).expect("path");
+    fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+    fs::write(&path, "{\"folders\": [").expect("write");
+    assert_eq!(
+        commands::folder_filter(&ctx, Format::Json, "steam", "main").map(|_| ()),
+        Err(exit::IO)
+    );
+    assert_eq!(commands::folders_in(&ctx, Format::Json, "steam"), exit::IO);
+}
+
+#[test]
+fn folders_answers_for_a_known_platform_and_refuses_an_unknown_one() {
+    let scratch = Scratch::new("folders-cmd");
+    let ctx = scratch.write(STORE_FOLDERS, &duplicate_names());
+    assert_eq!(commands::folders_in(&ctx, Format::Json, "steam"), exit::OK);
+    assert_eq!(commands::folders_in(&ctx, Format::Human, "steam"), exit::OK);
+    assert_eq!(
+        commands::folders_in(&ctx, Format::Json, "no-such-platform"),
+        exit::PLATFORM_UNAVAILABLE
+    );
+    // No store at all is an empty tree, not an error.
+    let empty = Scratch::new("folders-none");
+    assert_eq!(
+        commands::folders_in(&empty.dirs(), Format::Json, "steam"),
+        exit::OK
+    );
+}
+
+// ---------------------------------------------------------------- current
+
+#[test]
+fn current_is_unknown_when_the_platform_cannot_tell() {
+    for detected in [None, Some(""), Some("   ")] {
+        let entry = commands::current_entry("steam", detected, None);
+        assert_eq!(entry.status, "unknown");
+        assert_eq!(entry.account_id, None);
+    }
+}
+
+#[test]
+fn current_names_the_account_from_its_list() {
+    let accounts = json!([
+        { "account_name": "alice", "persona_name": "Alice", "steam_id": "761" },
+        { "account_name": "bob", "persona_name": "Bob", "steam_id": "762" }
+    ]);
+    let entry = commands::current_entry("steam", Some("Bob"), Some(&accounts));
+    assert_eq!(entry.status, "known");
+    assert_eq!(entry.account_id.as_deref(), Some("bob"));
+    assert_eq!(entry.name.as_deref(), Some("Bob"));
+    // Detected but no longer listed: still known, without a name.
+    let entry = commands::current_entry("steam", Some("carol"), Some(&accounts));
+    assert_eq!(entry.account_id.as_deref(), Some("carol"));
+    assert_eq!(entry.name, None);
+}
+
+// ---------------------------------------------------------------- search
+
+#[test]
+fn search_matches_name_display_name_and_note_without_case() {
+    let accounts = json!([
+        { "account_name": "alice", "persona_name": "Sniper Queen", "steam_id": "761" },
+        { "account_name": "bob", "persona_name": "Bob", "steam_id": "762" },
+        { "account_name": "carol", "persona_name": "Carol", "steam_id": "763" }
+    ]);
+    let notes: HashMap<String, String> = [("763".to_string(), "Faceit SMURF".to_string())]
+        .into_iter()
+        .collect();
+    let ids = |query: &str| -> Vec<String> {
+        commands::search_platform("steam", &accounts, &notes, query)
+            .into_iter()
+            .map(|h| h.account_id)
+            .collect()
+    };
+    assert_eq!(ids("ALI"), vec!["alice"]);
+    assert_eq!(ids("sniper"), vec!["alice"]);
+    assert_eq!(ids("smurf"), vec!["carol"]);
+    assert!(ids("nobody").is_empty());
+    let hit = &commands::search_platform("steam", &accounts, &notes, "faceit")[0];
+    assert_eq!(hit.platform, "steam");
+    assert_eq!(hit.note.as_deref(), Some("Faceit SMURF"));
+}
+
+#[test]
+fn search_reads_a_user_platform_label_not_its_raw_json() {
+    let accounts = json!([
+        { "accountId": "u1", "label": "Work", "lastUsedAt": null, "snapshotSaved": true }
+    ]);
+    let notes = HashMap::new();
+    assert_eq!(
+        commands::search_platform("my-launcher", &accounts, &notes, "work").len(),
+        1
+    );
+    // "label" is a key of the raw JSON, not a value a person typed.
+    assert!(commands::search_platform("my-launcher", &accounts, &notes, "label").is_empty());
+}
+
+// ------------------------------------------------- real platform payloads
+
+/// One account as its platform service serializes it, from the core's own
+/// DTO, with the ids and the name the CLI must read out of it.
+struct RealPayload {
+    platform: &'static str,
+    accounts: Value,
+    /// The id `accshift switch` takes.
+    switch_id: &'static str,
+    /// The id the GUI stores (folders, notes, personas).
+    storage_id: &'static str,
+    name: &'static str,
+    /// Text that only a field other than the switch id holds.
+    searchable: &'static str,
+}
+
+fn descriptor_payload(account_id: &str, label: &str) -> Value {
+    use accshift_core::platforms::descriptor::engine::DescriptorAccount;
+    serde_json::to_value(vec![DescriptorAccount {
+        account_id: account_id.to_string(),
+        label: label.to_string(),
+        last_used_at: Some(1_700_000_000_000),
+        snapshot_saved: true,
+    }])
+    .expect("serialize descriptor account")
+}
+
+fn real_payloads() -> Vec<RealPayload> {
+    use accshift_core::platforms::steam::accounts::SteamAccount;
+    let mut out = vec![RealPayload {
+        platform: "steam",
+        accounts: serde_json::to_value(vec![SteamAccount {
+            steam_id: "76561190000000001".to_string(),
+            account_name: "alice".to_string(),
+            persona_name: "Sniper Queen".to_string(),
+            last_login_at: Some(1_700_000_000),
+        }])
+        .expect("serialize steam account"),
+        switch_id: "alice",
+        storage_id: "76561190000000001",
+        name: "Sniper Queen",
+        searchable: "sniper",
+    }];
+    for (platform, id, label, searchable) in [
+        ("epic", "e1", "Epic Main", "epic main"),
+        ("gog", "g1", "Gog Main", "gog main"),
+        ("jagex", "j1", "Jagex Main", "jagex"),
+        ("discord", "d1", "Discord Main", "discord"),
+        (
+            "ubisoft",
+            "0f0e0d0c-0000-4000-8000-000000000001",
+            "Uplay Main",
+            "uplay",
+        ),
+        // A user platform runs on the same descriptor engine.
+        ("my-launcher", "u1", "Work Laptop", "laptop"),
+    ] {
+        out.push(RealPayload {
+            platform,
+            accounts: descriptor_payload(id, label),
+            switch_id: id,
+            storage_id: id,
+            name: label,
+            searchable,
+        });
+    }
+    #[cfg(windows)]
+    {
+        use accshift_core::config::RiotProfileConfig;
+        use accshift_core::platforms::roblox::RobloxAccount;
+        out.push(RealPayload {
+            platform: "roblox",
+            accounts: serde_json::to_value(vec![RobloxAccount {
+                user_id: "9001".to_string(),
+                username: "builder".to_string(),
+                display_name: "Builder Bob".to_string(),
+                last_login_at: Some(1_700_000_000_000),
+            }])
+            .expect("serialize roblox account"),
+            switch_id: "9001",
+            storage_id: "9001",
+            name: "Builder Bob",
+            searchable: "builder",
+        });
+        out.push(RealPayload {
+            platform: "riot",
+            accounts: serde_json::to_value(vec![RiotProfileConfig {
+                id: "r1".to_string(),
+                label: "Riot Main".to_string(),
+                account_name: "Ranger".to_string(),
+                account_tag_line: "EUW".to_string(),
+                ..Default::default()
+            }])
+            .expect("serialize riot profile"),
+            switch_id: "r1",
+            storage_id: "r1",
+            name: "Riot Main",
+            searchable: "ranger#euw",
+        });
+    }
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        use accshift_core::platforms::battle_net::BattleNetAccount;
+        out.push(RealPayload {
+            platform: "battle-net",
+            accounts: serde_json::to_value(vec![BattleNetAccount {
+                email: "player@example.com".to_string(),
+                battle_tag: "Player#1234".to_string(),
+                last_login_at: Some(1_700_000_000_000),
+            }])
+            .expect("serialize battle.net account"),
+            switch_id: "player@example.com",
+            storage_id: "player@example.com",
+            name: "Player#1234",
+            searchable: "player#12",
+        });
+    }
+    out
+}
+
+#[test]
+fn list_reads_every_platform_payload_and_filters_folders_by_stored_id() {
+    for case in real_payloads() {
+        let accounts = case.accounts.as_array().expect("array");
+        let rows = crate::output::account_rows(case.platform, accounts, None);
+        assert_eq!(rows.len(), 1, "{}: the account is listed", case.platform);
+        let row = &rows[0];
+        assert_eq!(row.switch_id, case.switch_id, "{}", case.platform);
+        assert_eq!(row.storage_id, case.storage_id, "{}", case.platform);
+        assert_eq!(row.primary, case.name, "{}", case.platform);
+        // `--folder` holds the GUI's stored ids.
+        let folder = [case.storage_id.to_string()].into_iter().collect();
+        assert_eq!(
+            crate::output::account_rows(case.platform, accounts, Some(&folder)).len(),
+            1,
+            "{}: kept by its folder",
+            case.platform
+        );
+        let other = ["elsewhere".to_string()].into_iter().collect();
+        assert!(
+            crate::output::account_rows(case.platform, accounts, Some(&other)).is_empty(),
+            "{}: dropped by another folder",
+            case.platform
+        );
+    }
+}
+
+#[test]
+fn search_finds_every_platform_payload_by_name_and_by_its_note() {
+    for case in real_payloads() {
+        let notes: HashMap<String, String> =
+            [(case.storage_id.to_string(), "Tournament SMURF".to_string())]
+                .into_iter()
+                .collect();
+        let hits =
+            commands::search_platform(case.platform, &case.accounts, &notes, case.searchable);
+        assert_eq!(
+            hits.len(),
+            1,
+            "{}: found by {}",
+            case.platform,
+            case.searchable
+        );
+        assert_eq!(hits[0].account_id, case.switch_id, "{}", case.platform);
+        assert_eq!(hits[0].name, case.name, "{}", case.platform);
+        let by_note = commands::search_platform(case.platform, &case.accounts, &notes, "smurf");
+        assert_eq!(by_note.len(), 1, "{}: found by its note", case.platform);
+        assert_eq!(by_note[0].note.as_deref(), Some("Tournament SMURF"));
+    }
+}
+
+#[test]
+fn current_names_every_platform_payload() {
+    for case in real_payloads() {
+        for detected in [case.switch_id, case.storage_id] {
+            let entry =
+                commands::current_entry(case.platform, Some(detected), Some(&case.accounts));
+            assert_eq!(entry.status, "known");
+            assert_eq!(
+                entry.account_id.as_deref(),
+                Some(case.switch_id),
+                "{}: detected as {detected}",
+                case.platform
+            );
+            assert_eq!(entry.name.as_deref(), Some(case.name), "{}", case.platform);
+        }
+    }
+}
+
+#[test]
+fn a_persona_step_switches_every_platform_payload_by_the_id_switch_takes() {
+    for case in real_payloads() {
+        assert_eq!(
+            commands::switch_target(case.platform, &case.accounts, case.storage_id).as_deref(),
+            Some(case.switch_id),
+            "{}",
+            case.platform
+        );
+        assert_eq!(
+            commands::switch_target(case.platform, &case.accounts, "not-listed"),
+            None,
+            "{}",
+            case.platform
+        );
+    }
+    // A persona stores the Steam ID, never the account name.
+    let steam = &real_payloads()[0];
+    assert_eq!(
+        commands::switch_target("steam", &steam.accounts, "alice"),
+        None
+    );
+}
+
+#[test]
+fn a_descriptor_account_without_a_label_is_named_by_its_id() {
+    let accounts = descriptor_payload("e9", "");
+    let entry = commands::current_entry("epic", Some("e9"), Some(&accounts));
+    assert_eq!(entry.name.as_deref(), Some("e9"));
+}
+
+// ---------------------------------------------------------------- personas
+
+fn two_personas() -> Value {
+    json!([
+        {
+            "id": "p1", "name": "Main", "color": "",
+            "assignments": [
+                { "platformId": "steam", "accountId": "761" },
+                { "platformId": "riot", "accountId": "r1" },
+                { "platformId": "gone", "accountId": "x" }
+            ]
+        },
+        { "id": "p2", "name": "main", "color": "", "assignments": [] },
+        { "id": "p3", "name": "Alt", "color": "", "assignments": [] }
+    ])
+}
+
+/// Id, name and `(platform, account)` assignments of one persona.
+type PersonaRow = (String, String, Vec<(String, String)>);
+
+#[test]
+fn the_persona_reader_keeps_what_the_app_keeps() {
+    let raw = json!([
+        { "id": "a", "name": "  ", "assignments": [
+            { "platformId": "steam", "accountId": "1" },
+            { "platformId": "steam", "accountId": "2" },
+            { "platformId": "", "accountId": "3" },
+            { "platformId": "riot", "accountId": "" },
+            { "platformId": "riot", "accountId": "4" },
+            [1, 2]
+        ]},
+        { "id": "a", "name": "duplicate id" },
+        { "id": "", "name": "no id" },
+        { "id": "b", "name": "A name well past the forty character limit of the app" },
+        "not a persona"
+    ]);
+    let app: Vec<PersonaRow> = accshift_app::personas::sanitize_personas(&raw)
+        .into_iter()
+        .map(|p| {
+            let a = p
+                .assignments
+                .into_iter()
+                .map(|a| (a.platform_id, a.account_id))
+                .collect();
+            (p.id, p.name, a)
+        })
+        .collect();
+    let cli: Vec<PersonaRow> = personas::from_value(&raw)
+        .into_iter()
+        .map(|p| {
+            let a = p
+                .assignments
+                .into_iter()
+                .map(|a| (a.platform_id, a.account_id))
+                .collect();
+            (p.id, p.name, a)
+        })
+        .collect();
+    assert_eq!(cli, app);
+}
+
+#[test]
+fn a_persona_resolves_by_id_then_by_unique_name() {
+    let list = personas::from_value(&two_personas());
+    assert_eq!(personas::resolve(&list, "p2").expect("id").id, "p2");
+    assert_eq!(personas::resolve(&list, "ALT").expect("name").id, "p3");
+    assert_eq!(
+        personas::resolve(&list, "main"),
+        Err(PersonaLookupError::Ambiguous(vec![
+            ("p1".into(), "Main".into()),
+            ("p2".into(), "main".into()),
+        ]))
+    );
+    assert!(matches!(
+        personas::resolve(&list, "nobody"),
+        Err(PersonaLookupError::NotFound(_))
+    ));
+    assert_eq!(
+        personas::resolve(&[], "x"),
+        Err(PersonaLookupError::NoneConfigured)
+    );
+}
+
+fn step(platform: &str, account: &str) -> Assignment {
+    Assignment {
+        platform_id: platform.into(),
+        account_id: account.into(),
+    }
+}
+
+#[test]
+fn a_persona_switch_stops_at_the_first_failure() {
+    let steps = vec![step("steam", "761"), step("riot", "r1"), step("epic", "e1")];
+    let mut tried = Vec::new();
+    let report = commands::run_steps(&steps, &mut |s: &Assignment| {
+        tried.push(s.platform_id.clone());
+        if s.platform_id == "riot" {
+            Err(StepFailure {
+                platform_id: s.platform_id.clone(),
+                account_id: s.account_id.clone(),
+                code: "platform_error".into(),
+                message: "boom".into(),
+                exit: exit::GENERIC,
+            })
+        } else {
+            Ok(())
+        }
+    });
+    assert_eq!(tried, vec!["steam", "riot"]);
+    assert_eq!(report.succeeded, vec![step("steam", "761")]);
+    assert_eq!(
+        report.failed.as_ref().map(|f| f.platform_id.as_str()),
+        Some("riot")
+    );
+    assert_eq!(report.not_tried, vec![step("epic", "e1")]);
+}
+
+#[test]
+fn a_persona_skips_platforms_this_build_does_not_have() {
+    let list = personas::from_value(&two_personas());
+    let (steps, skipped) = commands::plan(&list[0], &|id: &str| id != "gone");
+    assert_eq!(steps, vec![step("steam", "761"), step("riot", "r1")]);
+    assert_eq!(skipped, vec![step("gone", "x")]);
+}
+
+fn persona_ctx(scratch: &Scratch, settings: Value) -> AppDirs {
+    scratch.write(STORE_SETTINGS, &settings);
+    scratch.write(STORE_PERSONAS, &two_personas())
+}
+
+#[test]
+fn persona_runs_every_step_and_reports_the_failure_exit() {
+    let scratch = Scratch::new("persona-run");
+    let ctx = persona_ctx(&scratch, json!({}));
+    let mut switched = Vec::new();
+    let code = commands::persona_in(&ctx, Format::Json, "p1", &|id| id != "gone", &mut |s| {
+        switched.push(s.clone());
+        Ok(())
+    });
+    assert_eq!(code, exit::OK);
+    assert_eq!(switched, vec![step("steam", "761"), step("riot", "r1")]);
+
+    let code = commands::persona_in(&ctx, Format::Human, "p1", &|_| true, &mut |s| {
+        if s.platform_id == "riot" {
+            Err(StepFailure {
+                platform_id: s.platform_id.clone(),
+                account_id: s.account_id.clone(),
+                code: "unknown_account".into(),
+                message: "gone".into(),
+                exit: exit::UNKNOWN_ACCOUNT,
+            })
+        } else {
+            Ok(())
+        }
+    });
+    assert_eq!(code, exit::UNKNOWN_ACCOUNT);
+}
+
+#[test]
+fn persona_honours_the_pin_lock_before_any_switch() {
+    let scratch = Scratch::new("persona-pin");
+    // PIN enabled with no usable hash: refused, never prompted.
+    let ctx = persona_ctx(&scratch, json!({ "pinEnabled": true }));
+    let mut called = false;
+    let code = commands::persona_in(&ctx, Format::Json, "p1", &|_| true, &mut |_| {
+        called = true;
+        Ok(())
+    });
+    assert_eq!(code, exit::PIN_DENIED);
+    assert!(!called, "a switch ran past the PIN lock");
+}
+
+#[test]
+fn persona_refuses_ambiguous_unknown_and_empty_personas_without_switching() {
+    let scratch = Scratch::new("persona-refuse");
+    let ctx = persona_ctx(&scratch, json!({}));
+    for (query, available) in [
+        ("main", true),
+        ("nobody", true),
+        ("p1", false),
+        ("Alt", true),
+    ] {
+        let mut called = false;
+        let code = commands::persona_in(&ctx, Format::Json, query, &|_| available, &mut |_| {
+            called = true;
+            Ok(())
+        });
+        assert_eq!(code, exit::GENERIC, "{query}");
+        assert!(!called, "{query} switched");
+    }
+    let empty = Scratch::new("persona-none");
+    assert_eq!(commands::personas_in(&empty.dirs(), Format::Json), exit::OK);
+    assert_eq!(commands::personas_in(&ctx, Format::Human), exit::OK);
+}
+
+#[test]
+fn a_persona_with_every_platform_skipped_keeps_its_skipped_list() {
+    let list = personas::from_value(&two_personas());
+    let (steps, skipped) = commands::plan(&list[0], &|_| false);
+    assert!(steps.is_empty());
+    let (message, details) = commands::nothing_to_switch(Tr::english(), &list[0], &skipped);
+    assert!(
+        message.contains("steam (761), riot (r1), gone (x)"),
+        "{message}"
+    );
+    assert_eq!(details["persona"], json!({ "id": "p1", "name": "Main" }));
+    assert_eq!(
+        details["skipped"],
+        json!([
+            { "platformId": "steam", "accountId": "761" },
+            { "platformId": "riot", "accountId": "r1" },
+            { "platformId": "gone", "accountId": "x" }
+        ])
+    );
+}
+
+// ---------------------------------------------------------------- completions
+
+#[test]
+fn completions_cover_every_shell_and_the_new_subcommands() {
+    for shell in [
+        CompletionShell::Bash,
+        CompletionShell::Zsh,
+        CompletionShell::Fish,
+        CompletionShell::Powershell,
+    ] {
+        let script = String::from_utf8(commands::completion_script(shell)).expect("utf-8");
+        for word in [
+            "accshift",
+            "folders",
+            "current",
+            "search",
+            "personas",
+            "persona",
+            "completions",
+        ] {
+            assert!(script.contains(word), "{shell:?} script lacks {word}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------- telemetry
+
+#[test]
+fn every_new_subcommand_reaches_telemetry_by_name_only() {
+    let commands = [
+        Command::Folders {
+            platform: "steam".into(),
+        },
+        Command::Current {
+            platform: Some("steam".into()),
+        },
+        Command::Search {
+            query: "secret".into(),
+        },
+        Command::Personas,
+        Command::Persona {
+            persona: "secret".into(),
+        },
+        Command::Completions {
+            shell: CompletionShell::Bash,
+        },
+    ];
+    for command in commands {
+        let name = command.name();
+        assert!(!name.contains("secret"));
+        assert_eq!(
+            accshift_core::telemetry::code_from(name, accshift_core::telemetry::CLI_COMMANDS),
+            name,
+            "{name} would reach telemetry as `other`"
+        );
+    }
+}
+
+// ---------------------------------------------------------------- i18n
+
+fn placeholders(text: &str) -> BTreeSet<String> {
+    text.split('{')
+        .skip(1)
+        .filter_map(|rest| rest.split_once('}').map(|(name, _)| name.to_string()))
+        .collect()
+}
+
+#[test]
+fn every_table_has_the_english_keys_and_placeholders() {
+    let en = i18n::table("en");
+    assert!(!en.is_empty(), "en.json failed to parse");
+    for locale in i18n::LOCALES {
+        let table = i18n::table(locale);
+        let keys: BTreeSet<&String> = table.keys().collect();
+        let en_keys: BTreeSet<&String> = en.keys().collect();
+        assert_eq!(keys, en_keys, "{locale} keys differ from en");
+        for (key, value) in en {
+            let text = table[key].as_str().expect("string");
+            assert!(!text.is_empty(), "{locale} {key} is empty");
+            assert_eq!(
+                placeholders(text),
+                placeholders(value.as_str().expect("string")),
+                "{locale} {key} placeholders"
+            );
+            assert!(
+                !text.contains('\u{2014}') && !text.contains('\u{2026}'),
+                "{locale} {key}"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_key_the_code_asks_for_exists_in_english() {
+    let en = i18n::table("en");
+    // Every source of the crate, and every `.t(` form (`tr.t(`, `Tr::...t(`).
+    // The needle is built so this file does not match its own literal.
+    let needle = format!(".{}(", "t");
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+    let mut scanned = 0;
+    for entry in std::fs::read_dir(dir).expect("src") {
+        let path = entry.expect("entry").path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+            continue;
+        }
+        scanned += 1;
+        let source = std::fs::read_to_string(&path).expect("source");
+        for chunk in source.split(needle.as_str()).skip(1) {
+            let Some(rest) = chunk.trim_start().strip_prefix('"') else {
+                continue;
+            };
+            let key = rest.split('"').next().unwrap_or_default();
+            assert!(en.contains_key(key), "missing i18n key {key}");
+        }
+    }
+    assert!(scanned > 10, "only {scanned} sources scanned");
+}
+
+#[test]
+fn the_language_follows_the_app_then_the_os() {
+    let os = vec!["pt_BR.UTF-8".to_string()];
+    assert_eq!(i18n::pick_locale(None, &os), "pt-br");
+    assert_eq!(i18n::pick_locale(Some("fr"), &os), "fr");
+    // A stored language the app does not know is English, as in the app.
+    assert_eq!(i18n::pick_locale(Some("klingon"), &os), "en");
+    assert_eq!(i18n::pick_locale(None, &["zh-CN".to_string()]), "zh");
+    assert_eq!(i18n::pick_locale(None, &["de-DE".to_string()]), "en");
+    assert_eq!(
+        Tr::locale("fr").t("folders.empty", &[("platform", "steam")]),
+        "Aucun dossier sur steam."
+    );
+    // A value is never scanned for placeholders of its own.
+    assert_eq!(
+        Tr::english().t(
+            "folders.notFound",
+            &[
+                ("folder", "{platform}"),
+                ("platform", "steam"),
+                ("available", "a")
+            ]
+        ),
+        "Folder '{platform}' not found on steam. Available: a"
+    );
+    // JSON output stays English whatever the app is set to.
+    let scratch = Scratch::new("tr-json");
+    let ctx = scratch.write(STORE_SETTINGS, &json!({ "language": "ru" }));
+    assert_eq!(
+        Tr::for_run(Format::Json, &ctx).t("current.unknown", &[]),
+        "unknown"
+    );
+    assert_eq!(
+        Tr::for_run(Format::Human, &ctx).t("current.unknown", &[]),
+        "неизвестно"
+    );
+}

@@ -48,6 +48,16 @@ pub struct BootPayload {
     pub user_platforms: UserPlatformReport,
 }
 
+/// `riot_get_installed_games`: one Riot game the switch can start, from a
+/// closed list (`valorant`, `league_of_legends`, `bacon`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RiotGame {
+    pub product_id: String,
+    pub patchline: String,
+    pub name: String,
+}
+
 /// `get_desktop_wallpaper`: the desktop picture behind the window, for the
 /// glass themes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,4 +125,13 @@ pub struct RobloxAccount {
 #[serde(rename_all = "camelCase")]
 pub struct RobloxProfileInfo {
     pub avatar_url: Option<String>,
+}
+
+/// One account's session mark, as `session_marks` answers it. `state` is
+/// `expired` or `passwordNeeded`; another value marks nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMarkInfo {
+    pub account_id: String,
+    pub state: String,
 }

@@ -58,9 +58,30 @@ pub(super) fn live_path_for(
 ) -> Result<Option<PathBuf>, String> {
     let relative = item.relative_path.replace('/', "\\");
     match item.base {
-        RiotPathBase::LocalAppData => Ok(Some(env_path("LOCALAPPDATA")?.join(relative))),
-        RiotPathBase::ProgramData => Ok(Some(env_path("PROGRAMDATA")?.join(relative))),
+        RiotPathBase::LocalAppData => Ok(Some(live_base("LOCALAPPDATA")?.join(relative))),
+        RiotPathBase::ProgramData => Ok(Some(live_base("PROGRAMDATA")?.join(relative))),
         RiotPathBase::InstallDir => Ok(install_dir.map(|dir| dir.join(relative))),
+    }
+}
+
+#[cfg(not(test))]
+fn live_base(name: &str) -> Result<PathBuf, String> {
+    env_path(name)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test-only root for the live session files of the current thread, so a
+    /// test runs a whole switch on synthetic files, never the machine's own.
+    pub(super) static TEST_LIVE_ROOT: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn live_base(name: &str) -> Result<PathBuf, String> {
+    match TEST_LIVE_ROOT.with(|root| root.borrow().clone()) {
+        Some(root) => Ok(root.join(name)),
+        None => env_path(name),
     }
 }
 

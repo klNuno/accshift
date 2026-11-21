@@ -50,6 +50,7 @@ mod identity;
 mod operations;
 mod reads;
 mod restore;
+mod session;
 mod snapshot;
 mod state_item;
 
@@ -69,13 +70,14 @@ pub enum DescriptorOrigin {
 /// One account as accshift-app's `PlatformAccount` reads it, for every
 /// descriptor-driven platform. The field names match what the hand-written
 /// modules serialize, so no adapter changes when a platform is converted.
+/// Public so the CLI tests serialize the real payload.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct DescriptorAccount {
-    account_id: String,
-    label: String,
-    last_used_at: Option<u64>,
-    snapshot_saved: bool,
+pub struct DescriptorAccount {
+    pub account_id: String,
+    pub label: String,
+    pub last_used_at: Option<u64>,
+    pub snapshot_saved: bool,
 }
 
 #[derive(Debug, Serialize)]

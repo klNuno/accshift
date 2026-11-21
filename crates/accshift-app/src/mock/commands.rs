@@ -312,6 +312,28 @@ impl Backend for MockBackend {
     fn riot_capture_profile(&self, profile_id: &str) -> BackendResult<()> {
         self.call("riot_capture_profile", json!({ "profileId": profile_id }))
     }
+    fn riot_check_sessions(&self) -> BackendResult<Vec<String>> {
+        self.call("riot_check_sessions", json!({}))
+    }
+    fn session_marks(
+        &self,
+        platform_id: &str,
+    ) -> BackendResult<Vec<crate::types::SessionMarkInfo>> {
+        self.call("session_marks", json!({ "platformId": platform_id }))
+    }
+    fn riot_get_installed_games(&self) -> BackendResult<Vec<RiotGame>> {
+        self.call("riot_get_installed_games", json!({}))
+    }
+    fn riot_switch_profile_and_launch_game(
+        &self,
+        profile_id: &str,
+        product_id: &str,
+    ) -> BackendResult<()> {
+        self.call(
+            "riot_switch_profile_and_launch_game",
+            json!({ "profileId": profile_id, "productId": product_id }),
+        )
+    }
     fn roblox_add_account_by_cookie(&self, cookie: &str) -> BackendResult<RobloxAccount> {
         self.call("roblox_add_account_by_cookie", json!({ "cookie": cookie }))
     }

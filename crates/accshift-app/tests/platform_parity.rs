@@ -104,7 +104,7 @@ fn scenario_demo() {
 #[test]
 fn scenario_dev() {
     let model = build_model("dev");
-    expect(&model, &[("riot", 4), ("steam", 8)]);
+    expect(&model, &[("riot", 5), ("steam", 8)]);
     assert_eq!(model["steam"].current_account, "76561198100000001");
     assert_eq!(model["riot"].current_account, "riot-1");
 }
