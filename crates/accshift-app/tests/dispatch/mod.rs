@@ -93,7 +93,7 @@ pub fn dispatch(
             json(b.backup_select_import_file(&a.str("title"), &a.str("allFiles")))
         }
         "backup_preview" => json(b.backup_preview(&a.str("path"))),
-        "backup_restore" => json(b.backup_restore(&a.str("path"))),
+        "backup_restore" => json(b.backup_restore(&a.str("path")).map_err(BackendError::from)),
         "open_url" => json(b.open_url(&a.str("url"))),
         "open_logs_folder" => json(b.open_logs_folder()),
         "get_desktop_wallpaper" => json(b.get_desktop_wallpaper()),

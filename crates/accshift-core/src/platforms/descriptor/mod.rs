@@ -142,56 +142,108 @@ pub fn user_dir(app: &dyn AppContext) -> Result<PathBuf, String> {
 /// lists them can name the file and the field instead of showing one platform
 /// fewer than the user put there.
 pub fn load_user(app: &dyn AppContext) -> (Vec<(PathBuf, Descriptor)>, Vec<DescriptorError>) {
+    let read = read_user(app);
+    (read.loaded, read.errors)
+}
+
+/// What [`read_user`] found in the user's descriptor folder.
+pub struct UserDescriptors {
+    pub loaded: Vec<(PathBuf, Descriptor)>,
+    pub errors: Vec<DescriptorError>,
+    /// False when the folder, an entry or a file that is there could not be
+    /// read (denied, locked): a platform may be missing for that alone, and
+    /// a reader that needs every one reads again later. A file that reads
+    /// but does not validate leaves it true.
+    pub complete: bool,
+}
+
+/// [`load_user`], saying whether every file there was read. Each error that
+/// makes it incomplete is in `errors` too, so the folder's listing names it.
+pub fn read_user(app: &dyn AppContext) -> UserDescriptors {
     static LOGGED: std::sync::Once = std::sync::Once::new();
     LOGGED.call_once(|| log_embedded_rejections(app, embedded_rejections()));
 
-    let mut loaded = Vec::new();
-    let mut errors = Vec::new();
+    let mut read = UserDescriptors {
+        loaded: Vec::new(),
+        errors: Vec::new(),
+        complete: true,
+    };
+    let unread = |read: &mut UserDescriptors, source: &str, e: String| {
+        read.errors.push(DescriptorError::new(
+            source,
+            "",
+            format!("could not be read: {e}"),
+        ));
+        read.complete = false;
+    };
 
     let dir = match user_dir(app) {
         Ok(dir) => dir,
         Err(e) => {
-            errors.push(DescriptorError::new("user descriptors", "", e));
-            return (loaded, errors);
+            unread(&mut read, "user descriptors", e);
+            return read;
         }
     };
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return (loaded, errors);
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return read,
+        Err(e) => {
+            unread(&mut read, "user descriptors", e.to_string());
+            return read;
+        }
     };
 
     // Sorted, so two machines with the same folder report in the same order
     // and a collision always names the same file as the loser.
-    let mut files: Vec<PathBuf> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_file()
-                && path
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
-        })
-        .collect();
+    let mut files: Vec<PathBuf> = Vec::new();
+    for entry in entries {
+        let path = match entry {
+            Ok(entry) => entry.path(),
+            Err(e) => {
+                unread(&mut read, "user descriptors", e.to_string());
+                continue;
+            }
+        };
+        if !path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+        {
+            continue;
+        }
+        match std::fs::metadata(&path) {
+            Ok(meta) if meta.is_file() => files.push(path),
+            // A folder, or a file gone since the folder was listed.
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => unread(&mut read, &source_of(&path), e.to_string()),
+        }
+    }
     files.sort();
 
     for path in files {
-        let source = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string());
+        let source = source_of(&path);
         match std::fs::read_to_string(&path) {
             Ok(body) => match Descriptor::parse(&source, &body) {
-                Ok(descriptor) => loaded.push((path, descriptor)),
-                Err(error) => errors.push(error),
+                Ok(descriptor) => read.loaded.push((path, descriptor)),
+                Err(error) => read.errors.push(error),
             },
-            Err(e) => errors.push(DescriptorError::new(
-                &source,
-                "",
-                format!("could not be read: {e}"),
-            )),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            // Not UTF-8: read whole, and no descriptor.
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => read.errors.push(
+                DescriptorError::new(&source, "", format!("could not be read: {e}")),
+            ),
+            Err(e) => unread(&mut read, &source, e.to_string()),
         }
     }
 
-    (loaded, errors)
+    read
+}
+
+/// The file name of `path`, as the user sees it in the folder.
+fn source_of(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 #[cfg(test)]

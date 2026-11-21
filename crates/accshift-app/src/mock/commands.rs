@@ -188,8 +188,15 @@ impl Backend for MockBackend {
     fn backup_preview(&self, path: &str) -> BackendResult<BackupPreview> {
         self.call("backup_preview", json!({ "path": path }))
     }
-    fn backup_restore(&self, path: &str) -> BackendResult<BackupReport> {
-        self.call("backup_restore", json!({ "path": path }))
+    fn backup_restore(&self, path: &str) -> Result<BackupReport, RestoreError> {
+        let answer = self.call("backup_restore", json!({ "path": path }));
+        if let Some(message) = self.lock().restore_left.clone() {
+            return Err(RestoreError {
+                message,
+                left_restored: true,
+            });
+        }
+        answer.map_err(RestoreError::from)
     }
     fn open_url(&self, url: &str) -> BackendResult<()> {
         self.call("open_url", json!({ "url": url }))

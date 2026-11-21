@@ -111,6 +111,11 @@ struct MockState {
     wallpaper: Option<Value>,
     /// Theme ids whose file reads as locked: see [`MockBackend::lock_theme`].
     locked_themes: BTreeSet<String>,
+    /// Commands whose calls panic: see [`MockBackend::crash`].
+    crashing: BTreeSet<String>,
+    /// The failure `backup_restore` answers with restored files left: see
+    /// [`MockBackend::leave_restored`].
+    restore_left: Option<String>,
     /// How many times each command was called, refused ones included.
     seen: BTreeMap<String, usize>,
 }

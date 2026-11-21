@@ -339,6 +339,12 @@ pub struct UserPlatformReport {
     pub loaded: Vec<Descriptor>,
     pub skipped: Vec<SkippedPlatform>,
     pub rejected: Vec<RejectedDescriptor>,
+    /// The folder, or a file in it, could not be read (denied, locked): its
+    /// error is in `rejected`, and `loaded` may lack a platform for that
+    /// alone. A caller that needs every one, like a restore, reads again
+    /// later rather than take this list for the whole.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incomplete: bool,
 }
 
 /// Reads the user's descriptor folder and makes every platform in it answer to
@@ -357,8 +363,11 @@ pub fn reload_user_platforms(app: &dyn AppContext) -> UserPlatformReport {
         ..UserPlatformReport::default()
     };
 
-    let (descriptors, errors) = descriptor::load_user(app);
-    report.rejected = errors
+    let read = descriptor::read_user(app);
+    report.incomplete = !read.complete;
+    let descriptors = read.loaded;
+    report.rejected = read
+        .errors
         .into_iter()
         .map(|error| RejectedDescriptor {
             source: error.source,

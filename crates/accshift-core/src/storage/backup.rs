@@ -35,10 +35,17 @@
 //! may name the same file as another one in its folder (`A.json` and
 //! `a.json`, refused on every OS since a Linux folder can sit on a
 //! filesystem that ignores case); the export runs the same checks and fails
-//! rather than write such a backup. A theme is written without the
-//! whitespace a store gets, so it stays under its loader's size limit. A backup written before kept a descriptor under the
-//! id it declared and a theme under its id: such a key is restored as
-//! `<id>.json`, as then.
+//! rather than write such a backup. Each file travels as its source text and
+//! is restored byte for byte: parsing it would change what its loader
+//! accepts (a field declared twice, a theme over its size limit, a number
+//! written longer). Format 1 kept each file as a parsed JSON value: such a
+//! backup still restores, a theme without whitespace so it stays under its
+//! loader's size limit. A backup written before that kept a descriptor
+//! under the id it declared and a theme under its id: such a key is
+//! restored as `<id>.json`, as then.
+//!
+//! The settings must be a JSON object, checked by the same function on export
+//! and on restore: an export never writes a backup its restore refuses.
 
 #[allow(unused_imports)]
 use super::*;
@@ -46,8 +53,12 @@ use serde_json::Map;
 
 /// What the `kind` field of a backup file says.
 pub const BACKUP_KIND: &str = "accshift-backup";
-/// The newest backup format this build reads and the one it writes.
-pub const BACKUP_FORMAT: u32 = 1;
+/// The newest backup format this build reads and the one it writes: 2 keeps
+/// each theme and descriptor file as its source text, 1 as a JSON value.
+pub const BACKUP_FORMAT: u32 = 2;
+
+/// The first format whose theme and descriptor files are their source text.
+const SOURCE_FORMAT: u32 = 2;
 
 /// The stores a backup carries: every store under `user/`.
 pub const BACKUP_STORES: [&str; 8] = [
@@ -78,14 +89,15 @@ pub struct BackupFile {
     /// Store id to its value; `null` for a store that was empty.
     #[serde(default)]
     pub stores: BTreeMap<String, Value>,
-    /// Custom theme file name (`My Theme.json`) to the file's JSON. A
-    /// backup written before keyed it by its id (`mine`), which restores as
+    /// Custom theme file name (`My Theme.json`) to the file's source text,
+    /// a JSON string; format 1 held the file's JSON itself. A backup
+    /// written before keyed it by its id (`mine`), which restores as
     /// `mine.json`.
     #[serde(default)]
     pub themes: BTreeMap<String, Value>,
-    /// User descriptor file name (`My Platform.json`) to the file's JSON.
-    /// A backup written before keyed it by the id it declared (`acme`),
-    /// which restores as `acme.json`.
+    /// User descriptor file name (`My Platform.json`) to the file's source
+    /// text, as [`Self::themes`]. A backup written before keyed it by the
+    /// id it declared (`acme`), which restores as `acme.json`.
     #[serde(default)]
     pub descriptors: BTreeMap<String, Value>,
 }
@@ -108,6 +120,40 @@ pub struct BackupPreview {
     pub descriptors: usize,
     pub has_settings: bool,
 }
+
+/// Why a restore failed, and whether it left restored files behind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoreError {
+    pub message: String,
+    /// Some files the restore replaced could not be put back: they may hold
+    /// the restored setup, which a store still in memory must not overwrite.
+    /// False when nothing was written or every file was put back.
+    pub left_restored: bool,
+}
+
+impl RestoreError {
+    /// A failure that left the files as they were.
+    fn untouched(message: String) -> Self {
+        Self {
+            message,
+            left_restored: false,
+        }
+    }
+}
+
+impl From<String> for RestoreError {
+    fn from(message: String) -> Self {
+        Self::untouched(message)
+    }
+}
+
+impl std::fmt::Display for RestoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for RestoreError {}
 
 /// What an export or a restore did.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
@@ -279,10 +325,10 @@ impl Loader {
     }
 }
 
-/// The files of `dir` that `loader` reads, each under its own file name,
-/// whatever id it declares and whether the loader accepts it. A file that
-/// is not JSON text loads nothing and is left out, and so are a folder and
-/// a file gone since `dir` was listed. A file whose metadata or bytes cannot
+/// The files of `dir` that `loader` reads, each under its own file name with
+/// its source text, whatever id it declares and whether the loader accepts
+/// it. A file that is not JSON text loads nothing and is left out, and so
+/// are a folder and a file gone since `dir` was listed. A file whose metadata or bytes cannot
 /// be read, or whose name a backup cannot carry, fails the export rather
 /// than be left out.
 fn read_loaded_dir(dir: &Path, loader: Loader) -> Result<BTreeMap<String, Value>, String> {
@@ -319,8 +365,9 @@ fn read_loaded_dir(dir: &Path, loader: Loader) -> Result<BTreeMap<String, Value>
         let Ok(body) = String::from_utf8(body) else {
             continue;
         };
-        if let Ok(value) = serde_json::from_str::<Value>(&body) {
-            out.insert(name.to_string(), value);
+        // Parsed only to tell JSON apart: the text itself is what travels.
+        if serde_json::from_str::<serde::de::IgnoredAny>(&body).is_ok() {
+            out.insert(name.to_string(), Value::String(body));
         }
     }
     Ok(out)
@@ -378,13 +425,12 @@ pub fn export_backup(app: &dyn AppContext, target: &Path) -> Result<BackupReport
 }
 
 /// Writes `backup` to `target`, unless a restore would refuse it: the
-/// checks [`read_backup`] makes run first, so two files only a
-/// case-sensitive folder keeps apart (`A.json`, `a.json`) fail the export
-/// rather than make a backup no restore reads, even on this PC.
+/// checks [`read_backup`] makes run first, so settings that are not an
+/// object, or two files only a case-sensitive folder keeps apart (`A.json`,
+/// `a.json`), fail the export rather than make a backup no restore reads,
+/// even on this PC.
 fn write_backup(backup: &BackupFile, target: &Path) -> Result<(), String> {
-    check_file_names(backup.themes.keys(), Loader::Themes)
-        .and_then(|()| check_file_names(backup.descriptors.keys(), Loader::Descriptors))
-        .map_err(|e| format!("{e}; a restore would refuse it"))?;
+    check_contents(backup).map_err(|e| format!("{e}; a restore would refuse it"))?;
     let body = serde_json::to_vec_pretty(backup)
         .map_err(|e| format!("Could not encode the backup: {e}"))?;
     // read_backup refuses a bigger file: it would export but never restore.
@@ -421,18 +467,52 @@ pub fn read_backup(path: &Path) -> Result<BackupFile, String> {
     }
     let backup: BackupFile = serde_json::from_value(head)
         .map_err(|e| format!("{} is not a readable backup: {e}", path.display()))?;
+    // Checked whole before anything is written.
+    check_contents(&backup).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(backup)
+}
+
+/// What an export and a restore both check: settings that are an object,
+/// file names this OS can write, one per file, and in a format 2 backup a
+/// source text for each file.
+fn check_contents(backup: &BackupFile) -> Result<(), String> {
     if let Some(settings) = backup.stores.get(STORE_SETTINGS) {
-        if !settings.is_object() {
-            return Err(format!(
-                "{} holds settings that are not an object",
-                path.display()
-            ));
-        }
+        settings_object(settings)?;
     }
-    // Every name is checked for this OS before anything is written.
     check_file_names(backup.themes.keys(), Loader::Themes)?;
     check_file_names(backup.descriptors.keys(), Loader::Descriptors)?;
-    Ok(backup)
+    for (files, loader) in [
+        (&backup.themes, Loader::Themes),
+        (&backup.descriptors, Loader::Descriptors),
+    ] {
+        for (key, value) in files {
+            file_bytes(backup.format, value, loader).map_err(|e| format!("`{key}`: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// The settings object: a restore merges this PC's PIN into it, which
+/// settings of another shape cannot hold.
+fn settings_object(settings: &Value) -> Result<&Map<String, Value>, String> {
+    settings
+        .as_object()
+        .ok_or_else(|| "the settings are not an object".to_string())
+}
+
+/// The bytes a theme or descriptor entry restores: its source text, or for
+/// format 1 its JSON encoded again.
+fn file_bytes(format: u32, value: &Value, loader: Loader) -> Result<Vec<u8>, String> {
+    if format >= SOURCE_FORMAT {
+        return match value {
+            Value::String(text) => Ok(text.as_bytes().to_vec()),
+            _ => Err(format!("the {} file is not a source text", loader.kind())),
+        };
+    }
+    match loader {
+        Loader::Themes => encode_theme(value),
+        Loader::Descriptors => encode(value),
+    }
 }
 
 /// Refuses the backup when one of the `keys` of one folder names a file
@@ -579,7 +659,7 @@ fn encode(value: &Value) -> Result<Vec<u8>, String> {
     serde_json::to_vec_pretty(value).map_err(|e| format!("Could not encode a store: {e}"))
 }
 
-/// A theme file's bytes, without the whitespace [`encode`] adds: the
+/// A format 1 theme's bytes, without the whitespace [`encode`] adds: the
 /// loader skips a file over its size limit, and a theme that loaded under
 /// it must still load once restored.
 fn encode_theme(value: &Value) -> Result<Vec<u8>, String> {
@@ -620,9 +700,7 @@ fn plan_restore(app: &dyn AppContext, backup: &BackupFile) -> Result<Vec<Planned
             // The PIN must survive: settings that are not an object were
             // refused by read_backup, and a current settings file that
             // cannot be read refuses the restore rather than drop the lock.
-            let Some(restored) = value.as_object() else {
-                return Err("the backup holds settings that are not an object".into());
-            };
+            let restored = settings_object(value)?;
             let current = read_json_if_exists::<Value>(&path)?;
             Some(encode(&merged_settings(restored, current.as_ref()))?)
         } else if value.is_null() {
@@ -645,7 +723,7 @@ fn plan_restore(app: &dyn AppContext, backup: &BackupFile) -> Result<Vec<Planned
         };
         plan.push(PlannedWrite::new(
             themes.join(&name),
-            Some(encode_theme(value)?),
+            Some(file_bytes(backup.format, value, Loader::Themes)?),
             PathBuf::from("themes").join(&name),
         )?);
     }
@@ -658,7 +736,7 @@ fn plan_restore(app: &dyn AppContext, backup: &BackupFile) -> Result<Vec<Planned
         };
         plan.push(PlannedWrite::whole(
             descriptors.join(&name),
-            Some(encode(value)?),
+            Some(file_bytes(backup.format, value, Loader::Descriptors)?),
             PathBuf::from("descriptors").join(&name),
         )?);
     }
@@ -740,26 +818,29 @@ fn put_back(written: &[&PlannedWrite]) -> Vec<String> {
 }
 
 /// The error of a restore that failed with `error` once `written` were
-/// replaced: they are put back, and the message says whether all were.
-fn failed_restore(error: String, written: &[&PlannedWrite], copy_dir: &Path) -> String {
+/// replaced: they are put back, and the error says whether all were.
+fn failed_restore(error: String, written: &[&PlannedWrite], copy_dir: &Path) -> RestoreError {
     let failures = put_back(written);
     if failures.is_empty() {
-        format!(
+        return RestoreError::untouched(format!(
             "{error}; the files already replaced were put back, a copy is in {}",
             copy_dir.display()
-        )
-    } else {
-        format!(
+        ));
+    }
+    RestoreError {
+        message: format!(
             "{error}; these files already replaced could not be put back and may hold the restored setup: {}. A copy of the files from before the restore is in {}",
             failures.join(", "),
             copy_dir.display()
-        )
+        ),
+        left_restored: true,
     }
 }
 
 /// Restores the backup at `path`. Nothing is written unless the whole file
-/// reads and checks; see the module documentation.
-pub fn restore_backup(app: &dyn AppContext, path: &Path) -> Result<BackupReport, String> {
+/// reads and checks; see the module documentation. A failure says whether
+/// it left restored files behind.
+pub fn restore_backup(app: &dyn AppContext, path: &Path) -> Result<BackupReport, RestoreError> {
     restore_backup_at(app, path, now_s())
 }
 
@@ -768,7 +849,7 @@ pub fn restore_backup_at(
     app: &dyn AppContext,
     path: &Path,
     now_s: u64,
-) -> Result<BackupReport, String> {
+) -> Result<BackupReport, RestoreError> {
     let backup = read_backup(path)?;
     let plan = plan_restore(app, &backup)?;
 
@@ -1010,7 +1091,7 @@ mod tests {
         fs::write(&file, serde_json::to_vec(&backup).unwrap()).unwrap();
         let before = tree(&app.0.join("config"));
 
-        let error = restore_backup(&app, &file).unwrap_err();
+        let error = restore_backup(&app, &file).unwrap_err().message;
         assert!(error.contains("newer"), "{error}");
         assert!(preview_backup(&file).is_err());
         assert_eq!(tree(&app.0.join("config")), before);
@@ -1132,7 +1213,7 @@ mod tests {
         for settings in [Value::Null, json!([]), json!("x"), json!(3)] {
             let file = file_with_settings(&to.0, settings.clone());
             assert!(preview_backup(&file).is_err(), "{settings}");
-            let error = restore_backup(&to, &file).unwrap_err();
+            let error = restore_backup(&to, &file).unwrap_err().message;
             assert!(error.contains("not an object"), "{settings}: {error}");
             assert_eq!(tree(&to.0.join("config")), before, "{settings}");
             assert_eq!(
@@ -1564,7 +1645,7 @@ mod tests {
                     preview_backup(&file).is_err(),
                     "CASE_COLLISION: {field} {one} and {two} pass the preview"
                 );
-                let error = restore_backup(&to, &file).unwrap_err();
+                let error = restore_backup(&to, &file).unwrap_err().message;
                 assert!(error.contains(one_file), "{error}");
                 assert!(error.contains(two_file), "{error}");
                 assert_eq!(tree(&to.0), before, "{field} {one}");
@@ -1640,7 +1721,7 @@ mod tests {
                 "LONG_NAME: a {field} name of {} bytes passes the preview",
                 long.len()
             );
-            let error = restore_backup(&to, &file).unwrap_err();
+            let error = restore_backup(&to, &file).unwrap_err().message;
             assert!(error.contains(&long), "{field}: {error}");
             assert_eq!(tree(&to.0), before, "{field}");
         }
@@ -1729,7 +1810,7 @@ mod tests {
                     preview_backup(&file).is_err(),
                     "the theme {key:?} passes the preview"
                 );
-                let error = restore_backup(&to, &file).unwrap_err();
+                let error = restore_backup(&to, &file).unwrap_err().message;
                 assert!(error.contains(name), "{key:?}: {error}");
                 assert_eq!(tree(&to.0), before, "{key:?}");
             } else {
@@ -1768,7 +1849,7 @@ mod tests {
                 json!({"ok.json": named.clone(), (*name): named.clone()}),
             );
             if cfg!(windows) {
-                let error = restore_backup(&to, &file).unwrap_err();
+                let error = restore_backup(&to, &file).unwrap_err().message;
                 assert!(error.contains(name), "{name:?}: {error}");
                 assert!(preview_backup(&file).is_err(), "{name:?}");
                 assert_eq!(tree(&to.0), before, "{name:?}");
@@ -1975,7 +2056,7 @@ mod tests {
         let primary = fs::read(&view).unwrap();
         let bak = fs::read(backup_path(&view)).ok();
         let _ = fs::remove_dir_all(&to.0);
-        let error = result.unwrap_err();
+        let error = result.unwrap_err().message;
         assert!(error.contains("were put back"), "{error}");
         assert_eq!(primary, br#""grid""#);
         assert_eq!(
@@ -2003,7 +2084,8 @@ mod tests {
             vec![(Step::Write, view), (Step::PutBack, settings.clone())],
             || restore_backup(&to, &file),
         )
-        .unwrap_err();
+        .unwrap_err()
+        .message;
         assert!(!error.contains("were put back"), "{error}");
         assert!(error.contains(&settings.display().to_string()), "{error}");
         assert!(error.contains("pre-restore"), "{error}");
@@ -2027,6 +2109,129 @@ mod tests {
         assert!(result.is_err(), "{result:?}");
         assert_eq!(store(&to, STORE_VIEW_MODE), Some(json!("grid")));
         assert!(view.exists(), "the store was left removed");
+    }
+
+    /// Exports `name` holding `body` from `kind`'s folder (`themes` or
+    /// `descriptors`), restores it on a fresh install, and answers the
+    /// destination with the bytes the restore wrote.
+    fn round_trip_file(tag: &str, kind: &str, name: &str, body: &[u8]) -> (Ctx, Vec<u8>) {
+        let dir_of = |app: &Ctx| {
+            if kind == "themes" {
+                themes_dir(app).unwrap()
+            } else {
+                crate::platforms::descriptor::user_dir(app).unwrap()
+            }
+        };
+        let from = ctx(&format!("{tag}-from"));
+        fs::create_dir_all(dir_of(&from)).unwrap();
+        fs::write(dir_of(&from).join(name), body).unwrap();
+        let file = from.0.join("b.json");
+        export_backup(&from, &file).unwrap();
+        let to = ctx(&format!("{tag}-to"));
+        restore_backup(&to, &file).unwrap();
+        let restored = fs::read(dir_of(&to).join(name)).unwrap();
+        let _ = fs::remove_dir_all(&from.0);
+        (to, restored)
+    }
+
+    #[test]
+    fn a_descriptor_that_declares_a_field_twice_is_restored_as_it_was() {
+        // Regression: the backup kept the file as a parsed value, which
+        // keeps one of the two fields: the restored descriptor loaded where
+        // the one it came from was refused.
+        let body = br#"{"id":"acme","id":"acme","schemaVersion":1}"#;
+        let (to, restored) = round_trip_file("dup-descriptor", "descriptors", "acme.json", body);
+        let (loaded, errors) = crate::platforms::descriptor::load_user(&to);
+        let _ = fs::remove_dir_all(&to.0);
+        assert_eq!(
+            String::from_utf8_lossy(&restored),
+            String::from_utf8_lossy(body),
+            "SOURCE_BYTES: the restored descriptor is not the file it came from"
+        );
+        assert!(loaded.is_empty());
+        assert!(errors.iter().any(|e| e.source == "acme.json"), "{errors:?}");
+    }
+
+    #[test]
+    fn a_theme_over_the_loaders_size_limit_stays_left_out_once_restored() {
+        // Regression: the restore wrote the theme without its whitespace,
+        // under the 64 KiB the loader reads, so a theme it skipped loaded.
+        let limit = crate::themes::MAX_THEME_FILE_BYTES as usize;
+        let mut body = THEME.replace(',', ",\n  ").into_bytes();
+        body.resize(limit + 1, b' ');
+        let (to, restored) = round_trip_file("theme-over", "themes", "mine.json", &body);
+        let ids = theme_ids(&to);
+        let _ = fs::remove_dir_all(&to.0);
+        assert_eq!(restored.len(), body.len(), "SOURCE_BYTES: rewritten");
+        assert_eq!(restored, body);
+        assert!(ids.is_empty(), "a theme the loader skipped loads: {ids:?}");
+    }
+
+    #[test]
+    fn a_theme_with_exponent_numbers_at_the_size_limit_still_loads_once_restored() {
+        // Regression: numbers went through f64 and came back longer
+        // (`1e2` as `100.0`), over the 64 KiB the loader reads.
+        let limit = crate::themes::MAX_THEME_FILE_BYTES as usize;
+        let tokens: Vec<String> = (0..2000)
+            .map(|n| format!(r#""n{n:04}":{}"#, if n % 2 == 0 { "1e140" } else { "1e2" }))
+            .collect();
+        let head = format!(
+            r#"{{"schemaVersion":1,"id":"big","name":"Big","colorScheme":"dark","tokens":{{{}}},"css":""#,
+            tokens.join(",")
+        );
+        let mut body = head.into_bytes();
+        body.resize(limit - 2, b'x');
+        body.extend_from_slice(br#""}"#);
+        assert_eq!(body.len(), limit);
+        let (to, restored) = round_trip_file("theme-exponent", "themes", "big.json", &body);
+        let ids = theme_ids(&to);
+        let _ = fs::remove_dir_all(&to.0);
+        assert!(
+            restored == body,
+            "SOURCE_BYTES: {} bytes restored from {}",
+            restored.len(),
+            body.len()
+        );
+        assert_eq!(ids, ["big"]);
+    }
+
+    #[test]
+    fn settings_that_are_not_an_object_fail_the_export() {
+        // Regression: the export wrote them as they were, and every preview
+        // and restore of that backup then refused it.
+        for settings in ["null", "[1]", "\"fr\""] {
+            let app = ctx("export-bad-settings");
+            let path = client_store_path(&app, STORE_SETTINGS).unwrap();
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, settings).unwrap();
+            let target = app.0.join("out.json");
+            let result = export_backup(&app, &target);
+            let exists = target.exists();
+            let _ = fs::remove_dir_all(&app.0);
+            let error = result.expect_err(settings);
+            assert!(error.contains("not an object"), "{settings}: {error}");
+            assert!(!exists, "{settings}: a backup no restore reads");
+        }
+    }
+
+    #[test]
+    fn a_failed_restore_says_whether_restored_files_remain() {
+        // Regression: the error was a sentence, so the app could not tell a
+        // restore put back whole from one that left restored files.
+        let (to, _) = locked_destination("left-restored");
+        let file = file_with_settings(&to.0, json!({"language": "fr"}));
+        let settings = client_store_path(&to, STORE_SETTINGS).unwrap();
+        let view = client_store_path(&to, STORE_VIEW_MODE).unwrap();
+        let left = with_faults(
+            vec![(Step::Write, view.clone()), (Step::PutBack, settings)],
+            || restore_backup(&to, &file),
+        )
+        .unwrap_err();
+        let whole =
+            with_faults(vec![(Step::Write, view)], || restore_backup(&to, &file)).unwrap_err();
+        let _ = fs::remove_dir_all(&to.0);
+        assert!(left.left_restored, "{left}");
+        assert!(!whole.left_restored, "{whole}");
     }
 
     #[test]

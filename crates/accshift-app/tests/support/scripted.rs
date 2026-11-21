@@ -341,10 +341,10 @@ impl Backend for Scripted {
         }
         self.inner.backup_preview(path)
     }
-    fn backup_restore(&self, path: &str) -> BackendResult<BackupReport> {
+    fn backup_restore(&self, path: &str) -> Result<BackupReport, RestoreError> {
         self.record("backup_restore", format!("{:?}", (&path,)));
         if let Some(answer) = self.next("backup_restore") {
-            return answer;
+            return answer.map_err(RestoreError::from);
         }
         self.inner.backup_restore(path)
     }

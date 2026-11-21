@@ -1,6 +1,7 @@
 //! The one error type every backend call returns.
 
 use accshift_core::error::PlatformError;
+use accshift_core::storage::RestoreError;
 use serde::Serialize;
 
 /// A failed backend call: only its message, which the UI shows as is
@@ -52,6 +53,22 @@ impl From<PlatformError> for BackendError {
 impl From<String> for BackendError {
     fn from(message: String) -> Self {
         Self::new(message)
+    }
+}
+
+impl From<RestoreError> for BackendError {
+    fn from(error: RestoreError) -> Self {
+        Self::new(error.message)
+    }
+}
+
+/// A call that failed before the restore wrote anything.
+impl From<BackendError> for RestoreError {
+    fn from(error: BackendError) -> Self {
+        Self {
+            message: error.message,
+            left_restored: false,
+        }
     }
 }
 

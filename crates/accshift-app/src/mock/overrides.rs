@@ -120,6 +120,33 @@ impl MockBackend {
         true
     }
 
+    /// While `on`, every call of `command` panics once counted, as a job
+    /// thread that dies mid-call: its caller gets no answer at all. Returns
+    /// false on the frozen scenario.
+    pub fn crash(&self, command: &str, on: bool) -> bool {
+        if self.frozen() {
+            return false;
+        }
+        let mut state = self.lock();
+        if on {
+            state.crashing.insert(command.into());
+        } else {
+            state.crashing.remove(command);
+        }
+        true
+    }
+
+    /// `Some(message)` makes `backup_restore` fail with it, saying restored
+    /// files it could not put back remain; `None` clears that. Returns false
+    /// on the frozen scenario.
+    pub fn leave_restored(&self, message: Option<&str>) -> bool {
+        if self.frozen() {
+            return false;
+        }
+        self.lock().restore_left = message.map(Into::into);
+        true
+    }
+
     /// How many times `command` was called so far, whatever it answered: a
     /// test's proof that the app sent something the mock refuses to fake.
     pub fn seen(&self, command: &str) -> usize {

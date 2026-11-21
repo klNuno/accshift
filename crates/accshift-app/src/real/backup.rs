@@ -2,7 +2,7 @@
 //! restore of `accshift_core::storage`.
 
 use crate::error::BackendResult;
-use crate::types::{BackupPreview, BackupReport};
+use crate::types::{BackupPreview, BackupReport, RestoreError};
 use accshift_core::error::{AppError, PlatformError};
 use accshift_core::storage;
 use accshift_core::AppContext;
@@ -57,6 +57,6 @@ pub(super) fn preview(path: &str) -> BackendResult<BackupPreview> {
 }
 
 /// Backs `Backend::backup_restore`.
-pub(super) fn restore(c: &dyn AppContext, path: &str) -> BackendResult<BackupReport> {
-    storage::restore_backup(c, Path::new(path)).map_err(|e| PlatformError::other(e).into())
+pub(super) fn restore(c: &dyn AppContext, path: &str) -> Result<BackupReport, RestoreError> {
+    storage::restore_backup(c, Path::new(path))
 }

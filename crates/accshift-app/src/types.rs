@@ -22,7 +22,7 @@ pub use accshift_core::platforms::{
     RejectedDescriptor, SetupStatus, SkippedPlatform, UserPlatformReport,
 };
 pub use accshift_core::storage::{
-    BackupPreview, BackupReport, ClientStorageSnapshot, StorageManifest,
+    BackupPreview, BackupReport, ClientStorageSnapshot, RestoreError, StorageManifest,
 };
 pub use accshift_core::themes::{CustomTheme, CustomThemeList};
 
@@ -39,6 +39,12 @@ pub struct BootPayload {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recovered_stores: Vec<String>,
     pub custom_themes: Vec<CustomTheme>,
+    /// A theme file that is there, or the folder, could not be read and
+    /// `custom_themes` may lack a theme for that alone: the app reads the
+    /// folder again on the next focus rather than take this list for the
+    /// whole.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub custom_themes_incomplete: bool,
     pub user_platforms: UserPlatformReport,
 }
 

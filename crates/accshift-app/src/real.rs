@@ -243,6 +243,8 @@ impl Backend for RealBackend {
     fn platform_dry_run(&self, platform_id: &str, account_id: &str) -> BackendResult<DryRunPlan> {
         platform::dry_run(self, platform_id, account_id)
     }
+    /// A folder or file that cannot be read is in the answer
+    /// (`incomplete`), not an error: the platforms that did read stay usable.
     fn reload_user_platforms(&self) -> BackendResult<UserPlatformReport> {
         Ok(descriptors::reload(&self.ctx))
     }
@@ -282,7 +284,7 @@ impl Backend for RealBackend {
     fn backup_preview(&self, path: &str) -> BackendResult<BackupPreview> {
         backup::preview(path)
     }
-    fn backup_restore(&self, path: &str) -> BackendResult<BackupReport> {
+    fn backup_restore(&self, path: &str) -> Result<BackupReport, RestoreError> {
         backup::restore(&self.ctx, path)
     }
     fn open_url(&self, url: &str) -> BackendResult<()> {

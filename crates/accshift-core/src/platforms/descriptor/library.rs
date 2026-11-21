@@ -383,7 +383,9 @@ mod tests {
         // Export: the old descriptor.
         let backup = crate::storage::build_backup(&ctx, 1).unwrap();
         assert_eq!(backup.descriptors.keys().collect::<Vec<_>>(), ["acme.json"]);
-        assert_eq!(backup.descriptors["acme.json"]["name"], "Fixture Launcher");
+        let source = backup.descriptors["acme.json"].as_str().unwrap();
+        let exported: serde_json::Value = serde_json::from_str(source).unwrap();
+        assert_eq!(exported["name"], "Fixture Launcher");
         let _ = std::fs::remove_dir_all(&root);
     }
 
