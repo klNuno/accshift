@@ -81,6 +81,26 @@ test("a revert of a commit from an earlier release stays in the notes", () => {
   assert.equal(notes, "## Changes\n\n- drop the old banner (#20)");
 });
 
+test("a quoted revert line inside prose cancels nothing", () => {
+  const notes = buildNotes([
+    commit("1111111aaa", "feat: add the widget (#40)"),
+    commit("2222222bbb", "docs: explain reverts (#41)", "Git writes `This reverts commit 1111111aaa.` in the body."),
+  ]);
+  assert.equal(notes, "## Changes\n\n- add the widget (#40)\n- explain reverts (#41)");
+});
+
+test("a revert of an in-range and a shipped commit keeps its own entry", () => {
+  const notes = buildNotes([
+    commit("1111111aaa", "feat: add the widget (#50)"),
+    commit(
+      "2222222bbb",
+      "revert: drop the widget and the old banner (#51)",
+      "This reverts commit 1111111aaa (#50).\nThis reverts commit 0123456789.",
+    ),
+  ]);
+  assert.equal(notes, "## Changes\n\n- drop the widget and the old banner (#51)");
+});
+
 test("a revert that is itself reverted cancels nothing", () => {
   const notes = buildNotes([
     commit("1111111aaa", "feat: add the widget (#30)"),

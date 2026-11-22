@@ -15,7 +15,8 @@ import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const TYPE_PREFIX = /^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([^)]+\))?!?:\s*/i;
-const REVERTS = /This reverts commit ([0-9a-f]{7,40})/gi;
+// Only a whole line, as git revert writes it, with an optional PR number.
+const REVERTS = /^\s*This reverts commit ([0-9a-f]{7,40})(?: \(#\d+\))?\.?\s*$/gim;
 const SQUASHED = /^\* (feat|fix|perf|refactor)(\([^)]+\))?!?:\s*(.+)$/i;
 const PR_NUMBER = /\s\(#\d+\)$/;
 
@@ -60,20 +61,25 @@ function details(body) {
   return found;
 }
 
+// The commits of the range a revert names, and whether it also names one
+// outside the range (a change users already got, so its removal is news).
 function revertTargets(commit, commits) {
   const prefixes = [...commit.body.matchAll(REVERTS)].map((match) => match[1].toLowerCase());
-  return commits.filter((other) => other !== commit && prefixes.some((p) => other.hash.toLowerCase().startsWith(p)));
+  const owner = (prefix) => commits.find((other) => other !== commit && other.hash.toLowerCase().startsWith(prefix));
+  const targets = prefixes.map(owner).filter(Boolean);
+  return { targets, revertsShipped: targets.length < prefixes.length };
 }
 
 // Walks newest first, so a revert that is itself reverted cancels nothing.
+// Maps each revert of an in-range commit to whether it keeps its own entry.
 function cancelReverts(commits) {
   const cancelled = new Set();
-  const revertsInRange = new Set();
+  const revertsInRange = new Map();
   for (const commit of [...commits].reverse()) {
     if (cancelled.has(commit)) continue;
-    const targets = revertTargets(commit, commits);
+    const { targets, revertsShipped } = revertTargets(commit, commits);
     if (targets.length === 0) continue;
-    revertsInRange.add(commit);
+    revertsInRange.set(commit, revertsShipped);
     for (const target of targets) cancelled.add(target);
   }
   return { cancelled, revertsInRange };
@@ -97,15 +103,14 @@ export function buildNotes(commits) {
   const grouped = { Changes: [], Fixes: [] };
   for (const commit of commits) {
     if (cancelled.has(commit)) continue;
+    const own = {
+      section: sectionOf(commit.subject, normalizeSubject(commit.subject)),
+      subject: normalizeSubject(commit.subject),
+      details: details(commit.body),
+    };
     const entries = revertsInRange.has(commit)
-      ? squashedEntries(commit)
-      : [
-          {
-            section: sectionOf(commit.subject, normalizeSubject(commit.subject)),
-            subject: normalizeSubject(commit.subject),
-            details: details(commit.body),
-          },
-        ];
+      ? [...(revertsInRange.get(commit) ? [own] : []), ...squashedEntries(commit)]
+      : [own];
     for (const entry of entries) grouped[entry.section].push(entry);
   }
 
