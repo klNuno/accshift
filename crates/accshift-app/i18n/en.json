@@ -422,6 +422,8 @@
   "riot.noInstalledGames": "No installed Riot games found",
   "riot.accountNotConfirmed": "accshift could not confirm which account is signed in to Riot Client, so nothing was changed. Check the account in Riot Client, then try again.",
   "riot.profileWithoutAccount": "This Riot profile has no recorded account, so accshift cannot tell its saved session from the signed-in one. Nothing was changed. Sign in to this profile's account in Riot Client, then use \"Re-capture session\".",
+  "riot.leagueInChampSelect": "League of Legends is in champion select, so nothing was changed. Finish or leave champion select, then try again.",
+  "riot.leagueGameActive": "A League of Legends match is active, so nothing was changed. Finish or leave the match, then try again.",
   "riot.capturedSession": "Captured session for {profile}",
   "riot.setupPendingLabel": "Riot Account",
   "riot.setupWaitingForClient": "Waiting for Riot Client...",
