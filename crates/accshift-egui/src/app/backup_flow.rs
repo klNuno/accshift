@@ -49,6 +49,7 @@ use egui::Context;
 use super::external_refresh::{read_themes, ThemesRead};
 use super::settings_panel::{apply_report, restore_confirm, BackupState};
 use super::tcno_flow::{import_job, TcnoFlow, TcnoImported};
+use super::write_gate::account_writes_running;
 pub(super) use super::write_gate::WriteGate;
 use super::AppModel;
 
@@ -441,8 +442,8 @@ impl AppModel {
     }
 
     /// The boundary: hands out the debounced writes, then waits until no
-    /// store, descriptor or theme write and no refresh is running before
-    /// the export or restore job starts.
+    /// store, descriptor, theme or account write and no refresh is running
+    /// before the export, restore or import job starts.
     fn drain_boundary(&mut self) {
         if !matches!(self.backup.stage, Stage::Draining { .. }) {
             return;
@@ -461,6 +462,7 @@ impl AppModel {
             || b.stores.storage().has_unsaved()
             || self.external_refresh.running()
             || self.backup.gate.running()
+            || account_writes_running(b)
         {
             return;
         }

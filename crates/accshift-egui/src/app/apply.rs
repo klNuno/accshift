@@ -192,6 +192,9 @@ impl AppModel {
 
     /// The title bar's plus: starts the add-account flow.
     fn add_account(&mut self) {
+        if self.refuse_account_write() {
+            return;
+        }
         if let Some(b) = self.booted.as_mut() {
             let tab = b.nav.active_tab.clone();
             b.accounts.add_account(&self.jobs, &mut b.stores, &tab);

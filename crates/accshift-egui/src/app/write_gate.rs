@@ -1,12 +1,39 @@
-//! The descriptor and custom theme writes that bypass the client-store
-//! queue, counted so a backup or an import can wait for them behind its
-//! boundary (`app::backup_flow`).
+//! The descriptor, custom theme and account writes that bypass the
+//! client-store queue, counted so a backup or an import can wait for them
+//! behind its boundary (`app::backup_flow`), and refused while it holds.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use accshift_app::actions::toasts::AddToastOptions;
 use accshift_app::backend::Backend;
+use accshift_app::text::Text;
 use egui::Context;
+
+use super::{AppModel, Booted};
+
+/// The account writes started by the account loader and the personas,
+/// outside the gate: a switch, an add or a persona switch still running.
+/// Each may rewrite a platform's account list after the boundary's job.
+pub(super) fn account_writes_running(b: &Booted) -> bool {
+    b.accounts.loading.writes_in_flight() || b.personas.switching()
+}
+
+impl AppModel {
+    /// True, with a toast saying why, while the boundary holds writes: an
+    /// account write must not start then.
+    pub(super) fn refuse_account_write(&mut self) -> bool {
+        if !self.backup.holds_writes() {
+            return false;
+        }
+        self.toasts.add(
+            Text::key("settings.backupHoldsWrites"),
+            AddToastOptions::default(),
+            std::time::Instant::now(),
+        );
+        true
+    }
+}
 
 /// The descriptor and custom theme writes, which bypass the client-store
 /// queue. Each admitted job counts until its call returns, even when the

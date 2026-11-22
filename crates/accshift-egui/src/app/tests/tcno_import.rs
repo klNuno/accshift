@@ -2,12 +2,14 @@
 //! waits for the writes already running, holds new ones, and the open app
 //! adopts the imported stores instead of writing its own over them.
 
+use super::super::settings_panel::SettingsAction;
 use super::*;
 use accshift_app::types::{TcNoImportReport, TcNoPreview};
 use serde_json::json;
 
 const SAVE: &str = "save_client_storage_store";
 const IMPORT: &str = "tcno_import";
+const ROBLOX_ADD: &str = "roblox_add_account_by_cookie";
 
 /// The mock app, with a TcNo folder whose import adds a note to account
 /// `a` and puts it first in the Steam root.
@@ -42,6 +44,9 @@ fn tcno_app(ctx: &Context) -> (AppModel, Arc<MockBackend>) {
     commands["tcno_select_folder"] = json!([{ "args": {}, "result": "C:/TcNo" }]);
     commands["tcno_preview"] = json!([{ "args": {"path": "C:/TcNo"}, "result": preview }]);
     commands[IMPORT] = json!([{ "args": {"path": "C:/TcNo"}, "result": report }]);
+    commands[ROBLOX_ADD] = json!([{ "args": {}, "result": {
+        "userId": "77", "username": "builder", "displayName": "Builder", "lastLoginAt": null
+    } }]);
     let mock = Arc::new(MockBackend::from_json(&fixture.to_string(), None).unwrap());
     let mut app = AppModel::with_backend(ctx, mock.clone(), Some(mock.clone()), Clock::wall());
     app.wait_boot(ctx).unwrap();
@@ -175,4 +180,45 @@ fn a_refused_tcno_confirm_imports_nothing() {
     assert!(!app.backup.holds_writes());
     assert_eq!(mock.seen(IMPORT), 0);
     assert!(!app.backup.busy());
+}
+
+/// Pastes a Roblox cookie in the panel and adds it.
+fn add_roblox(app: &mut AppModel, ctx: &Context, cookie: &str) {
+    app.apply_settings(ctx, SettingsAction::RobloxCookie(cookie.into()));
+    app.apply_settings(ctx, SettingsAction::AddRobloxCookie);
+}
+
+#[test]
+fn an_account_being_saved_holds_the_tcno_import_and_none_starts_during_it() {
+    let ctx = Context::default();
+    let (mut app, mock) = tcno_app(&ctx);
+    frame(&mut app, &ctx);
+    app.toggle_settings_panel();
+    frame(&mut app, &ctx);
+    // A Roblox account is being written to its list.
+    assert!(mock.hold(ROBLOX_ADD));
+    add_roblox(&mut app, &ctx, "cookie-a");
+    pump_until(&mut app, &ctx, |_| mock.waiting(ROBLOX_ADD) == 1);
+
+    assert!(mock.hold(IMPORT));
+    app.start_tcno_import("C:/TcNo".into());
+    frames(&mut app, &ctx, 20);
+    let imported_early = mock.seen(IMPORT);
+    // Nor does an account write start while the import waits or runs.
+    mock.release(ROBLOX_ADD);
+    pump_until(&mut app, &ctx, |_| mock.waiting(IMPORT) == 1);
+    add_roblox(&mut app, &ctx, "cookie-b");
+    frames(&mut app, &ctx, 10);
+    let added_during = mock.seen(ROBLOX_ADD);
+    // Every held call ends before asserting: a worker left blocked would
+    // hang the test's teardown.
+    mock.release(ROBLOX_ADD);
+    mock.release(IMPORT);
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert_eq!(
+        imported_early, 0,
+        "the import ran while an account was saved"
+    );
+    assert_eq!(added_during, 1, "an account write ran during the import");
+    assert_eq!(mock.seen(IMPORT), 1);
 }
