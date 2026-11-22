@@ -62,7 +62,16 @@ pub struct SessionMark {
     /// Unix ms.
     #[serde(default)]
     pub detected_at: u64,
+    /// The post-switch watch rules that wrote an after-switch mark
+    /// ([`WATCH_RULES`]); 0 for marks written before the field existed.
+    #[serde(default)]
+    pub watch_rules: u32,
 }
+
+/// Rules of the post-switch watches. 1: Steam's watch reads a sign-in from
+/// the `Timestamp` alone, since current Steam writes no `MostRecent`. The
+/// 2.0.0 watch (0) never saw a Steam sign-in, so its Steam marks are ignored.
+pub const WATCH_RULES: u32 = 1;
 
 /// A mark as the app reads it.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -119,6 +128,7 @@ pub fn mark_after_switch(
         state,
         source: SessionSource::AfterSwitch,
         detected_at: super::now_unix_ms(),
+        watch_rules: WATCH_RULES,
     };
     config::update_config(app, |cfg| set_mark_in(cfg, platform, account_id, mark))?;
     bump_revision();
@@ -174,11 +184,13 @@ pub fn platform_marks(
     let mut stored = cfg.session_marks.get(platform).cloned().unwrap_or_default();
     if platform == "steam" {
         // Steam signed the account in after the mark: from accshift or by
-        // hand, the saved session works again.
+        // hand, the saved session works again. A mark from the 2.0.0 watch
+        // is dropped too: that watch never saw a Steam sign-in.
         let stamps = super::steam::steam_sign_in_times(app.clone());
         stored.retain(|id, mark| {
             mark.state != SessionState::Expired
-                || !super::steam::session::mark_is_stale(&stamps, id, mark.detected_at)
+                || !((mark.source == SessionSource::AfterSwitch && mark.watch_rules < WATCH_RULES)
+                    || super::steam::session::mark_is_stale(&stamps, id, mark.detected_at))
         });
     }
     let offline: Vec<(String, SessionState)> = match platform {

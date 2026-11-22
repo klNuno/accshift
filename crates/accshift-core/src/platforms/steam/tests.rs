@@ -471,7 +471,9 @@ fn an_expired_mark_from_before_the_last_steam_sign_in_is_not_shown() {
     std::fs::create_dir_all(&app_dir).unwrap();
     let app: AppCtx = std::sync::Arc::new(LockCtx(app_dir));
     let mark = |detected_at| crate::platforms::session_marks::SessionMark {
+        source: crate::platforms::session_marks::SessionSource::AfterSwitch,
         detected_at,
+        watch_rules: crate::platforms::session_marks::WATCH_RULES,
         ..Default::default()
     };
     config::update_config(app.as_ref(), |cfg| {
@@ -489,6 +491,17 @@ fn an_expired_mark_from_before_the_last_steam_sign_in_is_not_shown() {
             "steam",
             "76561198000000012",
             mark(1_700_000_100_000),
+        );
+        // Marked after its last sign-in by the 2.0.0 watch, which never saw a
+        // Steam sign-in: not trusted.
+        crate::platforms::session_marks::set_mark_in(
+            cfg,
+            "steam",
+            "76561198000000012-old",
+            crate::platforms::session_marks::SessionMark {
+                watch_rules: 0,
+                ..mark(1_700_000_100_000)
+            },
         );
     })
     .unwrap();
