@@ -22,13 +22,13 @@ fn now_s() -> u64 {
         .unwrap_or(0)
 }
 
-fn cancelled() -> crate::error::BackendError {
+pub(super) fn cancelled() -> crate::error::BackendError {
     PlatformError::from(AppError::Cancelled).into()
 }
 
 /// The text of a picked path, the very path once read back: a path that is
 /// not Unicode is refused, since `display` would name another file.
-fn path_text(path: PathBuf) -> BackendResult<String> {
+pub(super) fn path_text(path: PathBuf) -> BackendResult<String> {
     path.into_os_string().into_string().map_err(|path| {
         PlatformError::other(format!(
             "{} cannot be used: its name is not valid Unicode",
