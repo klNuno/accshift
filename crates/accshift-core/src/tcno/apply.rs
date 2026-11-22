@@ -66,7 +66,7 @@ impl CurrentState {
     /// cannot be read is an error: taken as empty, the import would write
     /// over it. Only a missing file counts as empty.
     fn load(app: &dyn AppContext, access: Access) -> Result<Self, String> {
-        let cfg = config::load_config(app);
+        let cfg = config::load_config_checked(app)?;
         let roblox_accounts = load_roblox_accounts(app, &cfg)?;
         let store_path = |id: &str| match access {
             Access::ReadOnly => storage::peek_client_store_path(app, id),
@@ -544,27 +544,50 @@ pub(super) fn write_snapshot(
 ) -> Result<(), String> {
     let root = storage::platform_snapshots_dir(app, acc.platform_id)?;
     let dir = root.join(&acc.accshift_id);
-    let staging = root
-        .parent()
-        .unwrap_or(&root)
-        .join(format!(".tcno-staging-{}", acc.accshift_id));
+    let beside = root.parent().unwrap_or(&root).to_path_buf();
+    let staging = beside.join(format!(".tcno-staging-{}", acc.accshift_id));
+    let aside = beside.join(format!(".tcno-previous-{}", acc.accshift_id));
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging)
         .map_err(|e| format!("Could not create snapshot dir {}: {e}", staging.display()))?;
     let published = write_snapshot_files(&staging, snap).and_then(|()| {
         fs::create_dir_all(&root)
             .map_err(|e| format!("Could not create snapshot dir {}: {e}", root.display()))?;
-        // Only an incomplete session can be there: a whole one is skipped.
-        if dir.exists() {
-            fs::remove_dir_all(&dir)
-                .map_err(|e| format!("Could not replace {}: {e}", dir.display()))?;
-        }
-        fs::rename(&staging, &dir).map_err(|e| format!("Could not publish {}: {e}", dir.display()))
+        publish_staged(&staging, &dir, &aside)
     });
     if published.is_err() {
         let _ = fs::remove_dir_all(&staging);
     }
     published
+}
+
+/// Puts the staged session in place of `dir`. What was there (only an
+/// incomplete session: a whole one is skipped) moves to `aside` and is
+/// deleted once the new pair is in place, or put back if it cannot be.
+pub(super) fn publish_staged(
+    staging: &std::path::Path,
+    dir: &std::path::Path,
+    aside: &std::path::Path,
+) -> Result<(), String> {
+    let previous = dir.exists();
+    if previous {
+        let _ = fs::remove_dir_all(aside);
+        fs::rename(dir, aside).map_err(|e| format!("Could not replace {}: {e}", dir.display()))?;
+    }
+    match fs::rename(staging, dir) {
+        Ok(()) => {
+            if previous {
+                let _ = fs::remove_dir_all(aside);
+            }
+            Ok(())
+        }
+        Err(e) => {
+            if previous {
+                let _ = fs::rename(aside, dir);
+            }
+            Err(format!("Could not publish {}: {e}", dir.display()))
+        }
+    }
 }
 
 fn write_snapshot_files(dir: &std::path::Path, snap: &PlannedSnapshot) -> Result<(), String> {

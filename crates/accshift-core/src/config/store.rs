@@ -188,6 +188,27 @@ pub(super) fn with_config_write_locks<T>(
     write()
 }
 
+/// [`load_config`] for a caller about to write elsewhere first: an error
+/// when a config file is present but could not be read, which
+/// [`save_config`] would refuse to write over anyway.
+pub fn load_config_checked(app_handle: &dyn AppContext) -> Result<AppConfig, String> {
+    let config = load_config(app_handle);
+    let paths = [
+        crate::storage::portable_config_path(app_handle),
+        crate::storage::local_config_path(app_handle),
+        crate::storage::legacy_config_path(app_handle),
+    ];
+    for path in paths.into_iter().flatten() {
+        if config_unreadable(&path) {
+            return Err(format!(
+                "The accshift config at {} cannot be read",
+                path.display()
+            ));
+        }
+    }
+    Ok(config)
+}
+
 pub fn save_config(app_handle: &dyn AppContext, config: &AppConfig) -> Result<(), String> {
     with_config_write_locks(app_handle, || save_config_unlocked(app_handle, config))
 }

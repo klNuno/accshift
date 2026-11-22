@@ -134,9 +134,7 @@ pub fn default_tcno_root() -> Option<PathBuf> {
 pub fn preview_tcno_import(app: &dyn AppContext, root: &Path) -> Result<TcNoPreview, String> {
     let scan = reader::scan_root(root)?;
     let plan = mapper::build_plan(scan);
-    let preview = apply::preview_plan(app, &plan)?;
-    log_warnings(app, "tcno.preview", &preview.warnings);
-    Ok(preview)
+    apply::preview_plan(app, &plan)
 }
 
 /// Import accounts, labels, notes, order and eligible Ubisoft/Epic legacy
@@ -145,22 +143,31 @@ pub fn apply_tcno_import(app: &dyn AppContext, root: &Path) -> Result<TcNoImport
     let scan = reader::scan_root(root)?;
     let plan = mapper::build_plan(scan);
     let report = apply::execute_plan(app, &plan)?;
-    log_warnings(app, "tcno.import", &report.warnings);
+    log_warnings(app, &report.warnings);
     Ok(report)
 }
 
-/// One log line per item left out: the card only counts them per reason.
-fn log_warnings(app: &dyn AppContext, source: &str, warnings: &[TcNoWarning]) {
+/// What the import left out, counted per platform and reason: the card
+/// counts per reason only. Never a TcNo name or id.
+fn log_warnings(app: &dyn AppContext, warnings: &[TcNoWarning]) {
+    let mut counts: Vec<(&str, TcNoWarningKind, usize)> = Vec::new();
     for warning in warnings {
+        let platform = warning.platform.as_str();
+        match counts
+            .iter_mut()
+            .find(|(p, kind, _)| *p == platform && *kind == warning.kind)
+        {
+            Some((_, _, count)) => *count += 1,
+            None => counts.push((platform, warning.kind, 1)),
+        }
+    }
+    for (platform, kind, count) in counts {
         crate::platforms::log_platform_event(
             app,
             "warn",
-            source,
-            "TcNo item left out",
-            format!(
-                "{} {:?}: {}",
-                warning.platform, warning.kind, warning.detail
-            ),
+            "tcno.import",
+            "TcNo items left out",
+            format!("{platform} {kind:?}: {count}"),
         );
     }
 }
