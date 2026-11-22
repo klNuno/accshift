@@ -466,3 +466,47 @@ fn service_follows_a_layer_whose_availability_settles_late() {
         Some(RowStatus::Unavailable)
     );
 }
+
+/// A held row (an account a partial list lacks) stays registered, so the
+/// portal's table keeps it, but its id never runs, and it yields its
+/// combination to a shown row.
+#[test]
+fn service_keeps_a_held_row_registered_but_never_runs_it() {
+    let fake = FakeRegistrar::default();
+    let mut service = ShortcutService::new(Box::new(fake.clone()));
+    let gone = account("steam", "gone");
+    let mut table = bindings(&three_bindings());
+    table.push((gone.clone(), combo("Ctrl+Alt+3")));
+    service.sync_holding(&table, std::slice::from_ref(&gone));
+    let held = fake
+        .id_of(&combo("Ctrl+Alt+3"))
+        .expect("held stays registered");
+    assert_eq!(service.target(held), None);
+    // A shown row takes the held row's combination: no duplicate, the
+    // shown row registers it.
+    let mut table = bindings(&three_bindings());
+    table.insert(0, (gone.clone(), combo("Ctrl+Alt+H")));
+    service.sync_holding(&table, std::slice::from_ref(&gone));
+    assert_eq!(
+        service.status(&ShortcutTarget::ToggleWindow),
+        Some(RowStatus::Active)
+    );
+    let toggle = fake.id_of(&combo("Ctrl+Alt+H")).unwrap();
+    assert_eq!(service.target(toggle), Some(&ShortcutTarget::ToggleWindow));
+}
+
+/// The portal keeps a trigger the user set in the system settings: the
+/// service opens those settings only where the layer can.
+#[test]
+fn service_opens_the_os_settings_only_where_the_layer_can() {
+    let fake = FakeRegistrar::default();
+    let mut service = ShortcutService::new(Box::new(fake.clone()));
+    service.sync(&bindings(&three_bindings()));
+    assert!(!service.configurable());
+    service.configure();
+    assert_eq!(fake.configured(), 0);
+    fake.set_configurable(true);
+    assert!(service.configurable());
+    service.configure();
+    assert_eq!(fake.configured(), 1);
+}

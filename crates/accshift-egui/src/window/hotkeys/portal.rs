@@ -11,7 +11,12 @@
 //! and to which trigger ([`super::session`]). A shortcut's portal id names
 //! its action ([`portal_key`]), so a trigger the user set in the system
 //! settings comes back with it. A second thread turns `Activated` into
-//! presses, with the activation token that lets the window raise itself.
+//! presses, with the activation token that lets the window raise itself
+//! (KDE sends none: [`crate::app::shortcuts::toggle_plan`]); a third
+//! watches `Session.Closed`, after which the table is bound again once.
+//! An answer that omits its list is checked with `ListShortcuts`. From
+//! version 2 the portal opens its own settings of the bound shortcuts
+//! (`ConfigureShortcuts`), where the user changes a trigger it keeps.
 
 use std::collections::HashMap;
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
@@ -29,6 +34,7 @@ use super::{Deliver, Signal};
 const DEST: &str = "org.freedesktop.portal.Desktop";
 const PATH: &str = "/org/freedesktop/portal/desktop";
 const IFACE: &str = "org.freedesktop.portal.GlobalShortcuts";
+const SESSION_IFACE: &str = "org.freedesktop.portal.Session";
 
 /// A Wayland session: winit picks its Wayland backend when this is set.
 pub fn wayland_session() -> bool {
@@ -37,6 +43,12 @@ pub fn wayland_session() -> bool {
 
 /// Registration id, portal shortcut id, combination.
 type Table = Vec<(u32, String, Combo)>;
+
+/// What the session thread does next.
+enum Job {
+    Bind(Table),
+    Configure,
+}
 type Shared = Arc<Mutex<Bindings>>;
 
 fn lock(shared: &Shared) -> MutexGuard<'_, Bindings> {
@@ -47,7 +59,7 @@ pub struct PortalRegistrar {
     shared: Shared,
     table: Table,
     sent: Option<Table>,
-    tx: mpsc::Sender<Table>,
+    tx: mpsc::Sender<Job>,
 }
 
 impl PortalRegistrar {
@@ -99,67 +111,148 @@ impl Registrar for PortalRegistrar {
     }
 
     fn commit(&mut self) {
-        if self.sent.as_ref() != Some(&self.table) {
+        // The portal closed an answered session: the same table goes again.
+        let rebind = lock(&self.shared).take_rebind();
+        if rebind || self.sent.as_ref() != Some(&self.table) {
             self.sent = Some(self.table.clone());
-            let _ = self.tx.send(self.table.clone());
+            let _ = self.tx.send(Job::Bind(self.table.clone()));
         }
     }
 
     fn outcome(&self, id: u32) -> Outcome {
         lock(&self.shared).outcome(id)
     }
+
+    fn configurable(&self) -> bool {
+        lock(&self.shared).configurable()
+    }
+
+    fn configure(&mut self) {
+        let _ = self.tx.send(Job::Configure);
+    }
 }
 
-fn worker(rx: mpsc::Receiver<Table>, deliver: Deliver, shared: Shared) {
+fn worker(rx: mpsc::Receiver<Job>, deliver: Deliver, shared: Shared) {
     let portal = Connection::session().ok().and_then(|conn| {
         let proxy = Proxy::new(&conn, DEST, PATH, IFACE).ok()?;
-        proxy.get_property::<u32>("version").ok()?;
-        Some((conn, proxy))
+        let version = proxy.get_property::<u32>("version").ok()?;
+        Some((conn, proxy, version))
     });
-    lock(&shared).probe = if portal.is_some() {
-        Probe::Ready
-    } else {
-        Probe::Missing
-    };
+    {
+        let mut bindings = lock(&shared);
+        bindings.probe = if portal.is_some() {
+            Probe::Ready
+        } else {
+            Probe::Missing
+        };
+        bindings.version = portal.as_ref().map_or(0, |(_, _, version)| *version);
+    }
     deliver(Signal::Changed);
-    let Some((conn, portal)) = portal else {
+    let Some((conn, portal, _)) = portal else {
         return;
     };
     listen(portal.clone(), Arc::clone(&deliver), Arc::clone(&shared));
+    listen_closed(conn.clone(), Arc::clone(&deliver), Arc::clone(&shared));
     let mut tokens = 0u32;
     let mut session: Option<OwnedObjectPath> = None;
-    while let Ok(mut table) = rx.recv() {
+    while let Ok(job) = rx.recv() {
         // Only the latest table matters.
-        while let Ok(next) = rx.try_recv() {
-            table = next;
+        let mut table = None;
+        let mut configure = false;
+        for job in std::iter::once(job).chain(std::iter::from_fn(|| rx.try_recv().ok())) {
+            match job {
+                Job::Bind(next) => table = Some(next),
+                Job::Configure => configure = true,
+            }
         }
-        if let Some(old) = session.take() {
-            close(&conn, &old);
+        if let Some(table) = table {
+            session = rebind(
+                &conn,
+                &portal,
+                session,
+                table,
+                &mut tokens,
+                &deliver,
+                &shared,
+            );
         }
-        let keys: Vec<(u32, String)> = table
-            .iter()
-            .map(|(id, key, _)| (*id, key.clone()))
-            .collect();
-        if table.is_empty() {
-            lock(&shared).clear();
-            deliver(Signal::Changed);
-            continue;
+        if configure {
+            if let Some(handle) = &session {
+                let _ = portal.call_method(
+                    "ConfigureShortcuts",
+                    &(handle.clone(), "", HashMap::<&str, Value>::new()),
+                );
+            }
         }
-        session = create_session(&conn, &portal, &mut tokens);
-        let Some(handle) = &session else {
-            lock(&shared).fail(keys);
-            deliver(Signal::Changed);
-            continue;
-        };
-        lock(&shared).start(handle.as_str(), keys);
-        deliver(Signal::Changed);
-        let listed = bind(&conn, &portal, handle, &table, &mut tokens);
-        lock(&shared).answered(handle.as_str(), listed.as_deref());
-        deliver(Signal::Changed);
     }
     if let Some(old) = session.take() {
         close(&conn, &old);
     }
+}
+
+/// Closes `session` and binds `table` in a fresh one: the session that
+/// holds it now, `None` when the table is empty or the portal refused.
+fn rebind(
+    conn: &Connection,
+    portal: &Proxy<'_>,
+    session: Option<OwnedObjectPath>,
+    table: Table,
+    tokens: &mut u32,
+    deliver: &Deliver,
+    shared: &Shared,
+) -> Option<OwnedObjectPath> {
+    if let Some(old) = session {
+        close(conn, &old);
+    }
+    let keys: Vec<(u32, String)> = table
+        .iter()
+        .map(|(id, key, _)| (*id, key.clone()))
+        .collect();
+    if table.is_empty() {
+        lock(shared).clear();
+        deliver(Signal::Changed);
+        return None;
+    }
+    let Some(handle) = create_session(conn, portal, tokens) else {
+        lock(shared).fail(keys);
+        deliver(Signal::Changed);
+        return None;
+    };
+    lock(shared).start(handle.as_str(), keys);
+    deliver(Signal::Changed);
+    let listed = bind(conn, portal, &handle, &table, tokens);
+    lock(shared).answered(handle.as_str(), listed.as_deref());
+    deliver(Signal::Changed);
+    Some(handle)
+}
+
+/// `Session.Closed` of any session: the bookkeeping drops the current
+/// one's bindings when it is the one closed.
+fn listen_closed(conn: Connection, deliver: Deliver, shared: Shared) {
+    let _ = std::thread::Builder::new()
+        .name("shortcuts-portal-closed".into())
+        .spawn(move || {
+            let rule = zbus::MatchRule::builder()
+                .msg_type(zbus::message::Type::Signal)
+                .interface(SESSION_IFACE)
+                .and_then(|rule| rule.member("Closed"))
+                .map(|rule| rule.build());
+            let Ok(rule) = rule else {
+                return;
+            };
+            let Ok(messages) = zbus::blocking::MessageIterator::for_match_rule(rule, &conn, None)
+            else {
+                return;
+            };
+            for message in messages.flatten() {
+                let header = message.header();
+                let Some(path) = header.path() else {
+                    continue;
+                };
+                lock(&shared).closed(path.as_str());
+                deliver(Signal::Changed);
+            }
+        });
 }
 
 /// `Activated` and `ShortcutsChanged`, on a thread of their own.
@@ -311,7 +404,8 @@ fn create_session(
 }
 
 /// Binds `table` in `session`: what the portal bound, `None` when the
-/// request failed or the user declined it.
+/// request failed or the user declined it. An answer without its list is
+/// checked with `ListShortcuts`, never taken for the whole table.
 fn bind(
     conn: &Connection,
     portal: &Proxy<'_>,
@@ -339,16 +433,33 @@ fn bind(
         .call_method("BindShortcuts", &(session.clone(), shortcuts, "", options))
         .ok()?;
     let results = answer(signals)?;
-    // A portal that accepts without listing what it bound: take the table.
-    Some(results.get("shortcuts").map_or_else(
-        || {
-            table
-                .iter()
-                .map(|(_, key, _)| (key.clone(), None))
-                .collect()
-        },
-        |v| listed(v),
-    ))
+    match results.get("shortcuts") {
+        Some(shortcuts) => Some(listed(shortcuts)),
+        None => list(conn, portal, session, tokens),
+    }
+}
+
+/// `ListShortcuts`: what `session` holds bound, with each trigger.
+fn list(
+    conn: &Connection,
+    portal: &Proxy<'_>,
+    session: &OwnedObjectPath,
+    tokens: &mut u32,
+) -> Option<Vec<Listed>> {
+    let token = next_token(tokens);
+    let signals = responses(conn, &token)?;
+    let mut options: HashMap<&str, Value> = HashMap::new();
+    options.insert("handle_token", Value::from(token.as_str()));
+    portal
+        .call_method("ListShortcuts", &(session.clone(), options))
+        .ok()?;
+    let results = answer(signals)?;
+    Some(
+        results
+            .get("shortcuts")
+            .map(|v| listed(v))
+            .unwrap_or_default(),
+    )
 }
 
 fn close(conn: &Connection, session: &OwnedObjectPath) {

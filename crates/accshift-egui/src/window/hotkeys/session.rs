@@ -6,7 +6,8 @@
 //! (or a later `ShortcutsChanged`) lists it, with the trigger it names. A
 //! press fires only for a binding the current session listed: an
 //! `Activated` from a closed session, or for an id it never bound, is
-//! dropped.
+//! dropped. A session the portal closes drops its bindings and is bound
+//! again once.
 
 use std::collections::HashMap;
 
@@ -29,20 +30,29 @@ pub type Listed = (String, Option<String>);
 #[derive(Debug)]
 pub struct Bindings {
     pub probe: Probe,
+    /// The portal interface's version, 0 until the probe reads it.
+    pub version: u32,
     /// The session the table is bound in.
     session: Option<String>,
     /// The table sent to it: registration id and portal shortcut id.
     keys: Vec<(u32, String)>,
     outcomes: HashMap<u32, Outcome>,
+    /// The current session answered with a list.
+    answered_once: bool,
+    /// The portal closed an answered session: bind the table again.
+    rebind: bool,
 }
 
 impl Default for Bindings {
     fn default() -> Self {
         Self {
             probe: Probe::Waiting,
+            version: 0,
             session: None,
             keys: Vec::new(),
             outcomes: HashMap::new(),
+            answered_once: false,
+            rebind: false,
         }
     }
 }
@@ -51,6 +61,7 @@ impl Bindings {
     /// A fresh session asked to bind `keys`: each one pending.
     pub fn start(&mut self, session: &str, keys: Vec<(u32, String)>) {
         self.session = Some(session.to_string());
+        self.answered_once = false;
         self.outcomes = keys.iter().map(|(id, _)| (*id, Outcome::Pending)).collect();
         self.keys = keys;
     }
@@ -69,24 +80,52 @@ impl Bindings {
         self.outcomes.clear();
     }
 
-    /// The answer to `BindShortcuts`: what it lists is bound, the rest is
-    /// not; `None` when the user or the portal declined the request.
+    /// The answer to `BindShortcuts` (or `ListShortcuts`): what it lists
+    /// with a trigger is bound, the rest is not; `None` when the user or the
+    /// portal declined the request. KDE lists a shortcut it did not bind
+    /// (refused in a partly accepted batch, cleared in the system settings)
+    /// with an empty `trigger_description`; one that names no trigger at
+    /// all is bound to something the portal does not describe.
     pub fn answered(&mut self, session: &str, listed: Option<&[Listed]>) {
         if self.session.as_deref() != Some(session) {
             return;
         }
+        if listed.is_some() {
+            self.answered_once = true;
+        }
         for (id, key) in &self.keys {
             let outcome = match listed {
                 None => Outcome::Refused,
-                Some(listed) => listed
-                    .iter()
-                    .find(|(bound, _)| bound == key)
-                    .map_or(Outcome::Refused, |(_, trigger)| {
-                        Outcome::Active(trigger.clone().filter(|t| !t.is_empty()))
-                    }),
+                Some(listed) => match listed.iter().find(|(bound, _)| bound == key) {
+                    None => Outcome::Refused,
+                    Some((_, Some(trigger))) if trigger.trim().is_empty() => Outcome::Refused,
+                    Some((_, trigger)) => Outcome::Active(trigger.clone()),
+                },
             };
             self.outcomes.insert(*id, outcome);
         }
+    }
+
+    /// `Session.Closed` from the portal: the session's bindings are gone.
+    /// A session that had answered is bound again by the next commit, an
+    /// identical table included ([`Bindings::take_rebind`]); one closed
+    /// before it answered is not, so a portal that keeps closing does not
+    /// loop.
+    pub fn closed(&mut self, session: &str) {
+        if self.session.as_deref() != Some(session) {
+            return;
+        }
+        self.session = None;
+        for outcome in self.outcomes.values_mut() {
+            *outcome = Outcome::Refused;
+        }
+        self.rebind = std::mem::take(&mut self.answered_once);
+    }
+
+    /// Whether the next commit sends the table even when it did not change,
+    /// once per closed session.
+    pub fn take_rebind(&mut self) -> bool {
+        std::mem::take(&mut self.rebind)
     }
 
     /// `ShortcutsChanged`: the session's whole list as it now stands (the
@@ -103,6 +142,12 @@ impl Bindings {
         }
         let (id, _) = self.keys.iter().find(|(_, bound)| bound == key)?;
         matches!(self.outcomes.get(id), Some(Outcome::Active(_))).then_some(*id)
+    }
+
+    /// Whether the portal can open its settings of this session's
+    /// shortcuts: `ConfigureShortcuts` came with version 2.
+    pub fn configurable(&self) -> bool {
+        self.probe == Probe::Ready && self.version >= 2 && self.session.is_some()
     }
 
     /// What became of `id`; one not sent yet waits.
@@ -141,6 +186,27 @@ mod tests {
         assert_eq!(b.pressed("/s/1", "account-steam-1"), None);
     }
 
+    /// KDE lists a binding it refused in a partly accepted batch, or one the
+    /// user cleared in the system settings, with an empty trigger.
+    #[test]
+    fn an_empty_trigger_is_not_bound() {
+        let mut b = Bindings::default();
+        b.start("/s/1", table());
+        b.answered(
+            "/s/1",
+            Some(&[bound("palette", "Ctrl+Alt+K"), bound("account-steam-1", "")]),
+        );
+        assert_eq!(b.outcome(2), Outcome::Refused);
+        assert_eq!(b.pressed("/s/1", "account-steam-1"), None);
+        b.changed(
+            "/s/1",
+            &[bound("palette", ""), bound("account-steam-1", "Meta+1")],
+        );
+        assert_eq!(b.outcome(1), Outcome::Refused);
+        assert_eq!(b.pressed("/s/1", "palette"), None);
+        assert_eq!(b.outcome(2), Outcome::Active(Some("Meta+1".into())));
+    }
+
     #[test]
     fn a_declined_request_binds_nothing() {
         let mut b = Bindings::default();
@@ -157,7 +223,10 @@ mod tests {
         b.start("/s/1", table());
         b.answered(
             "/s/1",
-            Some(&[bound("palette", "Ctrl+Alt+K"), bound("account-steam-1", "")]),
+            Some(&[
+                bound("palette", "Ctrl+Alt+K"),
+                ("account-steam-1".into(), None),
+            ]),
         );
         assert_eq!(b.outcome(2), Outcome::Active(None));
         b.changed("/s/1", &[bound("account-steam-1", "Meta+1")]);
@@ -180,6 +249,42 @@ mod tests {
         assert_eq!(b.outcome(3), Outcome::Pending);
         b.answered("/s/2", Some(&[bound("palette", "Ctrl+Alt+K")]));
         assert_eq!(b.pressed("/s/2", "palette"), Some(3));
+    }
+
+    /// The portal closed the session: nothing it bound fires or shows
+    /// active, and the next commit binds the same table again.
+    #[test]
+    fn a_closed_session_drops_its_bindings_and_asks_again_once() {
+        let mut b = Bindings::default();
+        b.start("/s/1", table());
+        b.answered("/s/1", Some(&[bound("palette", "Ctrl+Alt+K")]));
+        b.closed("/s/0");
+        assert_eq!(b.pressed("/s/1", "palette"), Some(1));
+        assert!(!b.take_rebind());
+        b.closed("/s/1");
+        assert_eq!(b.outcome(1), Outcome::Refused);
+        assert_eq!(b.pressed("/s/1", "palette"), None);
+        assert!(b.take_rebind());
+        assert!(!b.take_rebind(), "once per close");
+        // Closed again before it answered: no new attempt.
+        b.start("/s/2", table());
+        b.closed("/s/2");
+        assert!(!b.take_rebind());
+    }
+
+    #[test]
+    fn only_a_version_2_portal_with_a_session_opens_its_settings() {
+        let mut b = Bindings {
+            probe: Probe::Ready,
+            version: 1,
+            ..Default::default()
+        };
+        b.start("/s/1", table());
+        assert!(!b.configurable());
+        b.version = 2;
+        assert!(b.configurable());
+        b.closed("/s/1");
+        assert!(!b.configurable());
     }
 
     #[test]
