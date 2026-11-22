@@ -134,7 +134,9 @@ pub fn default_tcno_root() -> Option<PathBuf> {
 pub fn preview_tcno_import(app: &dyn AppContext, root: &Path) -> Result<TcNoPreview, String> {
     let scan = reader::scan_root(root)?;
     let plan = mapper::build_plan(scan);
-    apply::preview_plan(app, &plan)
+    let preview = apply::preview_plan(app, &plan)?;
+    log_warnings(app, "tcno.preview", &preview.warnings);
+    Ok(preview)
 }
 
 /// Import accounts, labels, notes, order and eligible Ubisoft/Epic legacy
@@ -142,5 +144,23 @@ pub fn preview_tcno_import(app: &dyn AppContext, root: &Path) -> Result<TcNoPrev
 pub fn apply_tcno_import(app: &dyn AppContext, root: &Path) -> Result<TcNoImportReport, String> {
     let scan = reader::scan_root(root)?;
     let plan = mapper::build_plan(scan);
-    apply::execute_plan(app, &plan)
+    let report = apply::execute_plan(app, &plan)?;
+    log_warnings(app, "tcno.import", &report.warnings);
+    Ok(report)
+}
+
+/// One log line per item left out: the card only counts them per reason.
+fn log_warnings(app: &dyn AppContext, source: &str, warnings: &[TcNoWarning]) {
+    for warning in warnings {
+        crate::platforms::log_platform_event(
+            app,
+            "warn",
+            source,
+            "TcNo item left out",
+            format!(
+                "{} {:?}: {}",
+                warning.platform, warning.kind, warning.detail
+            ),
+        );
+    }
 }

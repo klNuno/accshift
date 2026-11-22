@@ -5,7 +5,7 @@
 use accshift_app::actions::dialogs::{ConfirmConfig, CONFIRM_ACCENT};
 use accshift_app::i18n::{Locale, TranslationValue};
 use accshift_app::text::Text;
-use accshift_app::types::{TcNoImportReport, TcNoPreview};
+use accshift_app::types::{TcNoImportReport, TcNoPreview, TcNoWarning, TcNoWarningKind};
 
 /// What the TcNo card draws, copied from the app each frame.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -24,9 +24,72 @@ fn n(count: usize) -> TranslationValue {
     TranslationValue::Str(count.to_string())
 }
 
-/// The preview adds nothing: no new account, note or session.
+/// The preview adds nothing: no new account, note, session or place in an
+/// order.
 pub fn tcno_preview_is_empty(preview: &TcNoPreview) -> bool {
-    preview.accounts_new == 0 && preview.notes_new == 0 && preview.snapshots_new == 0
+    preview.accounts_new == 0
+        && preview.notes_new == 0
+        && preview.snapshots_new == 0
+        && preview.order_new == 0
+}
+
+/// The text key naming a reason something was left out, with `{count}`.
+fn reason_key(kind: TcNoWarningKind) -> &'static str {
+    use TcNoWarningKind::*;
+    match kind {
+        VaultEncrypted => "settings.tcnoWarn.vaultEncrypted",
+        EpicEglv2Skipped => "settings.tcnoWarn.epicEglv2Skipped",
+        UnsupportedIdsFormat => "settings.tcnoWarn.unsupportedIdsFormat",
+        CorruptFile => "settings.tcnoWarn.corruptFile",
+        InvalidAccountId => "settings.tcnoWarn.invalidAccountId",
+        IdentityNotPortable => "settings.tcnoWarn.identityNotPortable",
+        SnapshotIncomplete => "settings.tcnoWarn.snapshotIncomplete",
+        SnapshotFailed => "settings.tcnoWarn.snapshotFailed",
+    }
+}
+
+/// What was left out, one count per reason in the order they first came;
+/// the details are in the app log. `None` without warnings.
+fn tcno_warnings(warnings: &[TcNoWarning], locale: Locale) -> Option<String> {
+    let mut counts: Vec<(TcNoWarningKind, usize)> = Vec::new();
+    for warning in warnings {
+        match counts.iter_mut().find(|(kind, _)| *kind == warning.kind) {
+            Some((_, count)) => *count += 1,
+            None => counts.push((warning.kind, 1)),
+        }
+    }
+    if counts.is_empty() {
+        return None;
+    }
+    let list = counts
+        .into_iter()
+        .map(|(kind, count)| Text::with(reason_key(kind), [("count", n(count))]).resolve(locale))
+        .collect::<Vec<_>>()
+        .join("; ");
+    Some(
+        Text::with(
+            "settings.tcnoWarnings",
+            [("list", TranslationValue::Str(list))],
+        )
+        .resolve(locale),
+    )
+}
+
+/// `text`, then what was left out.
+fn with_warnings(text: String, warnings: &[TcNoWarning], locale: Locale) -> String {
+    match tcno_warnings(warnings, locale) {
+        Some(left_out) => format!("{text} {left_out}"),
+        None => text,
+    }
+}
+
+/// What the card says when a folder adds nothing, with what it left out.
+pub fn tcno_nothing(warnings: &[TcNoWarning], locale: Locale) -> String {
+    with_warnings(
+        accshift_app::i18n::translate(locale, "settings.tcnoNothing"),
+        warnings,
+        locale,
+    )
 }
 
 /// The confirm a picked TcNo folder asks, with what the import would add.
@@ -40,6 +103,7 @@ pub fn tcno_confirm(preview: &TcNoPreview) -> ConfirmConfig {
                 ("existing", n(preview.accounts_existing)),
                 ("notes", n(preview.notes_new)),
                 ("sessions", n(preview.snapshots_new)),
+                ("order", n(preview.order_new)),
                 ("capture", n(preview.to_capture)),
                 ("warnings", n(preview.warnings.len())),
             ],
@@ -50,19 +114,21 @@ pub fn tcno_confirm(preview: &TcNoPreview) -> ConfirmConfig {
     }
 }
 
-/// What the card says once the import ran.
+/// What the card says once the import ran, with what it left out.
 pub fn tcno_report(report: &TcNoImportReport, locale: Locale) -> String {
-    Text::with(
+    let text = Text::with(
         "settings.tcnoImported",
         [
             ("accounts", n(report.accounts_imported)),
             ("notes", n(report.notes_imported)),
             ("sessions", n(report.snapshots_imported)),
+            ("order", n(report.order_entries_added)),
             ("capture", n(report.to_capture)),
             ("skipped", n(report.accounts_skipped)),
         ],
     )
-    .resolve(locale)
+    .resolve(locale);
+    with_warnings(text, &report.warnings, locale)
 }
 
 #[cfg(test)]
@@ -128,6 +194,80 @@ mod tests {
         assert_eq!(
             config.confirm_color.as_deref(),
             Some(accshift_app::actions::dialogs::CONFIRM_ACCENT)
+        );
+    }
+
+    fn warning(kind: TcNoWarningKind) -> TcNoWarning {
+        TcNoWarning {
+            platform: "jagex".into(),
+            kind,
+            detail: "Skipped account 'Main'".into(),
+        }
+    }
+
+    #[test]
+    fn a_folder_that_only_brings_an_order_is_not_empty() {
+        let preview = TcNoPreview {
+            order_new: 2,
+            ..TcNoPreview::default()
+        };
+        assert!(!tcno_preview_is_empty(&preview));
+        let message = tcno_confirm(&preview).message.resolve(Locale::En);
+        assert!(message.contains("TcNo order: 2"), "{message}");
+    }
+
+    #[test]
+    fn the_tcno_report_counts_what_was_left_out_per_reason() {
+        let report = TcNoImportReport {
+            accounts_imported: 1,
+            order_entries_added: 3,
+            warnings: vec![
+                warning(TcNoWarningKind::IdentityNotPortable),
+                warning(TcNoWarningKind::IdentityNotPortable),
+                warning(TcNoWarningKind::SnapshotFailed),
+            ],
+            ..TcNoImportReport::default()
+        };
+        let text = tcno_report(&report, Locale::En);
+        assert!(text.contains("TcNo order: 3"), "{text}");
+        assert!(
+            text.contains("accounts accshift cannot switch: 2"),
+            "{text}"
+        );
+        assert!(text.contains("could not be copied: 1"), "{text}");
+        assert!(text.contains("logs"), "{text}");
+        // Only the counts: the details stay in the log.
+        assert!(!text.contains("Main"), "{text}");
+        for locale in accshift_app::i18n::LOCALES {
+            let text = tcno_report(&report, locale);
+            assert!(!text.contains('{'), "{locale:?}: {text}");
+            assert!(!text.contains("settings."), "{locale:?}: {text}");
+        }
+    }
+
+    #[test]
+    fn every_reason_has_its_text_in_every_language() {
+        use TcNoWarningKind::*;
+        let kinds = [
+            VaultEncrypted,
+            EpicEglv2Skipped,
+            UnsupportedIdsFormat,
+            CorruptFile,
+            InvalidAccountId,
+            IdentityNotPortable,
+            SnapshotIncomplete,
+            SnapshotFailed,
+        ];
+        let warnings: Vec<_> = kinds.into_iter().map(warning).collect();
+        for locale in accshift_app::i18n::LOCALES {
+            let text = tcno_nothing(&warnings, locale);
+            assert!(!text.contains("settings."), "{locale:?}: {text}");
+            assert!(!text.contains('{'), "{locale:?}: {text}");
+            assert_eq!(text.matches('1').count(), kinds.len(), "{locale:?}: {text}");
+        }
+        assert_eq!(
+            tcno_nothing(&[], Locale::En),
+            accshift_app::i18n::translate(Locale::En, "settings.tcnoNothing")
         );
     }
 

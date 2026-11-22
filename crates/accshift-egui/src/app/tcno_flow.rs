@@ -22,7 +22,9 @@ use egui::Context;
 
 use super::backup_flow::{picker_cancelled, with_one, Purpose, RestartWhy};
 use super::platforms::RuntimeOs;
-use super::settings_panel::{tcno_confirm, tcno_preview_is_empty, tcno_report, TcnoState};
+use super::settings_panel::{
+    tcno_confirm, tcno_nothing, tcno_preview_is_empty, tcno_report, TcnoState,
+};
 use super::AppModel;
 
 /// The folder the picker returned and what importing it would do; `None`
@@ -124,7 +126,7 @@ impl AppModel {
             }
             Ok(None) => {}
             Ok(Some((_, preview))) if tcno_preview_is_empty(&preview) => {
-                let text = translate(locale, "settings.tcnoNothing");
+                let text = tcno_nothing(&preview.warnings, locale);
                 self.backup.tcno.set_notice(text, false);
             }
             Ok(Some((path, preview))) => {
