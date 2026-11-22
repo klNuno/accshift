@@ -25,7 +25,7 @@ const GATES = [
   { name: "rust", cmd: "cargo test --workspace --locked" },
   { name: "worker", cmd: `${node} node_modules/typescript/bin/tsc --noEmit`, cwd: "server" },
   { name: "worker-test", cmd: `${node} node_modules/vitest/vitest.mjs run`, cwd: "server" },
-  { name: "bundle", cmd: `${node} --test crates/accshift-egui/bundle/linux-deps.test.mjs` },
+  { name: "bundle", cmd: `${node} --test crates/accshift-egui/bundle/linux-deps.test.mjs scripts/release-notes.test.mjs` },
   // Stream Deck plugin: parsing, links, CLI lookup, strings, and a start of
   // the built bundle against a fake Stream Deck. That start test needs
   // `pnpm --dir integrations/streamdeck install` (esbuild, the SDK); without
