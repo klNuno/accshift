@@ -65,6 +65,9 @@ struct GateState {
     closed: AtomicBool,
     /// The first write that failed while a backup held the boundary.
     failed: Mutex<Option<String>>,
+    /// The UI to wake when an admitted call returns: a boundary waiting
+    /// for it draws no frame otherwise, once no one polls the call's result.
+    wake: Option<Context>,
     /// Test seam: run once the boundary is published.
     #[cfg(test)]
     published: Mutex<Option<Box<dyn FnOnce() + Send>>>,
@@ -76,10 +79,21 @@ struct Admitted(Arc<GateState>);
 impl Drop for Admitted {
     fn drop(&mut self) {
         self.0.running.fetch_sub(1, Ordering::SeqCst);
+        if let Some(ctx) = &self.0.wake {
+            ctx.request_repaint();
+        }
     }
 }
 
 impl WriteGate {
+    /// A gate that wakes `ctx` each time an admitted call returns.
+    pub(super) fn waking(ctx: &Context) -> Self {
+        Self(Arc::new(GateState {
+            wake: Some(ctx.clone()),
+            ..GateState::default()
+        }))
+    }
+
     /// `call`, counted until it returns; `None` while a backup holds writes.
     pub(super) fn admit<T, F>(
         &self,
@@ -260,6 +274,14 @@ pub(super) struct BackupFlow {
 }
 
 impl BackupFlow {
+    /// The flow whose gate wakes `ctx` when a write it admitted returns.
+    pub(super) fn waking(ctx: &Context) -> Self {
+        Self {
+            gate: WriteGate::waking(ctx),
+            ..Self::default()
+        }
+    }
+
     /// A backup holds the boundary: store, descriptor and theme writes and
     /// external refreshes wait.
     pub(super) fn holds_writes(&self) -> bool {
@@ -693,7 +715,9 @@ impl AppModel {
     }
 
     /// Takes the restored themes, then the restored stores, which may name
-    /// one of them, and refreshes what reads them.
+    /// one of them, and refreshes what reads them. A zoom or a panel edit
+    /// made during the restore goes with the setup it was made against, as
+    /// do their pending saves.
     fn adopt_restored(&mut self, ctx: &Context, read: ReadBack) {
         if let Some(themes) = &read.themes.themes {
             self.apply_theme_payloads(themes);
@@ -703,6 +727,11 @@ impl AppModel {
             .as_mut()
             .map(|b| b.stores.adopt_snapshot(read.snapshot))
             .unwrap_or_default();
+        let _ = self.ui_scale.destroy(0);
+        self.ui_scale_live = None;
+        if let (Some(panel), Some(b)) = (self.settings_panel.as_mut(), self.booted.as_ref()) {
+            panel.take_restored(b.stores.settings());
+        }
         // The snapshot's manifest holds the restored themes' fingerprint.
         if !read.themes.whole {
             self.unsee_themes();

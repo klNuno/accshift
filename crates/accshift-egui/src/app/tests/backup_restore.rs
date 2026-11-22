@@ -5,7 +5,7 @@
 
 use super::super::settings_panel::SettingsAction;
 use super::*;
-use accshift_app::i18n::translate;
+use accshift_app::i18n::{translate, Locale};
 use serde_json::json;
 
 const DESCRIPTOR: &str = include_str!("../../../../accshift-app/tests/data/real/descriptor.json");
@@ -330,11 +330,8 @@ fn an_export_cancelled_in_the_dialog_holds_nothing() {
     pump_until(&mut app, &ctx, |_| {
         mock.seen("backup_select_export_path") == 1
     });
-    for _ in 0..10 {
-        frame(&mut app, &ctx);
-        std::thread::sleep(std::time::Duration::from_millis(2));
-    }
-    assert!(!app.backup.card.busy);
+    // The picker was called; the app takes its answer on a later frame.
+    pump_until(&mut app, &ctx, |a| !a.backup.card.busy);
     assert!(!app.backup.holds_writes());
     assert_eq!(mock.seen("backup_export"), 0);
     assert!(app.backup.card.notice.is_empty());
@@ -1204,4 +1201,102 @@ fn the_restart_modal_tells_a_lost_restore_and_a_partial_rollback_apart() {
         modal.message,
         translate(locale, "settings.backupRestartNeeded")
     );
+}
+
+/// [`restore_app`] with the settings panel open and hydrated, and the
+/// restore started and held at the disk.
+fn restore_held_with_panel(ctx: &Context) -> (AppModel, Arc<MockBackend>) {
+    let (mut app, mock) = restore_app(ctx);
+    app.toggle_settings_panel();
+    pump_until(&mut app, ctx, |a| {
+        a.settings_panel.as_ref().is_some_and(|p| p.hydrated)
+    });
+    assert!(mock.hold("backup_restore"));
+    app.start_backup_restore("C:/b.json".into(), String::new());
+    pump_until(&mut app, ctx, |_| mock.waiting("backup_restore") == 1);
+    (app, mock)
+}
+
+#[test]
+fn a_panel_edit_made_during_the_restore_never_lands_over_it() {
+    // Regression (PANEL_DRAFT): the panel kept a language picked while the
+    // restore ran, merged it over the restored one and saved it.
+    let ctx = Context::default();
+    let (mut app, mock) = restore_held_with_panel(&ctx);
+    app.settings_panel.as_mut().unwrap().draft.language = Locale::Es;
+    frame(&mut app, &ctx);
+    mock.release("backup_restore");
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert!(!app.backup.card.error, "{}", app.backup.card.notice);
+    // Past the panel's save debounce.
+    let until = Instant::now() + std::time::Duration::from_millis(400);
+    while Instant::now() < until {
+        frame(&mut app, &ctx);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let panel = app.settings_panel.as_ref().unwrap().draft.language;
+    let stored = app.booted().unwrap().stores.settings().language;
+    assert_eq!(
+        (stored, panel),
+        (Locale::Fr, Locale::Fr),
+        "PANEL_DRAFT: the edit made during the restore replaced the restored language"
+    );
+}
+
+#[test]
+fn a_zoom_made_during_the_restore_is_not_saved_over_it() {
+    // Regression (ZOOM_PENDING): the zoom's pending save outlived the
+    // adoption and wrote its scale over the restored settings.
+    let ctx = Context::default();
+    let (mut app, mock) = restore_held_with_panel(&ctx);
+    let restored = app.booted().unwrap().stores.settings().ui_scale_percent;
+    // Its save is due long after the restore ends.
+    let later = Instant::now() + std::time::Duration::from_secs(30);
+    app.zoom_key(super::super::ui_scale::ZoomKey::In, later);
+    assert!(app.ui_scale_live.is_some());
+    mock.release("backup_restore");
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert!(!app.backup.card.error, "{}", app.backup.card.notice);
+    let due = app
+        .ui_scale
+        .take_due(later + std::time::Duration::from_secs(1));
+    assert_eq!(
+        (due, app.ui_scale_live),
+        (None, None),
+        "ZOOM_PENDING: the zoom made during the restore is still to be saved"
+    );
+    assert_eq!(
+        app.booted().unwrap().stores.settings().ui_scale_percent,
+        restored
+    );
+}
+
+#[test]
+fn the_last_admitted_write_wakes_a_draining_backup() {
+    // Regression (DRAIN_WAKE): a descriptor write whose panel had closed
+    // returned with no one polling it, so no frame ran and the backup
+    // waited in its drain for the next input.
+    let ctx = Context::default();
+    let (mut app, mock) = restore_app(&ctx);
+    frame(&mut app, &ctx);
+    let write = app.backup.gate.admit(|_| ()).expect("the gate is open");
+    app.start_backup_restore("C:/b.json".into(), String::new());
+    for _ in 0..5 {
+        frame(&mut app, &ctx);
+    }
+    assert!(app.backup.holds_writes());
+    assert_eq!(mock.seen("backup_restore"), 0);
+    let wakes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = Arc::clone(&wakes);
+    ctx.set_repaint_observer(move |_| {
+        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    });
+    let backend = mock.clone();
+    std::thread::spawn(move || write(&*backend)).join().unwrap();
+    assert!(
+        wakes.load(std::sync::atomic::Ordering::SeqCst) > 0,
+        "DRAIN_WAKE: the write returned without waking the UI"
+    );
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert_eq!(mock.seen("backup_restore"), 1);
 }

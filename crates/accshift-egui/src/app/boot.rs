@@ -188,7 +188,7 @@ impl AppModel {
             booted: None,
             saves: Vec::new(),
             external_refresh: Default::default(),
-            backup: Default::default(),
+            backup: super::backup_flow::BackupFlow::waking(ctx),
             ui_scale: Default::default(),
             ui_scale_live: None,
             stage_raster: ui_scale::StageRaster::Unknown,
