@@ -355,12 +355,13 @@ impl BackupFlow {
     }
 
     /// "Export setup": the save dialog; the export itself runs behind the
-    /// boundary.
+    /// boundary. A cancel says nothing, a picker that failed says why.
     pub(super) fn export(&mut self, jobs: &Jobs, title: String, all_files: String) {
         self.start(jobs, BackupStep::Export, move |b| {
             match b.backup_select_export_path(&title, &all_files) {
                 Ok(path) if !path.is_empty() => Ok(BackupDone::ExportTo(path)),
-                _ => Ok(BackupDone::Picked(None)),
+                Ok(_) => Ok(BackupDone::Picked(None)),
+                Err(error) => picker_failed(error),
             }
         });
     }
@@ -368,8 +369,9 @@ impl BackupFlow {
     /// "Restore from a file": the file picker, then the preview.
     pub(super) fn import(&mut self, jobs: &Jobs, title: String, all_files: String) {
         self.start(jobs, BackupStep::Read, move |b| {
-            let Ok(path) = b.backup_select_import_file(&title, &all_files) else {
-                return Ok(BackupDone::Picked(None));
+            let path = match b.backup_select_import_file(&title, &all_files) {
+                Ok(path) => path,
+                Err(error) => return picker_failed(error),
             };
             if path.is_empty() {
                 return Ok(BackupDone::Picked(None));
@@ -377,6 +379,16 @@ impl BackupFlow {
             let preview = b.backup_preview(&path)?;
             Ok(BackupDone::Picked(Some((path, preview))))
         });
+    }
+}
+
+/// What a backup picker's `error` ends in: nothing for a cancel, the
+/// backup notice for any other failure (a path the backend cannot use).
+fn picker_failed(error: BackendError) -> BackendResult<BackupDone> {
+    if error.message == accshift_core::error::AppError::Cancelled.to_string() {
+        Ok(BackupDone::Picked(None))
+    } else {
+        Err(error)
     }
 }
 

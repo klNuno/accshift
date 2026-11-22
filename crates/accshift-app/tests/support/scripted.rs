@@ -674,6 +674,18 @@ impl Backend for Scripted {
         }
         self.inner.list_custom_themes()
     }
+    /// A list queued for `list_custom_themes` is the whole list; otherwise
+    /// the inner mock answers, with its `complete` flag.
+    fn read_custom_themes(&self) -> BackendResult<CustomThemeList> {
+        self.record("list_custom_themes", String::new());
+        if let Some(answer) = self.next::<Vec<CustomTheme>>("list_custom_themes") {
+            return answer.map(|themes| CustomThemeList {
+                themes,
+                complete: true,
+            });
+        }
+        self.inner.read_custom_themes()
+    }
     fn save_custom_theme(&self, theme: &CustomTheme) -> BackendResult<()> {
         self.record("save_custom_theme", format!("{:?}", (&theme,)));
         if let Some(answer) = self.next("save_custom_theme") {

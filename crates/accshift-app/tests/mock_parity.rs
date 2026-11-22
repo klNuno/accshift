@@ -278,6 +278,31 @@ fn fail_and_latency_overrides() {
 }
 
 #[test]
+fn a_restore_of_a_file_other_than_the_previewed_one_is_refused() {
+    // Regression (MOCK_DIGEST): the mock dropped the digest, so a restore
+    // with the wrong one answered as recorded.
+    let mock = load_edited("dev", |data| {
+        data["commands"]["backup_preview"][0]["result"]["digest"] = json!("abc");
+    });
+    let path = "C:/b.json";
+    assert_eq!(mock.backup_preview(path).unwrap().digest, "abc");
+    mock.backup_restore(path, "abc").unwrap();
+    let error = mock
+        .backup_restore(path, "def")
+        .expect_err("MOCK_DIGEST: restored a file the preview never showed");
+    assert!(!error.left_restored, "{error:?}");
+    assert!(
+        error.message.contains("changed since its preview"),
+        "{error:?}"
+    );
+    // A failure after a write still says it left restored files.
+    assert!(mock.leave_restored(Some("disk full")));
+    let error = mock.backup_restore(path, "abc").unwrap_err();
+    assert!(error.left_restored, "{error:?}");
+    assert_eq!(mock.seen("backup_restore"), 3);
+}
+
+#[test]
 fn a_held_command_waits_for_its_release() {
     let mock = Arc::new(load("dev"));
     assert!(mock.hold("get_runtime_os"));

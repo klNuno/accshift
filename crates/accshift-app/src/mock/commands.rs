@@ -188,8 +188,28 @@ impl Backend for MockBackend {
     fn backup_preview(&self, path: &str) -> BackendResult<BackupPreview> {
         self.call("backup_preview", json!({ "path": path }))
     }
-    fn backup_restore(&self, path: &str, _digest: &str) -> Result<BackupReport, RestoreError> {
+    /// As the real restore, refused with nothing written when `digest` is
+    /// not the one the preview of `path` answered, when it answered one.
+    fn backup_restore(&self, path: &str, digest: &str) -> Result<BackupReport, RestoreError> {
         let answer = self.call("backup_restore", json!({ "path": path }));
+        let previewed = self
+            .recorded_for("backup_preview", &json!({ "path": path }))
+            .and_then(Result::ok)
+            .and_then(|preview| {
+                preview
+                    .get("digest")
+                    .and_then(Value::as_str)
+                    .map(String::from)
+            })
+            .filter(|previewed| !previewed.is_empty());
+        if previewed.is_some_and(|previewed| previewed != digest) {
+            return Err(RestoreError {
+                message: format!(
+                    "{path} changed since its preview: open it again to see what it holds"
+                ),
+                left_restored: false,
+            });
+        }
         if let Some(message) = self.lock().restore_left.clone() {
             return Err(RestoreError {
                 message,

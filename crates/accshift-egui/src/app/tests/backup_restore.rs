@@ -325,7 +325,8 @@ fn an_export_waits_for_a_running_save_and_holds_new_writes() {
 fn an_export_cancelled_in_the_dialog_holds_nothing() {
     let ctx = Context::default();
     let (mut app, mock) = restore_app(&ctx);
-    assert!(mock.fail("backup_select_export_path", Some("cancelled")));
+    let cancelled = accshift_core::error::AppError::Cancelled.to_string();
+    assert!(mock.fail("backup_select_export_path", Some(&cancelled)));
     app.export_backup();
     pump_until(&mut app, &ctx, |_| {
         mock.seen("backup_select_export_path") == 1
@@ -335,6 +336,37 @@ fn an_export_cancelled_in_the_dialog_holds_nothing() {
     assert!(!app.backup.holds_writes());
     assert_eq!(mock.seen("backup_export"), 0);
     assert!(app.backup.card.notice.is_empty());
+}
+
+#[test]
+fn a_picker_that_fails_says_why() {
+    // Regression (PICKER_ERROR): any picker error read as a cancel, so a
+    // path the backend refused closed the dialog with no word.
+    let odd = "C:/a\u{FFFD}.json cannot be used: its name is not valid Unicode";
+    for command in ["backup_select_export_path", "backup_select_import_file"] {
+        let ctx = Context::default();
+        let (mut app, mock) = restore_app(&ctx);
+        assert!(mock.fail(command, Some(odd)));
+        if command == "backup_select_export_path" {
+            app.export_backup();
+        } else {
+            app.import_backup();
+        }
+        pump_until(&mut app, &ctx, |_| mock.seen(command) == 1);
+        let deadline = Instant::now() + std::time::Duration::from_secs(3);
+        while !app.backup.card.error && Instant::now() < deadline {
+            frame(&mut app, &ctx);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(
+            app.backup.card.error && app.backup.card.notice.contains(odd),
+            "PICKER_ERROR: {command} said {:?}",
+            app.backup.card.notice
+        );
+        assert!(!app.backup.holds_writes());
+        assert_eq!(mock.seen("backup_export"), 0);
+        assert_eq!(mock.seen("backup_preview"), 0);
+    }
 }
 
 /// The restore replaced the files but the stores cannot be read back: the
