@@ -296,6 +296,12 @@ fn base64_to_string(base64_string: &str) -> UpdaterResult<String> {
     String::from_utf8(decoded).map_err(|_| UpdaterError::SignatureUtf8(base64_string.into()))
 }
 
+/// How long an update request may wait on the server: for the response
+/// headers, then for each read of the body. A stalled server fails the
+/// check or the download instead of holding it; a slow connection that
+/// keeps sending is not cut.
+pub const UPDATER_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// The updater settings, reduced to
 /// what accshift sets: no headers, no custom target, no endpoint templates,
 /// no installer arguments, no downgrades.
@@ -306,7 +312,8 @@ pub struct UpdaterConfig {
     pub current_version: Version,
     /// The `productName`: the prefix of the installer temp folder.
     pub app_name: String,
-    /// `None`: no timeout.
+    /// The check's and the download's [`UPDATER_TIMEOUT`]. `None`: no
+    /// timeout.
     pub timeout: Option<Duration>,
     /// What the NSIS setup passes the relaunched app after `/ARGS`
     /// ([`process::relaunch_args`]).
@@ -331,7 +338,7 @@ impl UpdaterConfig {
                 .collect(),
             current_version: Version::parse(APP_VERSION).expect("APP_VERSION is semver"),
             app_name: PRODUCT_NAME.to_string(),
-            timeout: None,
+            timeout: Some(UPDATER_TIMEOUT),
             relaunch_args: process::relaunch_args(&args),
             bundle_type: bundle_type(),
             executable_path: process::current_binary().ok(),
@@ -472,6 +479,7 @@ impl Updater {
                 bundle_type: self.config.bundle_type,
                 executable_path: self.config.executable_path.clone(),
                 pubkey: self.config.pubkey.clone(),
+                timeout: self.config.timeout,
             },
         }))
     }
@@ -526,6 +534,8 @@ pub struct InstallContext {
     pub bundle_type: Option<BundleType>,
     pub executable_path: Option<PathBuf>,
     pub pubkey: String,
+    /// The config's timeout, for the download.
+    pub timeout: Option<Duration>,
 }
 
 /// An available update.
@@ -618,12 +628,12 @@ fn encode_wide(text: impl AsRef<OsStr>) -> Vec<u16> {
 }
 
 impl Update {
-    /// Downloads the bytes, verified
-    /// against the release signature.
+    /// Downloads the bytes, verified against the release signature. The
+    /// config timeout holds for the headers and for each read of the body.
     pub fn download(&self) -> UpdaterResult<Vec<u8>> {
         let client = accshift_core::http::blocking_client_builder()
             .user_agent(UPDATER_USER_AGENT)
-            .timeout(None)
+            .timeout(self.install.timeout)
             .build()
             .map_err(|e| UpdaterError::Reqwest(e.to_string()))?;
         let mut response = client

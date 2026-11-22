@@ -15,6 +15,7 @@ mod backup_restore;
 mod native_regressions;
 mod real_unreadable;
 mod shortcuts;
+mod updates;
 
 struct Scratch {
     root: PathBuf,

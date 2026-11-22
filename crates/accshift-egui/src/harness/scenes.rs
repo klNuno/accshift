@@ -89,6 +89,9 @@ pub struct Scene {
     /// `clipboard`: the text a clipboard read answers with (empty by
     /// default).
     pub clipboard: String,
+    /// `update`: the state the settings' about card shows (`idle`,
+    /// `checking`, `up-to-date`, `failed`, `ready`); the updater stays off.
+    pub update: Option<String>,
     /// The `html` fragment (resolved next to the scene file) and its text.
     pub html: Option<(PathBuf, String)>,
     pub steps: Vec<Step>,
@@ -237,6 +240,7 @@ pub fn load(path: &Path) -> Result<Scene, String> {
             .transpose()
             .map_err(|e| format!("{}: {e}", path.display()))?,
         clipboard: s("clipboard").unwrap_or_default(),
+        update: s("update"),
         html,
         steps,
     })
@@ -758,6 +762,7 @@ impl Screen {
                 .wallpaper
                 .as_ref()
                 .map(|w| (w.snapshot.clone(), w.window, scene.viewport.scale)),
+            update: scene.update.clone(),
             data_dir,
             repo_root,
         };

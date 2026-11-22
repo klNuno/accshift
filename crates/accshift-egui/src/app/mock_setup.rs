@@ -29,6 +29,8 @@ pub struct MockSetup {
     /// The wallpaper snapshot, then the window's outer position and scale
     /// factor the backdrop aligns to (physical px).
     pub wallpaper: Option<(Value, [i32; 2], f32)>,
+    /// The state the settings' about card shows; the updater stays off.
+    pub update: Option<String>,
     /// The folder of the scenario files.
     pub data_dir: PathBuf,
     /// The repo root, to resolve the mock avatar paths.

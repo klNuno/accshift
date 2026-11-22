@@ -1,0 +1,36 @@
+{
+  "id": "settings-about-ready-glass-dark-100",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 1100,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "update": "ready",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [
+        87,
+        18
+      ]
+    },
+    {
+      "move": [
+        430,
+        5
+      ]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "shot": "ready"
+    }
+  ]
+}
