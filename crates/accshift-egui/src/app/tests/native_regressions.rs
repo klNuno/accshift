@@ -210,11 +210,14 @@ fn native_external_storage_on_restore_preserves_dirty_local_values() {
         .stores
         .storage()
         .has_pending_save("client.account-card-notes"));
+    // Let the snapshot finish first while the store write stays held, so
+    // finish_refresh deterministically runs with the dirty local value still
+    // pending instead of racing the write completion.
     mock.release("load_client_storage_snapshot");
-    mock.release("save_client_storage_store");
     pump_until(&mut app, &ctx, |a| {
         a.booted().unwrap().stores.view_mode() == ViewMode::List
     });
+    mock.release("save_client_storage_store");
     wait_refresh_over(&mut app, &ctx);
     let b = app.booted().unwrap();
     assert_eq!(b.stores.view_mode(), ViewMode::List);

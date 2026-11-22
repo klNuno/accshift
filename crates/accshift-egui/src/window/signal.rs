@@ -54,6 +54,7 @@ mod imp {
             if let Some(thread) = self.thread.take() {
                 let _ = thread.join();
             }
+            SIGNAL_RECEIVED.store(false, Ordering::Release);
         }
     }
 
@@ -221,6 +222,7 @@ mod tests {
                 .expect("signal callback fired");
             assert!(received());
             drop(guard);
+            assert!(!received());
         }
 
         #[test]
