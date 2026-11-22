@@ -14,10 +14,19 @@
 //! - Capture: while a row listens, the frame's keys go to it, not the app,
 //!   and the registrations pause so our own combinations reach the window.
 //!   A delivered shortcut is refused from the moment a row listens, and a
-//!   PIN lock ends the capture before it reads a key.
+//!   PIN lock ends the capture before it reads a key. In the window the
+//!   runner hands each press as winit gave it ([`Stroke`]), with the
+//!   modifiers held at that press: egui-winit turns Ctrl+C into a copy and
+//!   Shift+/ into a question mark, and a frame sees only its last
+//!   modifiers. The scenes and tests, without a runner, read egui's keys.
 //! - A bound account its platform's loaded list lacks is set aside (not
-//!   registered, not shown) but stays saved: a launcher file read short
-//!   must not erase it. Forgetting the account in the app removes it.
+//!   shown, never run) but stays saved and registered: a launcher file read
+//!   short must not erase it, nor drop the trigger KDE keeps for it, which
+//!   a batch without it would. Forgetting the account in the app removes
+//!   it.
+//! - Wayland: a compositor that hands no activation token with a press
+//!   (KDE) cannot let the window come back; the toggle then leaves it in
+//!   place ([`toggle_plan`]) and the rows that bring the window say so.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -59,6 +68,42 @@ pub enum WindowOp {
     Toggle,
 }
 
+/// What the show/hide shortcut does to the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TogglePlan {
+    /// Bring it back to the front.
+    Reveal,
+    /// Send it away: hidden to the tray when `can_hide`, else minimized.
+    Away { can_hide: bool },
+    /// Leave it: a Wayland window minimized without an activation token
+    /// could not come back.
+    Keep,
+}
+
+/// The toggle for a window `in_front` or not, on `wayland` or not, with or
+/// without the press's activation token.
+pub fn toggle_plan(in_front: bool, wayland: bool, token: bool) -> TogglePlan {
+    match (in_front, wayland, token) {
+        (false, _, _) => TogglePlan::Reveal,
+        (true, true, false) => TogglePlan::Keep,
+        (true, wayland, _) => TogglePlan::Away { can_hide: !wayland },
+    }
+}
+
+/// A key press as the window system gave it, with the modifiers held at
+/// that press: what a capture reads in the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stroke {
+    Escape,
+    Key {
+        key: ComboKey,
+        ctrl: bool,
+        alt: bool,
+        shift: bool,
+        super_key: bool,
+    },
+}
+
 /// A row listening for its combination.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Capture {
@@ -67,12 +112,14 @@ pub struct Capture {
     pub unusable: bool,
 }
 
+type Synced = (Vec<(ShortcutTarget, Combo)>, Vec<ShortcutTarget>, bool);
+
 #[derive(Default)]
 pub(super) struct Shortcuts {
     factory: Option<RegistrarFactory>,
     pub(super) service: Option<ShortcutService>,
-    /// The table and pause last synced.
-    synced: Option<(Vec<(ShortcutTarget, Combo)>, bool)>,
+    /// The table, its held rows and the pause last synced.
+    synced: Option<Synced>,
     /// Delivered, run on the next frame.
     fired: Vec<ShortcutTarget>,
     pub(super) capture: Option<Capture>,
@@ -85,6 +132,14 @@ pub(super) struct Shortcuts {
     absent: HashMap<String, Vec<String>>,
     loads: Vec<(String, Pending<BackendResult<Vec<PlatformAccount>>>)>,
     lists_started: bool,
+    /// The runner hands the window's presses ([`Stroke`]): the capture
+    /// reads them, never egui's keys.
+    window_keys: bool,
+    /// The window's presses since the last frame, while a row listens.
+    strokes: Vec<Stroke>,
+    /// A press came without the means to bring the window back (Wayland
+    /// without an activation token).
+    no_raise: bool,
 }
 
 impl Shortcuts {
@@ -107,6 +162,8 @@ impl Shortcuts {
             } else if let Some((combo, trigger)) = entry.split_once('=') {
                 if let Some(combo) = Combo::parse(combo) {
                     fake.answer(combo, Outcome::Active(Some(trigger.to_string())));
+                    // A portal that keeps its trigger opens its settings.
+                    fake.set_configurable(true);
                 }
             } else if let Some(combo) = Combo::parse(entry) {
                 fake.take(combo);
@@ -150,6 +207,7 @@ impl Shortcuts {
     /// dropped, the combination being typed may be one of ours.
     fn listen(&mut self, target: ShortcutTarget) {
         self.fired.clear();
+        self.strokes.clear();
         self.capture = Some(Capture {
             target,
             unusable: false,
@@ -258,10 +316,27 @@ pub(super) enum Press {
     Set(Combo),
 }
 
-/// The first press of `events` that means something to a capture.
-/// `super_held`: the Super (Windows) key is down, which egui reports on
-/// macOS only.
-pub(super) fn read_press(events: &[Event], super_held: bool) -> Option<Press> {
+/// What a window press does to a capture.
+pub(super) fn read_stroke(stroke: &Stroke) -> Press {
+    match *stroke {
+        Stroke::Escape => Press::Cancel,
+        Stroke::Key {
+            key,
+            ctrl,
+            alt,
+            shift,
+            super_key,
+        } => match Combo::new(ctrl, alt, shift, super_key, key) {
+            Some(combo) => Press::Set(combo),
+            None => Press::Unusable,
+        },
+    }
+}
+
+/// The first press of `events` that means something to a capture, where
+/// no runner hands the window's presses (the scenes, the tests). egui
+/// reports Super on macOS only.
+pub(super) fn read_press(events: &[Event]) -> Option<Press> {
     for event in events {
         let Event::Key {
             key,
@@ -288,7 +363,7 @@ pub(super) fn read_press(events: &[Event], super_held: bool) -> Option<Press> {
         let Some(combo_key) = combo_key(typed) else {
             continue;
         };
-        let super_key = modifiers.mac_cmd || super_held;
+        let super_key = modifiers.mac_cmd;
         return Some(
             match Combo::new(
                 modifiers.ctrl,
@@ -317,6 +392,39 @@ impl AppModel {
     /// The mock run's registrar, to refuse a combination or read the ids.
     pub fn fake_registrar(&self) -> Option<&FakeRegistrar> {
         self.shortcuts.fake.as_ref()
+    }
+
+    /// Whether a row listens, so the runner hands it the window's presses.
+    pub fn capturing_shortcut(&self) -> bool {
+        self.shortcuts.capture.is_some()
+    }
+
+    /// A press in the window while a row listens, read on the next frame;
+    /// `None` for a key a shortcut cannot use. From the first one the
+    /// capture reads only these, never egui's keys.
+    pub fn shortcut_stroke(&mut self, ctx: &Context, stroke: Option<Stroke>) {
+        if self.shortcuts.capture.is_some() {
+            self.shortcuts.window_keys = true;
+            self.shortcuts.strokes.extend(stroke);
+            ctx.request_repaint();
+        }
+    }
+
+    /// A shortcut that brings the window came without the means to (a
+    /// Wayland compositor that gave no activation token): its rows say so.
+    pub fn hotkey_cannot_raise(&mut self, ctx: &Context) {
+        if !self.shortcuts.no_raise {
+            self.shortcuts.no_raise = true;
+            ctx.request_repaint();
+        }
+    }
+
+    /// Opens the system's settings of the bound shortcuts, where the user
+    /// changes a trigger the portal keeps.
+    pub(super) fn configure_shortcuts(&mut self) {
+        if let Some(service) = self.shortcuts.service.as_mut() {
+            service.configure();
+        }
     }
 
     /// The registrar changed on its own (the portal answered, or found its
@@ -389,9 +497,11 @@ impl AppModel {
         let Some(b) = self.booted.as_ref() else {
             return;
         };
-        let table: Vec<_> = shortcuts::bindings(&b.stores.settings().global_shortcuts)
-            .into_iter()
-            .filter(|(target, _)| !self.shortcuts.is_aside(target))
+        let table = shortcuts::bindings(&b.stores.settings().global_shortcuts);
+        let held: Vec<ShortcutTarget> = table
+            .iter()
+            .map(|(target, _)| target.clone())
+            .filter(|target| self.shortcuts.is_aside(target))
             .collect();
         let s = &mut self.shortcuts;
         if s.service.is_none() {
@@ -406,11 +516,11 @@ impl AppModel {
             s.service = Some(ShortcutService::new(registrar));
         }
         let paused = s.capture.is_some();
-        let state = (table, paused);
+        let state = (table, held, paused);
         if s.synced.as_ref() != Some(&state) {
             if let Some(service) = s.service.as_mut() {
                 service.set_paused(paused);
-                service.sync(&state.0);
+                service.sync_holding(&state.0, &state.1);
             }
             s.synced = Some(state);
             ctx.request_repaint();
@@ -518,30 +628,39 @@ impl AppModel {
         }
         let events = ctx.input(|i| i.events.clone());
         ctx.input_mut(|i| {
-            i.events
-                .retain(|e| !matches!(e, Event::Key { .. } | Event::Text(_) | Event::Paste(_)))
+            i.events.retain(|e| {
+                !matches!(
+                    e,
+                    Event::Key { .. } | Event::Text(_) | Event::Paste(_) | Event::Copy | Event::Cut
+                )
+            })
         });
-        let Some(press) = read_press(&events, crate::window::hotkeys::super_held()) else {
-            return;
+        let strokes = std::mem::take(&mut self.shortcuts.strokes);
+        let presses: Vec<Press> = if self.shortcuts.window_keys {
+            strokes.iter().map(read_stroke).collect()
+        } else {
+            read_press(&events).into_iter().collect()
         };
-        let Some(capture) = self.shortcuts.capture.as_mut() else {
-            return;
-        };
-        match press {
-            Press::Cancel => self.shortcuts.capture = None,
-            Press::Unusable => capture.unusable = true,
-            Press::Set(combo) => {
-                let target = capture.target.clone();
-                self.shortcuts.capture = None;
-                if let Some(b) = self.booted.as_mut() {
-                    edit_shortcuts(&mut b.stores, |s| {
-                        s.set(&target, Some(combo));
-                        true
-                    });
+        for press in presses {
+            let Some(capture) = self.shortcuts.capture.as_mut() else {
+                return;
+            };
+            match press {
+                Press::Cancel => self.shortcuts.capture = None,
+                Press::Unusable => capture.unusable = true,
+                Press::Set(combo) => {
+                    let target = capture.target.clone();
+                    self.shortcuts.capture = None;
+                    if let Some(b) = self.booted.as_mut() {
+                        edit_shortcuts(&mut b.stores, |s| {
+                            s.set(&target, Some(combo));
+                            true
+                        });
+                    }
                 }
             }
+            ctx.request_repaint();
         }
-        ctx.request_repaint();
     }
 
     /// A row's capture field: listens, or stops listening on a second click.
@@ -687,12 +806,23 @@ impl AppModel {
                             .as_deref()
                             .is_none_or(|asked| !same_trigger(asked, bound))
                     });
+                let configurable = trigger.is_some()
+                    && s.service
+                        .as_ref()
+                        .is_some_and(ShortcutService::configurable);
+                let no_raise = s.no_raise
+                    && matches!(
+                        target,
+                        ShortcutTarget::OpenPalette | ShortcutTarget::ToggleWindow
+                    );
                 ShortcutRow {
                     target: target.clone(),
                     name,
                     platform,
                     combo,
                     trigger,
+                    configurable,
+                    no_raise,
                     status,
                     duplicate,
                     listening: s.capture.as_ref().is_some_and(|c| c.target == *target),

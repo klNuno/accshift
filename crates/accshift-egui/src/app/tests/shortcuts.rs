@@ -6,7 +6,11 @@ use accshift_app::shortcuts::{Combo, ShortcutTarget};
 use egui::{pos2, vec2, Event, Modifiers, RawInput, Rect, ViewportId};
 use serde_json::json;
 
-use crate::app::shortcuts::{read_press, Press, Shortcuts, WindowOp, MOCK_COMMAND};
+use crate::app::settings_panel::SettingsAction;
+use crate::app::shortcuts::{
+    read_press, toggle_plan, Press, Shortcuts, Stroke, TogglePlan, WindowOp, MOCK_COMMAND,
+};
+use accshift_app::shortcuts::Key as ComboKey;
 
 const PIN_HASH: &str =
     "000102030405060708090a0b0c0d0e0f:e19d9507e40b77fbb7503faedce7cb4ebf8c6820a8b746d9dfa9fcab899ec65d";
@@ -284,7 +288,11 @@ fn stale_bindings_are_set_aside_once_their_lists_load() {
         .map(|(_, combo)| combo)
         .collect();
     assert!(registered.contains(&Combo::parse("Ctrl+Alt+1").unwrap()));
-    assert!(!registered.contains(&Combo::parse("Ctrl+Alt+3").unwrap()));
+    // Still in the table the OS holds (KDE drops the custom trigger of a
+    // shortcut a new batch leaves out), but it never fires.
+    assert!(registered.contains(&Combo::parse("Ctrl+Alt+3").unwrap()));
+    let held = id_of(&app, "Ctrl+Alt+3");
+    assert_eq!(app.hotkey(&ctx, held), WindowOp::None);
     let view = app.shortcuts_view();
     assert!(!view.rows.iter().any(|row| matches!(
         &row.target,
@@ -356,32 +364,207 @@ fn the_capture_keeps_the_typed_key_where_the_os_binds_symbols() {
         "Ctrl+Alt+A"
     };
     assert_eq!(
-        read_press(&events, false),
+        read_press(&events),
         Some(Press::Set(Combo::parse(expected).unwrap()))
     );
 }
 
-/// Super comes from the window's modifiers, which egui drops outside
-/// macOS: Super+K is usable and Ctrl+Super+K keeps its Super.
+fn stroke(key: ComboKey, ctrl: bool, alt: bool, shift: bool, super_key: bool) -> Option<Stroke> {
+    Some(Stroke::Key {
+        key,
+        ctrl,
+        alt,
+        shift,
+        super_key,
+    })
+}
+
+fn saved(app: &AppModel, target: &ShortcutTarget) -> Option<Combo> {
+    app.booted()
+        .unwrap()
+        .stores
+        .settings()
+        .global_shortcuts
+        .get(target)
+}
+
+/// In the window, each press keeps the modifiers held at that press: Super
+/// released before the frame does not leave Super+K without its Super, and
+/// the frame's egui keys (which lack Super) are not read.
 #[test]
-fn the_capture_takes_super_from_the_window_modifiers() {
-    let ctrl = Modifiers {
+fn the_capture_takes_super_from_each_press() {
+    let ctx = Context::default();
+    let (mut app, _) = app_with(&ctx, json!({}), "");
+    settle(&mut app, &ctx);
+    app.open_shortcut_capture(ShortcutTarget::OpenPalette);
+    frame(&mut app, &ctx);
+    app.shortcut_stroke(
+        &ctx,
+        stroke(ComboKey::Letter('K'), false, false, false, true),
+    );
+    frame_with(&mut app, &ctx, vec![key(egui::Key::K, Modifiers::NONE)]);
+    assert!(app.shortcuts.capture.is_none());
+    assert_eq!(
+        saved(&app, &ShortcutTarget::OpenPalette),
+        Combo::parse("Super+K")
+    );
+    app.open_shortcut_capture(ShortcutTarget::ToggleWindow);
+    frame(&mut app, &ctx);
+    app.shortcut_stroke(
+        &ctx,
+        stroke(ComboKey::Letter('K'), true, false, false, true),
+    );
+    frame(&mut app, &ctx);
+    assert_eq!(
+        saved(&app, &ShortcutTarget::ToggleWindow),
+        Combo::parse("Ctrl+Super+K")
+    );
+}
+
+/// egui-winit turns Ctrl+C into a copy and Shift+/ into a question mark:
+/// the window's presses keep both keys, and the frame's rewritten events
+/// reach neither the capture nor the app.
+#[test]
+fn the_capture_keeps_the_keys_egui_rewrites() {
+    let ctx = Context::default();
+    let (mut app, _) = app_with(&ctx, json!({}), "");
+    settle(&mut app, &ctx);
+    let ctrl_shift = Modifiers {
         ctrl: true,
+        shift: true,
         command: true,
         ..Modifiers::NONE
     };
-    assert_eq!(
-        read_press(&[key(egui::Key::K, ctrl)], true),
-        Some(Press::Set(Combo::parse("Ctrl+Super+K").unwrap()))
+    app.open_shortcut_capture(ShortcutTarget::OpenPalette);
+    frame(&mut app, &ctx);
+    app.shortcut_stroke(&ctx, stroke(ComboKey::Slash, true, false, true, false));
+    frame_with(
+        &mut app,
+        &ctx,
+        vec![key(egui::Key::Questionmark, ctrl_shift)],
     );
     assert_eq!(
-        read_press(&[key(egui::Key::K, Modifiers::NONE)], true),
-        Some(Press::Set(Combo::parse("Super+K").unwrap()))
+        saved(&app, &ShortcutTarget::OpenPalette),
+        Combo::new(true, false, true, false, ComboKey::Slash)
+    );
+    app.open_shortcut_capture(ShortcutTarget::ToggleWindow);
+    frame(&mut app, &ctx);
+    app.shortcut_stroke(
+        &ctx,
+        stroke(ComboKey::Letter('C'), true, false, false, false),
+    );
+    frame_with(&mut app, &ctx, vec![Event::Copy]);
+    assert_eq!(
+        saved(&app, &ShortcutTarget::ToggleWindow),
+        Combo::parse("Ctrl+C")
+    );
+}
+
+/// A refused press then a usable one before the frame: the usable one is
+/// saved, Escape among them cancels, a key no shortcut uses is skipped.
+#[test]
+fn the_capture_reads_every_press_of_a_frame_in_order() {
+    let ctx = Context::default();
+    let (mut app, _) = app_with(&ctx, json!({}), "");
+    settle(&mut app, &ctx);
+    app.open_shortcut_capture(ShortcutTarget::OpenPalette);
+    frame(&mut app, &ctx);
+    app.shortcut_stroke(&ctx, None);
+    app.shortcut_stroke(
+        &ctx,
+        stroke(ComboKey::Letter('K'), false, false, false, false),
+    );
+    app.shortcut_stroke(
+        &ctx,
+        stroke(ComboKey::Letter('K'), true, true, false, false),
+    );
+    frame(&mut app, &ctx);
+    assert_eq!(
+        saved(&app, &ShortcutTarget::OpenPalette),
+        Combo::parse("Ctrl+Alt+K")
+    );
+    app.open_shortcut_capture(ShortcutTarget::ToggleWindow);
+    frame(&mut app, &ctx);
+    app.shortcut_stroke(&ctx, Some(Stroke::Escape));
+    app.shortcut_stroke(
+        &ctx,
+        stroke(ComboKey::Letter('J'), true, true, false, false),
+    );
+    frame(&mut app, &ctx);
+    assert!(app.shortcuts.capture.is_none());
+    assert_eq!(saved(&app, &ShortcutTarget::ToggleWindow), None);
+}
+
+/// KDE hands no activation token: the toggle leaves a window in front where
+/// it is, since minimized it could not come back.
+#[test]
+fn the_toggle_keeps_a_wayland_window_it_could_not_bring_back() {
+    assert_eq!(toggle_plan(false, true, false), TogglePlan::Reveal);
+    assert_eq!(toggle_plan(true, true, false), TogglePlan::Keep);
+    assert_eq!(
+        toggle_plan(true, true, true),
+        TogglePlan::Away { can_hide: false }
     );
     assert_eq!(
-        read_press(&[key(egui::Key::K, Modifiers::NONE)], false),
-        Some(Press::Unusable)
+        toggle_plan(true, false, false),
+        TogglePlan::Away { can_hide: true }
     );
+}
+
+/// Once a press came without the means to bring the window, the two rows
+/// that bring it say so; an account row, whose switch needs no window,
+/// does not.
+#[test]
+fn the_rows_that_bring_the_window_say_when_the_system_forbids_it() {
+    let ctx = Context::default();
+    let (mut app, _) = app_with(
+        &ctx,
+        bound(json!({
+            "openPalette": "Ctrl+Alt+K",
+            "toggleWindow": "Ctrl+Alt+H",
+            "accounts": [{"platformId": "steam", "accountId": STEAM_OTHER, "keys": "Ctrl+Alt+1"}],
+        })),
+        "",
+    );
+    settle(&mut app, &ctx);
+    let no_raise = |app: &AppModel| -> Vec<bool> {
+        app.shortcuts_view()
+            .rows
+            .iter()
+            .map(|r| r.no_raise)
+            .collect()
+    };
+    assert_eq!(no_raise(&app), vec![false, false, false]);
+    app.hotkey_cannot_raise(&ctx);
+    assert_eq!(no_raise(&app), vec![true, true, false]);
+}
+
+/// KDE keeps the trigger it holds for a shortcut id and ignores a new
+/// preferred one: the row names that trigger and opens the system's
+/// settings, where the user changes it.
+#[test]
+fn a_trigger_the_portal_keeps_opens_the_system_settings() {
+    use accshift_app::shortcuts::Outcome;
+    let ctx = Context::default();
+    let (mut app, _) = app_with(&ctx, bound(json!({ "openPalette": "Ctrl+Alt+K" })), "");
+    settle(&mut app, &ctx);
+    app.fake_registrar().unwrap().answer(
+        Combo::parse("Ctrl+Alt+K").unwrap(),
+        Outcome::Active(Some("Meta+K".into())),
+    );
+    app.hotkeys_changed(&ctx);
+    let row = |app: &AppModel| {
+        app.shortcuts_view()
+            .rows
+            .into_iter()
+            .find(|r| r.target == ShortcutTarget::OpenPalette)
+            .unwrap()
+    };
+    assert!(!row(&app).configurable, "a layer that cannot open them");
+    app.fake_registrar().unwrap().set_configurable(true);
+    assert!(row(&app).configurable);
+    app.apply_settings(&ctx, SettingsAction::ShortcutConfigure);
+    assert_eq!(app.fake_registrar().unwrap().configured(), 1);
 }
 
 #[test]

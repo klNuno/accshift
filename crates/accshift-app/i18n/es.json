@@ -122,6 +122,8 @@
   "settings.shortcutsFailed": "El sistema rechazó esta combinación.",
   "settings.shortcutsPending": "Esperando la confirmación del sistema.",
   "settings.shortcutsBoundTo": "El sistema lo asignó a {trigger}.",
+  "settings.shortcutsConfigure": "Cámbialo en los ajustes del sistema",
+  "settings.shortcutsNoRaise": "Este sistema no permite que accshift traiga su ventana al frente.",
   "settings.shortcutsUnusable": "Añade Ctrl, Alt o Super, o usa una tecla de función.",
   "settings.shortcutsCancelHint": "Esc cancela.",
   "settings.shortcutsItems": "Cuentas y personas",

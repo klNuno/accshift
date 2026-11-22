@@ -98,6 +98,8 @@ pub enum SettingsAction {
     ShortcutListen(accshift_app::shortcuts::ShortcutTarget),
     /// A shortcut's clear button.
     ShortcutClear(accshift_app::shortcuts::ShortcutTarget),
+    /// The link to the system's own settings of the shortcuts (the portal).
+    ShortcutConfigure,
     SelectTab(String),
     OpenHelp,
     OpenLogs,

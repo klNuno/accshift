@@ -5,7 +5,8 @@
 //! card     title, an "i" when closing the app stops the shortcuts
 //!   row    the name (and the platform) as a field label, the combination
 //!          box under it with its clear button, a line under it for a
-//!          conflict
+//!          conflict, and a link to the system's settings when the portal
+//!          keeps a trigger of its own
 //! ```
 //!
 //! The combination box listens on a click ([`SettingsAction::ShortcutListen`]):
@@ -79,6 +80,12 @@ pub struct ShortcutRow {
     pub combo: Option<String>,
     /// The trigger the system bound instead, when it differs (the portal).
     pub trigger: Option<String>,
+    /// The system can open its own settings of the shortcuts, where the
+    /// user changes [`Self::trigger`].
+    pub configurable: bool,
+    /// The shortcut brings the window, which this system does not let the
+    /// app do (Wayland without an activation token).
+    pub no_raise: bool,
     pub status: Option<RowStatus>,
     pub duplicate: Option<DuplicateOf>,
     pub listening: bool,
@@ -159,6 +166,11 @@ pub(super) fn cards(c: &Ctx) -> Vec<CardSpec> {
     ]
 }
 
+/// The row shows the link to the system's settings.
+fn configures(row: &ShortcutRow) -> bool {
+    row.configurable && !row.listening && row.status == Some(RowStatus::Active)
+}
+
 /// The line under a row: what went wrong, or what the listening row wants.
 fn note(c: &Ctx, row: &ShortcutRow) -> Option<(String, bool)> {
     let l = c.locale;
@@ -185,6 +197,7 @@ fn note(c: &Ctx, row: &ShortcutRow) -> Option<(String, bool)> {
             )
         }
         RowStatus::Pending => return Some((tr(l, "settings.shortcutsPending"), false)),
+        RowStatus::Active if row.no_raise => tr(l, "settings.shortcutsNoRaise"),
         RowStatus::Active => {
             let trigger = row.trigger.as_ref()?;
             let text = translate_with(
@@ -208,12 +221,17 @@ pub(super) fn height(ctx: &Context, c: &Ctx, item: &Item, width: f32) -> f32 {
                 return 0.0;
             };
             let base = LABEL_H + FIELD_GAP + text_input::height(ppp);
-            match note(c, row) {
+            let base = match note(c, row) {
                 Some((text, _)) => {
                     base + NOTE_GAP
                         + measure::wrapped_height(ctx, &text, &hint_style(&c.view.vars), width)
                 }
                 None => base,
+            };
+            if configures(row) {
+                base + NOTE_GAP + LABEL_H
+            } else {
+                base
             }
         }
     }
@@ -362,6 +380,7 @@ fn paint_row(ui: &mut Ui, r: Rect, id: Id, c: &Ctx, row: &ShortcutRow) -> Vec<Se
         }
     }
 
+    let mut bottom = line.bottom();
     if let Some((text, danger)) = note(c, row) {
         let mut style = hint_style(v);
         if danger {
@@ -369,13 +388,30 @@ fn paint_row(ui: &mut Ui, r: Rect, id: Id, c: &Ctx, row: &ShortcutRow) -> Vec<Se
         }
         text::paint(
             ui.painter(),
-            Rect::from_min_size(
-                pos2(line.left(), line.bottom() + NOTE_GAP),
-                vec2(r.width(), 0.0),
-            ),
+            Rect::from_min_size(pos2(line.left(), bottom + NOTE_GAP), vec2(r.width(), 0.0)),
             &text,
             &style,
         );
+        bottom += NOTE_GAP + measure::wrapped_height(ui.ctx(), &text, &style, r.width());
+    }
+    if configures(row) {
+        let link = button::link_style(v);
+        let label = tr(l, "settings.shortcutsConfigure");
+        let w = text::measure(ui.ctx(), &label, &link.font)
+            .unwrap_or(0.0)
+            .min(r.width());
+        let rect = Rect::from_min_size(pos2(line.left(), bottom + NOTE_GAP), vec2(w, LABEL_H));
+        let props = ButtonProps {
+            label: &label,
+            aria_label: None,
+            style: &link,
+            enabled: true,
+            vars: v,
+            focus: c.focus,
+        };
+        if button::button(ui, rect, id.with("configure"), &props) {
+            out.push(SettingsAction::ShortcutConfigure);
+        }
     }
     out
 }

@@ -122,6 +122,8 @@
   "settings.shortcutsFailed": "Le système a refusé cette combinaison.",
   "settings.shortcutsPending": "En attente de la confirmation du système.",
   "settings.shortcutsBoundTo": "Le système l'a lié à {trigger}.",
+  "settings.shortcutsConfigure": "Le modifier dans les réglages du système",
+  "settings.shortcutsNoRaise": "Ce système ne laisse pas accshift ramener sa fenêtre au premier plan.",
   "settings.shortcutsUnusable": "Ajoutez Ctrl, Alt ou Super, ou utilisez une touche de fonction.",
   "settings.shortcutsCancelHint": "Échap annule.",
   "settings.shortcutsItems": "Comptes et personas",

@@ -60,6 +60,7 @@ impl AppModel {
         match action {
             SettingsAction::ShortcutListen(target) => return self.listen_shortcut(target),
             SettingsAction::ShortcutClear(target) => return self.clear_shortcut(&target),
+            SettingsAction::ShortcutConfigure => return self.configure_shortcuts(),
             _ => {}
         }
         let jobs = &self.jobs;
@@ -70,7 +71,8 @@ impl AppModel {
             SettingsAction::Close
             | SettingsAction::ReplayOnboarding
             | SettingsAction::ShortcutListen(_)
-            | SettingsAction::ShortcutClear(_) => {}
+            | SettingsAction::ShortcutClear(_)
+            | SettingsAction::ShortcutConfigure => {}
             SettingsAction::SelectTab(id) => panel.select_tab(jobs, id),
             SettingsAction::OpenHelp => panel.open_help_page(jobs, WIKI_URL),
             SettingsAction::OpenLogs => {

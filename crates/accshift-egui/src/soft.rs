@@ -206,6 +206,11 @@ struct Live {
     stage: Vec<[u8; 4]>,
     /// The held modifiers, for the keys egui-winit drops.
     modifiers: egui::Modifiers,
+    /// winit's held modifiers, for a shortcut capture's presses.
+    held: winit::keyboard::ModifiersState,
+    /// Raises the window with a Wayland activation token.
+    #[cfg(target_os = "linux")]
+    raiser: crate::window::wayland::Raiser,
     shown: bool,
     /// The bench's scripted wheel and keys, from the first shown frame.
     script: Option<bench::Script>,
@@ -659,7 +664,11 @@ impl Runner {
     /// Show and focus the window again from the tray or a shortcut.
     /// `token`: the compositor's activation token of the press, which a
     /// Wayland window needs to come back (winit cannot raise it there).
-    fn reveal(&mut self, token: Option<&str>) {
+    /// False when it could not: Wayland without a token, or without
+    /// xdg-activation.
+    fn reveal(&mut self, token: Option<&str>) -> bool {
+        #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+        let mut raised = true;
         if let Some(live) = &mut self.live {
             live.window.set_visible(true);
             if live.window.is_minimized() == Some(true) {
@@ -667,36 +676,42 @@ impl Runner {
             }
             live.window.focus_window();
             #[cfg(target_os = "linux")]
-            if let Some(token) = token {
-                crate::window::wayland::activate(&*live.window, token);
+            if crate::window::wayland::is_wayland(&*live.window) {
+                raised = token.is_some_and(|token| live.raiser.raise(&*live.window, token));
             }
             #[cfg(not(target_os = "linux"))]
             let _ = token;
             live.shown = true;
         }
         self.heal();
+        raised
     }
 
     /// The show/hide shortcut: a window in front hides, to the tray when the
     /// app uses one (close to tray, a `--tray` launch), else minimized; any
     /// other window comes back to the front. Wayland cannot hide a window
     /// nor tell it is minimized: there it minimizes, and a window without
-    /// the focus counts as away.
-    fn toggle_window(&mut self, token: Option<&str>) {
-        let Some(live) = &self.live else { return };
+    /// the focus counts as away; a press without an activation token (KDE)
+    /// leaves it, as nothing could bring it back
+    /// ([`toggle_plan`](crate::app::shortcuts::toggle_plan)). False
+    /// when the window could not be brought or kept within reach.
+    fn toggle_window(&mut self, token: Option<&str>) -> bool {
+        use crate::app::shortcuts::{toggle_plan, TogglePlan};
+        let Some(live) = &self.live else { return true };
         let window = &live.window;
         let in_front = live.shown
             && window.is_visible() != Some(false)
             && window.is_minimized() != Some(true)
             && window.has_focus();
-        if !in_front {
-            self.reveal(token);
-            return;
-        }
         #[cfg(target_os = "linux")]
-        let can_hide = !crate::window::wayland::is_wayland(&**window);
+        let wayland = crate::window::wayland::is_wayland(&**window);
         #[cfg(not(target_os = "linux"))]
-        let can_hide = true;
+        let wayland = false;
+        let can_hide = match toggle_plan(in_front, wayland, token.is_some()) {
+            TogglePlan::Reveal => return self.reveal(token),
+            TogglePlan::Keep => return false,
+            TogglePlan::Away { can_hide } => can_hide,
+        };
         if can_hide && self.tray.is_none() && live.shell.wants_close_to_tray() {
             self.ensure_tray();
         }
@@ -707,6 +722,7 @@ impl Runner {
                 live.window.set_minimized(true);
             }
         }
+        true
     }
 
     /// The title bar's close button or the system's (Alt+F4, the taskbar):
@@ -901,7 +917,7 @@ fn context_menu_key(live: &mut Live, event: &WindowEvent) -> bool {
         WindowEvent::ModifiersChanged(held) => {
             // As egui-winit reads them.
             let held = held.state();
-            crate::window::hotkeys::set_super_held(held.super_key());
+            live.held = held;
             let mac = cfg!(target_os = "macos");
             live.modifiers = egui::Modifiers {
                 alt: held.alt_key(),
@@ -1035,6 +1051,9 @@ impl ApplicationHandler<UserEvent> for Runner {
             stage_zoom: 1.0,
             stage: Vec::new(),
             modifiers: egui::Modifiers::NONE,
+            held: winit::keyboard::ModifiersState::empty(),
+            #[cfg(target_os = "linux")]
+            raiser: Default::default(),
             shown: false,
             script: None,
         });
@@ -1084,7 +1103,9 @@ impl ApplicationHandler<UserEvent> for Runner {
                 }
             }
             UserEvent::Tray(action) => match action {
-                TrayAction::Open => self.reveal(None),
+                TrayAction::Open => {
+                    self.reveal(None);
+                }
                 TrayAction::Quit => self.close(event_loop),
             },
             UserEvent::Hotkey(Signal::Changed) => {
@@ -1095,10 +1116,15 @@ impl ApplicationHandler<UserEvent> for Runner {
             UserEvent::Hotkey(Signal::Pressed { id, token }) => {
                 use crate::app::shortcuts::WindowOp;
                 let Some(live) = &mut self.live else { return };
-                match live.shell.hotkey(&self.ctx, id) {
-                    WindowOp::None => {}
+                let raised = match live.shell.hotkey(&self.ctx, id) {
+                    WindowOp::None => true,
                     WindowOp::Reveal => self.reveal(token.as_deref()),
                     WindowOp::Toggle => self.toggle_window(token.as_deref()),
+                };
+                if !raised {
+                    if let Some(live) = &mut self.live {
+                        live.shell.hotkey_cannot_raise(&self.ctx);
+                    }
                 }
                 self.repaint_at(Instant::now());
             }
@@ -1146,6 +1172,18 @@ impl ApplicationHandler<UserEvent> for Runner {
         #[cfg(target_os = "linux")]
         if edge_press(live, &event) {
             return;
+        }
+        // A listening shortcut row reads the press as winit gives it, before
+        // egui-winit rewrites it ([`crate::window::keystroke`]).
+        if let WindowEvent::KeyboardInput { event: key, .. } = &event {
+            if key.state.is_pressed() && !key.repeat && live.shell.capturing_shortcut() {
+                let stroke = crate::window::keystroke::stroke(
+                    key,
+                    live.held,
+                    crate::window::hotkeys::super_at_press(),
+                );
+                live.shell.shortcut_stroke(&self.ctx, stroke);
+            }
         }
         let response = live.state.on_window_event(&live.window, &event);
         let menu_key = context_menu_key(live, &event);

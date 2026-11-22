@@ -7,7 +7,7 @@ use accshift_app::shortcuts::{Availability, Combo, RegisterError, Registrar, Sho
 use windows_sys::Win32::Foundation::{GetLastError, HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, RegisterHotKey, UnregisterHotKey, VK_LWIN, VK_RWIN,
+    GetKeyState, RegisterHotKey, UnregisterHotKey, VK_LWIN, VK_RWIN,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindowLongPtrW, RegisterClassW,
@@ -144,10 +144,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
     DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
-/// Either Windows key is down now.
+/// Either Windows key was down at the message the UI thread is handling:
+/// the state as of that press, not as of now.
 pub fn super_held() -> bool {
-    // SAFETY: no pointer; the high bit is the key's current state.
-    unsafe { GetAsyncKeyState(VK_LWIN as i32) < 0 || GetAsyncKeyState(VK_RWIN as i32) < 0 }
+    // SAFETY: no pointer; the high bit is the key's state at the message.
+    unsafe { GetKeyState(VK_LWIN as i32) < 0 || GetKeyState(VK_RWIN as i32) < 0 }
 }
 
 fn wide(text: &str) -> Vec<u16> {

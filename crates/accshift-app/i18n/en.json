@@ -122,6 +122,8 @@
   "settings.shortcutsFailed": "The system refused this combination.",
   "settings.shortcutsPending": "Waiting for the system to confirm.",
   "settings.shortcutsBoundTo": "The system bound it to {trigger}.",
+  "settings.shortcutsConfigure": "Change it in the system settings",
+  "settings.shortcutsNoRaise": "This system does not let accshift bring its window to the front.",
   "settings.shortcutsUnusable": "Add Ctrl, Alt or Super, or use a function key.",
   "settings.shortcutsCancelHint": "Esc cancels.",
   "settings.shortcutsItems": "Accounts and personas",

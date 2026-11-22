@@ -69,6 +69,26 @@ impl Shell {
         }
     }
 
+    /// Whether a shortcut row listens for a combination.
+    pub fn capturing_shortcut(&self) -> bool {
+        matches!(&self.screen, Screen::App(app) if app.capturing_shortcut())
+    }
+
+    /// A press in the window for the listening shortcut row; `None` for a
+    /// key a shortcut cannot use.
+    pub fn shortcut_stroke(&mut self, ctx: &egui::Context, stroke: Option<app::shortcuts::Stroke>) {
+        if let Screen::App(app) = &mut self.screen {
+            app.shortcut_stroke(ctx, stroke);
+        }
+    }
+
+    /// A shortcut could not bring the window to the front.
+    pub fn hotkey_cannot_raise(&mut self, ctx: &egui::Context) {
+        if let Screen::App(app) = &mut self.screen {
+            app.hotkey_cannot_raise(ctx);
+        }
+    }
+
     /// A global shortcut fired: what the window does now.
     pub fn hotkey(&mut self, ctx: &egui::Context, id: u32) -> app::shortcuts::WindowOp {
         match &mut self.screen {

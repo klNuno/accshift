@@ -122,6 +122,8 @@
   "settings.shortcutsFailed": "系统拒绝了此组合键。",
   "settings.shortcutsPending": "正在等待系统确认。",
   "settings.shortcutsBoundTo": "系统已将其绑定到 {trigger}。",
+  "settings.shortcutsConfigure": "在系统设置中更改",
+  "settings.shortcutsNoRaise": "此系统不允许 accshift 将窗口置于前台。",
   "settings.shortcutsUnusable": "请加上 Ctrl、Alt 或 Super，或使用功能键。",
   "settings.shortcutsCancelHint": "按 Esc 取消。",
   "settings.shortcutsItems": "账户和角色",

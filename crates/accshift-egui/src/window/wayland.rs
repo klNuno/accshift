@@ -5,13 +5,16 @@
 //! user action. The GlobalShortcuts portal hands one with each press.
 //!
 //! The request goes on winit's own Wayland connection, through a queue of
-//! our own, so the surface is the one winit drew.
+//! our own, so the surface is the one winit drew. The registry and the
+//! xdg-activation proxy are made once, at the first raise, and kept for the
+//! window's life: a registry per raise would stay with the compositor until
+//! the connection closes.
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use wayland_client::backend::{Backend, ObjectId};
-use wayland_client::globals::{registry_queue_init, GlobalListContents};
+use wayland_client::globals::{registry_queue_init, GlobalList, GlobalListContents};
 use wayland_client::protocol::{wl_registry, wl_surface::WlSurface};
-use wayland_client::{delegate_noop, Connection, Dispatch, Proxy, QueueHandle};
+use wayland_client::{delegate_noop, Connection, Dispatch, EventQueue, Proxy, QueueHandle};
 use wayland_protocols::xdg::activation::v1::client::xdg_activation_v1::XdgActivationV1;
 
 /// The window draws on a Wayland surface.
@@ -38,37 +41,83 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
 
 delegate_noop!(State: XdgActivationV1);
 
-/// Asks the compositor to raise `window` with `token`. `false` when the
-/// window is not a Wayland surface or the compositor lacks xdg-activation.
-pub fn activate(window: &(impl HasDisplayHandle + HasWindowHandle), token: &str) -> bool {
-    let (Ok(display), Ok(handle)) = (window.display_handle(), window.window_handle()) else {
-        return false;
-    };
-    let (RawDisplayHandle::Wayland(display), RawWindowHandle::Wayland(handle)) =
-        (display.as_raw(), handle.as_raw())
-    else {
-        return false;
-    };
-    // SAFETY: winit's display and surface outlive this call, which keeps no
-    // reference past its end.
-    let conn = Connection::from_backend(unsafe {
-        Backend::from_foreign_display(display.display.as_ptr().cast())
-    });
-    let Ok(surface) =
-        (unsafe { ObjectId::from_ptr(WlSurface::interface(), handle.surface.as_ptr().cast()) })
-    else {
-        return false;
-    };
-    let Ok(surface) = WlSurface::from_id(&conn, surface) else {
-        return false;
-    };
-    let Ok((globals, queue)) = registry_queue_init::<State>(&conn) else {
-        return false;
-    };
-    let Ok(activation) = globals.bind::<XdgActivationV1, _, _>(&queue.handle(), 1..=1, ()) else {
-        return false;
-    };
-    activation.activate(token.to_string(), &surface);
-    activation.destroy();
-    conn.flush().is_ok()
+/// The xdg-activation binding of one window, made at its first raise.
+#[derive(Default)]
+pub struct Raiser {
+    tried: bool,
+    activator: Option<Activator>,
+}
+
+impl Raiser {
+    /// Asks the compositor to raise `window` with `token`. `false` when the
+    /// window is not a Wayland surface or the compositor lacks
+    /// xdg-activation.
+    pub fn raise(
+        &mut self,
+        window: &(impl HasDisplayHandle + HasWindowHandle),
+        token: &str,
+    ) -> bool {
+        if !self.tried {
+            self.tried = true;
+            self.activator = Activator::new(window);
+        }
+        self.activator
+            .as_mut()
+            .is_some_and(|activator| activator.activate(token))
+    }
+}
+
+struct Activator {
+    conn: Connection,
+    queue: EventQueue<State>,
+    _globals: GlobalList,
+    activation: XdgActivationV1,
+    surface: WlSurface,
+}
+
+impl Activator {
+    fn new(window: &(impl HasDisplayHandle + HasWindowHandle)) -> Option<Self> {
+        let (Ok(display), Ok(handle)) = (window.display_handle(), window.window_handle()) else {
+            return None;
+        };
+        let (RawDisplayHandle::Wayland(display), RawWindowHandle::Wayland(handle)) =
+            (display.as_raw(), handle.as_raw())
+        else {
+            return None;
+        };
+        // SAFETY: winit's display and surface outlive the window, which
+        // owns this; the foreign backend never closes winit's connection.
+        let conn = Connection::from_backend(unsafe {
+            Backend::from_foreign_display(display.display.as_ptr().cast())
+        });
+        let surface =
+            unsafe { ObjectId::from_ptr(WlSurface::interface(), handle.surface.as_ptr().cast()) }
+                .ok()?;
+        let surface = WlSurface::from_id(&conn, surface).ok()?;
+        let (globals, queue) = registry_queue_init::<State>(&conn).ok()?;
+        let activation = globals
+            .bind::<XdgActivationV1, _, _>(&queue.handle(), 1..=1, ())
+            .ok()?;
+        Some(Self {
+            conn,
+            queue,
+            _globals: globals,
+            activation,
+            surface,
+        })
+    }
+
+    fn activate(&mut self, token: &str) -> bool {
+        // Registry events since the last raise: drained, not kept.
+        let _ = self.queue.dispatch_pending(&mut State);
+        self.activation.activate(token.to_string(), &self.surface);
+        self.conn.flush().is_ok()
+    }
+}
+
+impl Drop for Activator {
+    fn drop(&mut self) {
+        self.activation.destroy();
+        let _ = self.conn.flush();
+    }
 }

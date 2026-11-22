@@ -122,6 +122,8 @@
   "settings.shortcutsFailed": "Система отклонила это сочетание.",
   "settings.shortcutsPending": "Ожидание подтверждения системы.",
   "settings.shortcutsBoundTo": "Система назначила сочетание {trigger}.",
+  "settings.shortcutsConfigure": "Изменить в настройках системы",
+  "settings.shortcutsNoRaise": "Эта система не позволяет accshift выводить окно на передний план.",
   "settings.shortcutsUnusable": "Добавьте Ctrl, Alt или Super либо используйте функциональную клавишу.",
   "settings.shortcutsCancelHint": "Esc отменяет.",
   "settings.shortcutsItems": "Аккаунты и персоны",
