@@ -48,8 +48,8 @@ fn reason_key(kind: TcNoWarningKind) -> &'static str {
     }
 }
 
-/// What was left out, one count per reason in the order they first came;
-/// the details are in the app log. `None` without warnings.
+/// What was left out, one count per reason in the order they first came.
+/// `None` without warnings.
 fn tcno_warnings(warnings: &[TcNoWarning], locale: Locale) -> Option<String> {
     let mut counts: Vec<(TcNoWarningKind, usize)> = Vec::new();
     for warning in warnings {
@@ -75,9 +75,13 @@ fn tcno_warnings(warnings: &[TcNoWarning], locale: Locale) -> Option<String> {
     )
 }
 
-/// `text`, then what was left out.
-fn with_warnings(text: String, warnings: &[TcNoWarning], locale: Locale) -> String {
+/// `text`, then what was left out; once `logged`, where it is detailed.
+fn with_warnings(text: String, warnings: &[TcNoWarning], locale: Locale, logged: bool) -> String {
     match tcno_warnings(warnings, locale) {
+        Some(left_out) if logged => {
+            let logs = accshift_app::i18n::translate(locale, "settings.tcnoWarningsLogged");
+            format!("{text} {left_out} {logs}")
+        }
         Some(left_out) => format!("{text} {left_out}"),
         None => text,
     }
@@ -89,6 +93,7 @@ pub fn tcno_nothing(warnings: &[TcNoWarning], locale: Locale) -> String {
         accshift_app::i18n::translate(locale, "settings.tcnoNothing"),
         warnings,
         locale,
+        false,
     )
 }
 
@@ -128,7 +133,7 @@ pub fn tcno_report(report: &TcNoImportReport, locale: Locale) -> String {
         ],
     )
     .resolve(locale);
-    with_warnings(text, &report.warnings, locale)
+    with_warnings(text, &report.warnings, locale, true)
 }
 
 #[cfg(test)]
@@ -265,6 +270,8 @@ mod tests {
             assert!(!text.contains('{'), "{locale:?}: {text}");
             assert_eq!(text.matches('1').count(), kinds.len(), "{locale:?}: {text}");
         }
+        // Only the import writes the log.
+        assert!(!tcno_nothing(&warnings, Locale::En).contains("logs"));
         assert_eq!(
             tcno_nothing(&[], Locale::En),
             accshift_app::i18n::translate(Locale::En, "settings.tcnoNothing")
