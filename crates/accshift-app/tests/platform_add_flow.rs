@@ -573,3 +573,36 @@ fn roblox_offers_the_quick_login_code() {
     );
     rig.flow.stop();
 }
+
+/// The core's "Stay signed in" message showed in English in a French app;
+/// the card shows its translation, and any other core message as is.
+#[test]
+fn riot_translates_the_stay_signed_in_message() {
+    let mut rig = Rig::new("riot");
+    let mut started = status("riot-1", "waiting_for_login");
+    started.error_message = Some(accshift_core::platforms::riot::SETUP_NOT_PERSISTED.into());
+    rig.with_ctx(0, |flow, ctx, _| flow.start(ctx, "riot", started));
+    let content = rig
+        .flow
+        .setup_extension_content("riot-1", Locale::default())
+        .unwrap();
+    assert_eq!(
+        content.sections[0].text,
+        Some(Text::key("riot.setupNotPersisted"))
+    );
+    rig.flow.stop();
+
+    let mut rig = Rig::new("riot");
+    let mut started = status("riot-2", "waiting_for_login");
+    started.error_message = Some("Riot Client closed".into());
+    rig.with_ctx(0, |flow, ctx, _| flow.start(ctx, "riot", started));
+    let content = rig
+        .flow
+        .setup_extension_content("riot-2", Locale::default())
+        .unwrap();
+    assert_eq!(
+        content.sections[0].text,
+        Some(Text::raw("Riot Client closed"))
+    );
+    rig.flow.stop();
+}

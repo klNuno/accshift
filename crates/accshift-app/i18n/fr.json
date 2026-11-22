@@ -432,6 +432,7 @@
   "riot.setupFailed": "Échec de la configuration Riot",
   "riot.setupFailedMessage": "Accshift n'a pas pu finaliser l'ajout de ce compte Riot.",
   "riot.setupStaySignedIn": "Garde 'Rester connecté' activé.",
+  "riot.setupNotPersisted": "Coche 'Rester connecté' dans le client Riot, puis déconnecte-toi et reconnecte-toi.",
   "riot.setupDetected": "Compte détecté",
   "riot.setupConnected": "Connecté",
   "riot.forget": "Oublier le compte",

@@ -134,11 +134,18 @@ pub(super) fn relaunch_after_quit(
     work.and(launched)
 }
 
-/// Whether the login is kept ("Stay signed in"). The API's bool decides when
-/// there is one, an explicit `false` included; without one (a PSL client
-/// leaves the legacy flag null) a PSL refresh token in the file proves it.
+/// The setup poll's message while the client is signed in without keeping
+/// the login. The app shows its own translation for it.
+pub const SETUP_NOT_PERSISTED: &str =
+    "Check 'Stay signed in' in the Riot Client, then sign out and sign back in.";
+
+/// Whether the login is kept ("Stay signed in"): the API says so, or the
+/// settings file holds a PSL refresh token. The token wins over an API
+/// `false`: a Google sign-in with the box ticked answers `persistLogin:
+/// false`, and the setup cleared the live session first, so the token comes
+/// from this login. An unticked box writes no token.
 pub(super) fn setup_login_persisted(login: &RiotLoginState, settings: RiotSettingsState) -> bool {
-    login.persist.unwrap_or(settings.psl_login)
+    login.persist == Some(true) || settings.psl_login
 }
 
 /// The setup captures once the client is signed in, the login is kept and
@@ -246,10 +253,25 @@ pub(super) fn spawn_riot_setup_launch(
             &profile_id,
             crate::platforms::SETUP_LAUNCH_LOCK_TIMEOUT,
             || {
+                let started = std::time::Instant::now();
                 let prepared = prepare_clean_riot_launch(client_path.parent());
+                let quit_ms = started.elapsed().as_millis();
                 // Relaunch even when the clear stopped halfway, so the client
                 // is not left closed. The failure still fails the setup.
-                relaunch_after_quit(prepared, || launch_riot_client(&client_path))
+                let launched = relaunch_after_quit(prepared, || launch_riot_client(&client_path));
+                // The quit waits up to 8 s for the old client; the poll's
+                // `lockfile=true` line then dates the new client's start.
+                log_platform_info(
+                    &app_handle,
+                    "riot.setup_launch",
+                    "Riot setup launch",
+                    format!(
+                        "quit_ms={quit_ms} total_ms={} ok={}",
+                        started.elapsed().as_millis(),
+                        launched.is_ok()
+                    ),
+                );
+                launched
             },
         );
     });
@@ -422,10 +444,7 @@ pub(super) fn get_profile_setup_status_internal(
         let (state, error_msg) = if !has_lockfile {
             ("waiting_for_client", "")
         } else if login_state.logged_in && !persisted {
-            (
-                "waiting_for_login",
-                "Check 'Stay signed in' in the Riot Client, then sign out and sign back in.",
-            )
+            ("waiting_for_login", SETUP_NOT_PERSISTED)
         } else {
             ("waiting_for_login", "")
         };

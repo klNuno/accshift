@@ -712,6 +712,8 @@ fn setup_extension(flow: &AddFlowEntry, locale: Locale) -> Option<SetupExtension
         ("riot", _) => {
             let first = if error.is_empty() {
                 section_text(Text::key("riot.setupWaitingForLogin"), true)
+            } else if error == accshift_core::platforms::riot::SETUP_NOT_PERSISTED {
+                section_text(Text::key("riot.setupNotPersisted"), false)
             } else {
                 section_text(Text::raw(error), false)
             };
