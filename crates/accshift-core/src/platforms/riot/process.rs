@@ -272,11 +272,6 @@ pub(super) struct QuitIo<'a> {
 /// or the process doesn't exit within the timeout. An error means a client
 /// process survived both (an elevated or hung client), or the League guard
 /// refused.
-pub(super) fn graceful_riot_quit() -> Result<(), String> {
-    graceful_riot_quit_checked().map_err(String::from)
-}
-
-/// [`graceful_riot_quit`], telling a refusal before anything was closed apart.
 pub(super) fn graceful_riot_quit_checked() -> Result<(), CloseError> {
     let guard = || ensure_league_not_in_protected_phase("closing Riot Client");
     let request_quit = request_riot_quit;
