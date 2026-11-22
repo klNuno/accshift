@@ -93,6 +93,10 @@ pub fn begin_frame(ctx: &Context, stage: f32, raw: &RawInput) {
     ctx.data_mut(|d| {
         d.insert_temp(Id::unique(STAGE), stage);
         d.insert_temp(Id::unique(FRAME_INPUT), input);
+        // `None` is egui's "same as last frame" (`InputState::begin_pass`
+        // keeps its rect; egui-winit sends it while minimized): the window
+        // kept its size, in base points whatever the zoom. Dropping it would
+        // fall back to `content_rect`, which a pending zoom has rescaled.
         if let Some(window) = window {
             d.insert_temp(Id::unique(WINDOW), window);
         }
@@ -286,6 +290,19 @@ pub fn resample(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_frame_without_a_screen_rect_keeps_the_window_size() {
+        let ctx = Context::default();
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 680.0));
+        let sized = RawInput {
+            screen_rect: Some(rect),
+            ..Default::default()
+        };
+        begin_frame(&ctx, 1.0, &sized);
+        begin_frame(&ctx, 1.0, &RawInput::default());
+        assert_eq!(viewport(&ctx), egui::vec2(1000.0, 680.0));
+    }
 
     #[test]
     fn stage_size_rounds_up() {
