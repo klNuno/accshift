@@ -1387,3 +1387,43 @@ fn a_reload_that_finds_the_locked_descriptor_gone_drops_its_platform() {
         b.nav.active_tab
     );
 }
+
+#[test]
+fn a_reload_that_finds_the_active_tab_descriptor_gone_loads_the_fallback_tab() {
+    // Regression (TAB_LOADER): the active tab's descriptor was deleted
+    // while another stayed locked; once the reload read every descriptor,
+    // the fallback tab showed with the old tab's account loader.
+    let ctx = Context::default();
+    let descriptor: Value = serde_json::from_str(DESCRIPTOR).unwrap();
+    let (mut app, _mock) = restore_app_with(&ctx, move |commands| {
+        let boot = &mut commands["get_boot_payload"][0]["result"];
+        boot["userPlatforms"]["loaded"] = json!([descriptor]);
+        boot["userPlatforms"]["incomplete"] = json!(true);
+        let settings = &mut boot["storageSnapshot"]["stores"]["client.settings"];
+        settings["enabledPlatforms"] = json!(["steam", "egui-fixture"]);
+        settings["defaultPlatformId"] = json!("egui-fixture");
+        commands["reload_user_platforms"][0]["result"]["loaded"] = json!([]);
+    });
+    assert_eq!(app.booted().unwrap().nav.active_tab, "egui-fixture");
+    frame(&mut app, &ctx);
+    settle_accounts(&mut app, &ctx);
+    app.toggle_settings_panel();
+    pump_until(&mut app, &ctx, |a| {
+        a.settings_panel.as_ref().is_some_and(|p| p.hydrated)
+    });
+    app.apply_settings(&ctx, SettingsAction::ReloadDescriptors);
+    pump_until(&mut app, &ctx, |a| {
+        a.booted()
+            .unwrap()
+            .user_platforms
+            .as_ref()
+            .is_some_and(|r| !r.incomplete)
+    });
+    let b = app.booted().unwrap();
+    assert_eq!(b.nav.active_tab, "steam");
+    assert_eq!(
+        b.accounts.loading.loader.adapter_id(),
+        Some("steam"),
+        "TAB_LOADER: the fallback tab kept the old tab's loader"
+    );
+}

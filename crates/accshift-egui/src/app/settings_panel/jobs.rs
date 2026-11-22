@@ -118,10 +118,8 @@ pub(super) fn drain_landed<J, T>(
 
 /// The folder's descriptors become the user platforms of the tabs, the
 /// account registry and the stores. While a descriptor could not be read,
-/// the stores keep the platforms the settings name; once every descriptor
-/// reads, the settings and the active tab are checked again against them.
+/// the stores keep the platforms the settings name.
 pub(in crate::app) fn apply_report(b: &mut Booted, report: &UserPlatformReport) {
-    let settled = !report.incomplete && b.user_platforms.as_ref().is_some_and(|r| r.incomplete);
     let loaded: Vec<Value> = report
         .loaded
         .iter()
@@ -142,11 +140,28 @@ pub(in crate::app) fn apply_report(b: &mut Booted, report: &UserPlatformReport) 
             .get(accshift_app::storage::CLIENT_STORE_SETTINGS),
     );
     b.stores.set_context(ctx);
-    if settled {
-        b.stores.resanitize_settings();
-        super::persist::keep_active_tab_enabled(b);
-    }
     b.user_platforms = Some(report.clone());
+}
+
+/// A report of the panel's folder tasks: once every descriptor reads, the
+/// settings drop the platforms they only kept while one was locked, and a
+/// tab that is gone changes to the fallback like a click on it. A restore
+/// adopts its own settings and changes the tab through its refresh.
+fn apply_panel_report(b: &mut Booted, jobs: &Jobs, report: &UserPlatformReport) {
+    let settled = !report.incomplete && b.user_platforms.as_ref().is_some_and(|r| r.incomplete);
+    apply_report(b, report);
+    if !settled {
+        return;
+    }
+    b.stores.resanitize_settings();
+    let previous = b.nav.active_tab.clone();
+    super::persist::keep_active_tab_enabled(b);
+    if b.nav.active_tab != previous {
+        let tab = b.nav.active_tab.clone();
+        b.accounts.cancel_add_flow(jobs, &previous);
+        b.bulk.close();
+        b.accounts.change_tab(jobs, &mut b.stores, &tab);
+    }
 }
 
 /// A saved bridge setting reaches the account cards: the Steam adapter's
@@ -365,7 +380,7 @@ impl SettingsPanel {
 
     /// The descriptor folder call, once it is over: a new folder report
     /// reaches the whole app, a picked file opens the preview.
-    fn poll_descriptor(&mut self, b: &mut Booted) {
+    fn poll_descriptor(&mut self, b: &mut Booted, jobs: &Jobs) {
         let Some((job, task)) = &mut self.descriptor_job else {
             return;
         };
@@ -383,7 +398,7 @@ impl SettingsPanel {
                 self.descriptor_error = error.message;
             }
             Ok(DescriptorDone::Report(report)) => {
-                apply_report(b, &report);
+                apply_panel_report(b, jobs, &report);
                 self.user_platforms = Some(report);
                 self.after_descriptor_report(task);
             }
@@ -463,7 +478,7 @@ impl AppModel {
         }
         let mut effects = panel.poll_refresh_runs(b);
         let account_added = panel.poll_roblox(jobs, toasts, now);
-        panel.poll_descriptor(b);
+        panel.poll_descriptor(b, jobs);
         if let Some(text) = panel.clipboard.take() {
             ctx.copy_text(text);
         }
