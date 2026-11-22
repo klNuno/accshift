@@ -15,6 +15,7 @@ use accshift_app::jobs::{Jobs, Pending};
 use accshift_app::lifecycle::app_shell::{
     first_run_platforms, migration_toast, settings_snapshot, stores_reset_toast,
 };
+#[cfg(any(test, feature = "harness"))]
 use accshift_app::mock::MockBackend;
 use accshift_app::platforms::PlatformRegistry;
 use accshift_app::real::RealBackend;
@@ -31,9 +32,11 @@ use super::accounts::{self, Accounts};
 use super::clock::Clock;
 use super::platforms::{self, PlatformDef, RuntimeOs};
 use super::theme::compute_theme;
+#[cfg(any(test, feature = "harness"))]
+use super::MockSetup;
 use super::{
     deep_link, onboarding, personas, shortcuts, ui_scale, updates, wallpaper, AppModel, Booted,
-    MockSetup, Navigation,
+    Navigation,
 };
 use crate::screens::workspace::Workspace;
 use crate::ui::anim;
@@ -102,6 +105,7 @@ fn start_boot(jobs: &Jobs) -> Pending<BootResult> {
 impl AppModel {
     /// A scene run: the mock on `<data_dir>/<scenario>.json`, the clock
     /// pinned to the scenario's `NOW`, the stand-in desktop behind.
+    #[cfg(any(test, feature = "harness"))]
     pub fn mock(ctx: &Context, setup: MockSetup) -> Result<AppModel, String> {
         // The OS override patches the scenario's spec before the mock is
         // built, so it holds for the frozen `demo` scenario too, which
@@ -157,7 +161,7 @@ impl AppModel {
         legacy: Option<LegacyLocalStorage>,
     ) -> AppModel {
         let backend: Arc<dyn Backend> = backend;
-        let mut model = AppModel::with_backend(ctx, backend, None, Clock::wall());
+        let mut model = AppModel::from_backend(ctx, backend, Clock::wall());
         model.legacy = legacy;
         model.os_reduced_motion = os_prefers_reduced_motion();
         model.updates = updates::Updates::real(Instant::now());
@@ -165,12 +169,19 @@ impl AppModel {
     }
 
     /// Any backend; the boot payload is requested at once.
+    #[cfg(any(test, feature = "harness"))]
     pub fn with_backend(
         ctx: &Context,
         backend: Arc<dyn Backend>,
         mock: Option<Arc<MockBackend>>,
         clock: Clock,
     ) -> AppModel {
+        let mut model = AppModel::from_backend(ctx, backend, clock);
+        model.mock = mock;
+        model
+    }
+
+    fn from_backend(ctx: &Context, backend: Arc<dyn Backend>, clock: Clock) -> AppModel {
         let wake = ctx.clone();
         let jobs = Jobs::new(Arc::clone(&backend), 2, move || wake.request_repaint());
         let boot_job = Some(start_boot(&jobs));
@@ -182,7 +193,9 @@ impl AppModel {
         ctx.all_styles_mut(|style| style.interaction.interact_radius = 0.0);
         AppModel {
             backend,
-            mock,
+            #[cfg(any(test, feature = "harness"))]
+            mock: None,
+            #[cfg(any(test, feature = "harness"))]
             setup: None,
             jobs,
             clock,
@@ -249,6 +262,7 @@ impl AppModel {
     }
 
     pub(super) fn finish_boot(&mut self, ctx: &Context, result: BootResult) {
+        #[cfg_attr(not(any(test, feature = "harness")), allow(unused_mut))]
         let Boot {
             mut payload,
             detected,
@@ -259,6 +273,7 @@ impl AppModel {
                 return;
             }
         };
+        #[cfg(any(test, feature = "harness"))]
         if let Some(setup) = &self.setup {
             setup.patch_stores(&mut payload.storage_snapshot.stores);
         }
@@ -289,11 +304,15 @@ impl AppModel {
     fn hydrate(&mut self, payload: BootPayload, detected: &[String]) -> Hydrated {
         let runtime_os = RuntimeOs::parse(&payload.runtime_os);
         let legacy = self.legacy.take();
+        #[cfg(any(test, feature = "harness"))]
+        let is_mock = self.mock.is_some();
+        #[cfg(not(any(test, feature = "harness")))]
+        let is_mock = false;
         let (storage, report) = storage::initialize(
             self.backend.as_ref(),
             Some(payload.storage_snapshot),
             legacy.as_ref(),
-            self.mock.is_some(),
+            is_mock,
         );
         let loaded: Vec<Value> = payload
             .user_platforms
@@ -328,6 +347,7 @@ impl AppModel {
             &platform_registry,
             runtime_os,
         );
+        #[cfg(any(test, feature = "harness"))]
         if let Some(mock) = &self.mock {
             // The mock reads the live settings for its PIN gate.
             mock.set_pin_settings(&stores.settings().to_value());
@@ -379,10 +399,13 @@ impl AppModel {
         );
         anim::set_motion(ctx, theme.motion);
         let panel = nav.panel_key();
-        let app_clock = match &self.mock {
-            Some(mock) => accshift_app::time::Clock::mock(mock.now()),
-            None => accshift_app::time::Clock::system(),
+        #[cfg(any(test, feature = "harness"))]
+        let (app_clock, is_mock) = match &self.mock {
+            Some(mock) => (accshift_app::time::Clock::mock(mock.now()), true),
+            None => (accshift_app::time::Clock::system(), false),
         };
+        #[cfg(not(any(test, feature = "harness")))]
+        let (app_clock, is_mock) = (accshift_app::time::Clock::system(), false);
         let accounts = Accounts::boot(
             &self.jobs,
             &mut stores,
@@ -390,7 +413,7 @@ impl AppModel {
             &nav.active_tab,
             runtime_os,
             app_clock,
-            self.mock.is_some(),
+            is_mock,
         );
         let persona_controller = personas::controller(&stores);
         // One anonymous picture of the settings per launch. The telemetry

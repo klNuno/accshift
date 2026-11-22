@@ -14,7 +14,7 @@ startup-bench = []
 # (src/harness/) that drives the app on the mock backend, and
 # `ACCSHIFT_EGUI_MARKS`. The crate's own tests get the runner through
 # `cfg(test)`, without the flag.
-harness = []
+harness = ["accshift-app/mock"]
 # The renderer: egui meshes rasterized on the CPU and blitted with softbuffer
 # (GDI on Windows), no GPU driver loaded.
 software = ["dep:egui-winit", "dep:softbuffer", "dep:egui_software_backend", "dep:winit"]
@@ -70,6 +70,11 @@ image-webp = "0.2"
 
 [target.'cfg(not(windows))'.dependencies]
 egui = { version = "0.37", features = ["default_fonts"] }
+
+# Unix termination signals (window/signal.rs): SIGTERM and SIGINT run the same
+# orderly shutdown as a normal quit. `libc` is already in the workspace graph.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # Linux: the X11 and Wayland backends `default-features = false` drops above,
 # with libxcb and the Wayland client opened at run time, as by default.
@@ -138,3 +143,6 @@ windows = { version = "0.62", default-features = false, features = [
 [build-dependencies]
 serde_json = "1"
 tauri-winres = "0.3"
+
+[dev-dependencies]
+accshift-app = { path = "../accshift-app", features = ["mock"] }

@@ -136,6 +136,7 @@ impl Liquid {
     }
 
     /// A scene's window: a fixed outer position and scale.
+    #[cfg(any(test, feature = "harness"))]
     pub(super) fn pin_window(&mut self, outer: [i32; 2], scale: f32) {
         self.pinned = Some((outer, scale));
     }

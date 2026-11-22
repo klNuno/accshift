@@ -5,6 +5,12 @@ version.workspace = true
 edition.workspace = true
 publish = false
 
+[features]
+# Canned scenario backend (`accshift_app::mock`), kept out of release builds.
+# Tests enable it through `[dev-dependencies]` and `accshift-egui`'s `harness`
+# feature forwards to it for scene runs.
+mock = []
+
 [dependencies]
 accshift-core = { path = "../accshift-core" }
 # `js`: the workspace's one copy of the JavaScript string and number rules.
@@ -101,6 +107,9 @@ osakit = { version = "0.3", features = ["full"] }
 plist = "1"
 
 [dev-dependencies]
+# Integration tests under `tests/` exercise `accshift_app::mock` without
+# pulling the mock backend into release builds of the library.
+accshift-app = { path = ".", features = ["mock"] }
 # Exercise Chromium's legacy reader on every CI host, including the release
 # panic strategy checked by the legacy_storage_smoke example.
 rusty-leveldb = { version = "4", default-features = false }

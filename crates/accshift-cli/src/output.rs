@@ -186,16 +186,80 @@ pub fn render_accounts(
     }
 }
 
-pub fn render_switch_ok(platform_id: &str, account_id: &str) {
-    println!("Switched {platform_id} to {account_id}.");
+/// Non-sensitive human label for a requested account id (persona name,
+/// BattleTag, display name or user label), never falling back to the raw
+/// account id or email address. `requested` is the id as the platform resolved
+/// it (the dry-run plan's id, or the switch id through
+/// `PlatformService::normalize_account_id`): an id written exactly wins over
+/// one that only matches once folded, so two ids that differ by case never
+/// swap labels.
+pub fn display_label_for(platform_id: &str, accounts: &[Value], requested: &str) -> Option<String> {
+    let get = |account: &Value, key: &str| {
+        account
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+    };
+    let rows: Vec<(&Value, AccountRow)> = accounts
+        .iter()
+        .filter_map(|account| Some((account, extract_row(platform_id, account)?)))
+        .collect();
+    let (account, _) = rows
+        .iter()
+        .find(|(_, row)| requested == row.switch_id || requested == row.storage_id)
+        .or_else(|| {
+            rows.iter()
+                .find(|(_, row)| folded_id_matches(platform_id, requested, &row.switch_id))
+        })?;
+    match platform_id {
+        "steam" => get(account, "persona_name"),
+        "roblox" => get(account, "displayName"),
+        "battle-net" => get(account, "battleTag"),
+        _ => get(account, "label"),
+    }
+}
+
+/// Whether `requested` names `id` only through the spelling the platform's
+/// own switch forgives: Steam login names and Battle.net emails ignore ASCII
+/// case (Battle.net also surrounding spaces). Riot and Roblox take ids as
+/// written, and a descriptor id arrives already normalised by its engine,
+/// which stores ids in that same form, so only the exact match counts.
+fn folded_id_matches(platform_id: &str, requested: &str, id: &str) -> bool {
+    match platform_id {
+        "steam" => requested.eq_ignore_ascii_case(id),
+        "battle-net" => requested.trim().eq_ignore_ascii_case(id.trim()),
+        _ => false,
+    }
+}
+
+pub fn format_switch_ok(platform_id: &str, label: Option<&str>) -> String {
+    match label.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(label) => format!("Switched {platform_id} to {label}."),
+        None => format!("Switched {platform_id}."),
+    }
+}
+
+pub fn render_switch_ok(platform_id: &str, label: Option<&str>) {
+    println!("{}", format_switch_ok(platform_id, label));
+}
+
+pub fn format_dry_run_header(operation: &str, platform_id: &str, label: Option<&str>) -> String {
+    match label.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(label) => {
+            format!("Dry run: {operation} {platform_id} to {label}. Nothing below is written.")
+        }
+        None => format!("Dry run: {operation} on {platform_id}. Nothing below is written."),
+    }
 }
 
 /// The dry run, read top to bottom: what stays untouched, then what would
 /// happen in order, then what would go wrong.
-pub fn render_dry_run(plan: &DryRunPlan) {
+pub fn render_dry_run(plan: &DryRunPlan, label: Option<&str>) {
     println!(
-        "Dry run: {} {} to {}. Nothing below is written.",
-        plan.operation, plan.platform_id, plan.account_id,
+        "{}",
+        format_dry_run_header(&plan.operation, &plan.platform_id, label)
     );
 
     println!();
@@ -421,5 +485,125 @@ pub fn pad(s: &str, target: usize) -> String {
             out.push(' ');
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_label_picks_human_label_and_never_falls_back_to_raw_id_or_email() {
+        let bnet = vec![
+            json!({"email": "secret@example.com", "battleTag": "Hero#1234"}),
+            json!({"email": "nolabel@example.com", "battleTag": ""}),
+        ];
+        assert_eq!(
+            display_label_for("battle-net", &bnet, "SECRET@example.com").as_deref(),
+            Some("Hero#1234")
+        );
+        assert_eq!(
+            display_label_for("battle-net", &bnet, "nolabel@example.com"),
+            None
+        );
+
+        let steam = vec![json!({
+            "steam_id": "76561198000000001",
+            "account_name": "login_name",
+            "persona_name": "Alice"
+        })];
+        assert_eq!(
+            display_label_for("steam", &steam, "login_name").as_deref(),
+            Some("Alice")
+        );
+
+        let epic = vec![
+            json!({"accountId": "acct-raw-id", "label": "Main"}),
+            json!({"accountId": "acct-unlabeled", "label": "   "}),
+        ];
+        assert_eq!(
+            display_label_for("epic", &epic, "acct-raw-id").as_deref(),
+            Some("Main")
+        );
+        assert_eq!(display_label_for("epic", &epic, "acct-unlabeled"), None);
+    }
+
+    #[test]
+    fn display_label_never_takes_the_label_of_an_id_that_differs_only_by_case() {
+        let epic = vec![
+            json!({"accountId": "Main-ID", "label": "Someone else"}),
+            json!({"accountId": "main-id", "label": "Mine"}),
+        ];
+        assert_eq!(
+            display_label_for("epic", &epic, "main-id").as_deref(),
+            Some("Mine")
+        );
+        assert_eq!(
+            display_label_for("epic", &epic, "Main-ID").as_deref(),
+            Some("Someone else")
+        );
+
+        // Riot and Roblox ids switch only as written.
+        let riot = vec![
+            json!({"id": "Profile-1", "label": "Someone else"}),
+            json!({"id": "profile-2", "label": "Mine"}),
+        ];
+        assert_eq!(display_label_for("riot", &riot, "profile-1"), None);
+        assert_eq!(
+            display_label_for("riot", &riot, "profile-2").as_deref(),
+            Some("Mine")
+        );
+
+        // Battle.net and Steam match their ids without case, as their
+        // switches do.
+        let bnet = vec![json!({"email": "hero@example.com", "battleTag": "Hero#1234"})];
+        assert_eq!(
+            display_label_for("battle-net", &bnet, " HERO@example.com ").as_deref(),
+            Some("Hero#1234")
+        );
+        let steam = vec![json!({
+            "steam_id": "76561198000000001",
+            "account_name": "login_name",
+            "persona_name": "Alice"
+        })];
+        assert_eq!(
+            display_label_for("steam", &steam, "Login_Name").as_deref(),
+            Some("Alice")
+        );
+    }
+
+    #[test]
+    fn a_case_sensitive_descriptor_never_labels_an_id_with_another_spelling() {
+        let rows = vec![
+            json!({"accountId": "abc", "label": "Lower"}),
+            json!({"accountId": "ABC", "label": "Upper"}),
+        ];
+        // The engine switches ` ABC ` to `ABC`; the caller passes that id.
+        assert_eq!(
+            display_label_for("epic", &rows, "ABC").as_deref(),
+            Some("Upper")
+        );
+        assert_eq!(
+            display_label_for("epic", &rows, " ABC "),
+            None,
+            "an id the engine did not resolve must not fold onto another row"
+        );
+    }
+
+    #[test]
+    fn switch_and_dry_run_headers_use_label_when_known_and_omit_raw_ids() {
+        assert_eq!(
+            format_switch_ok("battle-net", Some("Hero#1234")),
+            "Switched battle-net to Hero#1234."
+        );
+        assert_eq!(format_switch_ok("battle-net", None), "Switched battle-net.");
+        assert_eq!(
+            format_dry_run_header("switch", "epic", Some("Main")),
+            "Dry run: switch epic to Main. Nothing below is written."
+        );
+        assert_eq!(
+            format_dry_run_header("switch", "epic", None),
+            "Dry run: switch on epic. Nothing below is written."
+        );
     }
 }

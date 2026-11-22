@@ -2,8 +2,8 @@
 //!
 //! - [`backend::Backend`]: one blocking method per backend command, with its
 //!   payloads ([`types`]) and error strings ([`error`]).
-//! - [`mock::MockBackend`]: canned scenario data, for the parity bench and
-//!   the tests.
+//! - `mock::MockBackend` (feature `mock` / tests): canned scenario data, for
+//!   the parity bench and the tests.
 //! - [`real::RealBackend`]: the real backend on `accshift-core`.
 //! - [`jobs`]: runs calls off the UI thread and wakes the UI on each result.
 //! - [`storage`]: the raw client stores, their saves and refreshes.
@@ -41,6 +41,7 @@ pub mod js;
 pub mod legacy_web_storage;
 pub mod lifecycle;
 pub mod menu;
+#[cfg(any(test, feature = "mock"))]
 pub mod mock;
 pub mod personas;
 pub mod platform_add_flow;

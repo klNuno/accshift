@@ -249,6 +249,13 @@ pub trait PlatformService: Send + Sync {
         Err(PlatformError::other("Account labeling not supported"))
     }
 
+    /// The spelling the platform's own switch resolves `account_id` to, for
+    /// a caller matching it against [`Self::get_accounts`]. Unchanged unless
+    /// the platform normalises ids.
+    fn normalize_account_id(&self, account_id: &str) -> String {
+        account_id.to_string()
+    }
+
     /// Whether [`Self::dry_run`] answers on this platform.
     ///
     /// Asked before calling, so a caller reports "this platform has no plan"

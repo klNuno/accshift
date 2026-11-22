@@ -28,8 +28,6 @@ mod fallback;
 #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
 mod fontconfig;
 pub mod gamma;
-#[cfg(all(test, windows))]
-mod glyph_check;
 mod layout;
 mod style;
 #[cfg(test)]

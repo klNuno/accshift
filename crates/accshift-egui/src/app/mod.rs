@@ -1,9 +1,9 @@
 //! The egui application: [`AppModel`] owns the app's state and draws one
 //! frame of it.
 //!
-//! - backend: [`MockBackend`] on a scenario file in a scene run,
-//!   [`RealBackend`](accshift_app::real::RealBackend) on the user's app folders otherwise, both behind
-//!   `Arc<dyn Backend>`;
+//! - backend: `MockBackend` on a scenario file in a scene run (`harness` /
+//!   tests), [`RealBackend`](accshift_app::real::RealBackend) on the user's app
+//!   folders otherwise, both behind `Arc<dyn Backend>`;
 //! - [`Jobs`]: every backend call runs off the UI thread, and a result wakes
 //!   the UI through `Context::request_repaint`;
 //! - [`ClientStores`] loaded from the boot payload's storage snapshot
@@ -36,6 +36,7 @@ mod effects;
 mod external_refresh;
 mod frame;
 pub(crate) mod keys;
+#[cfg(any(test, feature = "harness"))]
 mod mock_setup;
 pub mod onboarding;
 mod palette;
@@ -64,6 +65,7 @@ use accshift_app::folders::FolderInfo;
 use accshift_app::i18n::Locale;
 use accshift_app::jobs::{Jobs, Pending, Poll};
 use accshift_app::menu::{SubmenuLoader, TaskOutcome};
+#[cfg(any(test, feature = "harness"))]
 use accshift_app::mock::MockBackend;
 use accshift_app::platforms::PlatformAccount;
 use accshift_app::secure::screen::SecureScreen;
@@ -84,6 +86,7 @@ use accounts::Accounts;
 // What the tests reach through `use super::*`.
 use boot::{preferred_languages, BootResult};
 use clock::Clock;
+#[cfg(any(test, feature = "harness"))]
 pub use mock_setup::MockSetup;
 use platforms::{PlatformDef, RuntimeOs};
 pub use theme::ThemeState;
@@ -249,7 +252,9 @@ type SubmenuJob = Pending<BackendResult<Vec<AppMenuEntry>>>;
 /// The application model. See the module documentation.
 pub struct AppModel {
     backend: Arc<dyn Backend>,
+    #[cfg(any(test, feature = "harness"))]
     mock: Option<Arc<MockBackend>>,
+    #[cfg(any(test, feature = "harness"))]
     setup: Option<MockSetup>,
     jobs: Jobs,
     clock: Clock,

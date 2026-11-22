@@ -513,3 +513,39 @@ fn typed<T: serde::de::DeserializeOwned + serde::Serialize>(value: Value) -> Val
     let parsed: T = serde_json::from_value(value).expect("the recording reads as the type");
     serde_json::to_value(parsed).expect("the type writes back")
 }
+
+#[test]
+fn mock_module_is_gated_out_of_default_builds() {
+    let root = repo_root();
+    let app_lib = std::fs::read_to_string(root.join("crates/accshift-app/src/lib.rs")).unwrap();
+    assert!(
+        app_lib.contains("#[cfg(any(test, feature = \"mock\"))]\npub mod mock;")
+            || app_lib.contains("#[cfg(any(test, feature = \"mock\"))]\r\npub mod mock;"),
+        "accshift_app::mock must stay gated behind cfg(any(test, feature = \"mock\"))"
+    );
+
+    let app_toml = std::fs::read_to_string(root.join("crates/accshift-app/Cargo.toml")).unwrap();
+    assert!(
+        app_toml.contains("mock = []"),
+        "accshift-app must declare an opt-in `mock` feature"
+    );
+    assert!(
+        !app_toml.contains("default = [\"mock\"]"),
+        "`mock` must never be enabled by default in accshift-app"
+    );
+
+    let egui_toml = std::fs::read_to_string(root.join("crates/accshift-egui/Cargo.toml")).unwrap();
+    let deps_section: String = egui_toml
+        .split("[dependencies]")
+        .nth(1)
+        .and_then(|s| s.split("\n[").next())
+        .expect("accshift-egui [dependencies] section")
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !deps_section.contains("mock"),
+        "accshift-egui normal [dependencies] must not enable accshift-app/mock"
+    );
+}

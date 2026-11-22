@@ -560,5 +560,63 @@ mod tests {
             assert!(shell.auto_reveal());
             assert!(!shell.starts_in_tray());
         }
+
+        #[test]
+        fn orderly_quit_flushes_pending_store_writes_even_with_close_to_tray() {
+            use accshift_app::backend::Backend;
+            use accshift_app::storage::CLIENT_STORE_SETTINGS;
+
+            let dir = scratch("orderly-quit");
+            let id = format!("com.accshift.test-orderly-quit-{}", std::process::id());
+            let Launch::Primary(single) = single_instance::acquire(&id, &[], "", None) else {
+                panic!("the test identifier is free");
+            };
+            let backend = Arc::new(RealBackend::with_context(dir.clone()));
+            let ctx = egui::Context::default();
+            let mut app = crate::AppModel::real(&ctx, backend.clone(), None);
+            app.wait_boot(&ctx).expect("boot on scratch dir");
+            backend.boot_state().mark_completed();
+
+            // Queue a dirty settings change with closeToTray on.
+            {
+                let booted = app.booted_mut().expect("booted");
+                let mut next = booted.stores.settings().clone();
+                next.close_to_tray = true;
+                booted.stores.save_settings(&next);
+            }
+
+            let mut shell = Shell::new(Screen::App(Box::new(app)), None)
+                .with_window(Host::new(backend.clone(), 0).with_single_instance(Some(single)));
+            assert!(shell.wants_close_to_tray());
+
+            // The quit path (TrayAction::Quit, UserEvent::Quit on SIGTERM/SIGINT)
+            // calls `Shell::close` directly and must flush pending store writes,
+            // save geometry, and release the single-instance lock.
+            let mut hidden = 0;
+            shell.close(Some(geometry(1040.0)), || hidden += 1);
+            assert_eq!(hidden, 1);
+            assert_eq!(
+                config::load_window(dir.as_ref()).size,
+                Some((1040.0, 600.0))
+            );
+            let snapshot = backend
+                .load_client_storage_snapshot()
+                .expect("snapshot on disk");
+            assert_eq!(
+                snapshot
+                    .stores
+                    .get(CLIENT_STORE_SETTINGS)
+                    .and_then(|v| v.get("closeToTray"))
+                    .and_then(|v| v.as_bool()),
+                Some(true),
+                "pending store writes must be flushed to disk on orderly quit"
+            );
+            match single_instance::acquire(&id, &[], "", None) {
+                Launch::Primary(_) => {}
+                _ => panic!("single instance must be released on orderly quit"),
+            }
+            drop(shell);
+            let _ = std::fs::remove_dir_all(&dir.0);
+        }
     }
 }

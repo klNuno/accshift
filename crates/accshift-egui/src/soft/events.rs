@@ -207,6 +207,7 @@ impl ApplicationHandler<UserEvent> for Runner {
                 }
                 self.repaint_at(Instant::now());
             }
+            UserEvent::Quit => self.close(event_loop),
         }
     }
 

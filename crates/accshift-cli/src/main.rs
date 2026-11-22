@@ -12,10 +12,10 @@ mod telemetry;
 use accshift_core::error::PlatformErrorKind;
 use accshift_core::lock::{acquire_exclusive, LockError};
 use accshift_core::platforms::descriptor::plan::DryRunPlan;
-use accshift_core::platforms::get_service;
 use accshift_core::platforms::steam::switch_params::{
     steam_switch_params, PersonaMode, ShutdownMode, SteamSwitchDefaults, SteamSwitchOverrides,
 };
+use accshift_core::platforms::{get_service, PlatformService};
 use clap::{Parser, Subcommand};
 use output::{emit_err, emit_json_ok, Format};
 use serde_json::{json, Value};
@@ -494,14 +494,18 @@ fn cmd_switch(
     );
     let params = steam_switch_params(&defaults, overrides.into_steam());
 
-    match service.switch_account(ctx, account_id, params) {
+    match service.switch_account(ctx.clone(), account_id, params) {
         Ok(()) => {
             match format {
                 Format::Json => emit_json_ok(
                     "switch",
                     json!({ "platform": platform_id, "accountId": account_id }),
                 ),
-                Format::Human => output::render_switch_ok(platform_id, account_id),
+                Format::Human => {
+                    let resolved = service.normalize_account_id(account_id);
+                    let label = resolve_display_label(service, ctx, platform_id, &resolved);
+                    output::render_switch_ok(platform_id, label.as_deref());
+                }
             }
             exit::OK
         }
@@ -512,6 +516,17 @@ fn cmd_switch(
             status
         }
     }
+}
+
+fn resolve_display_label(
+    service: &dyn PlatformService,
+    ctx: accshift_core::AppCtx,
+    platform_id: &str,
+    requested: &str,
+) -> Option<String> {
+    let accounts = service.get_accounts(ctx).ok()?;
+    let rows = accounts.as_array()?;
+    output::display_label_for(platform_id, rows, requested)
 }
 
 /// The PIN and the operation lock a switch goes through, for `switch` and
@@ -626,7 +641,7 @@ fn cmd_dry_run(format: Format, platform_id: &str, account_id: &str) -> u8 {
         return exit::GENERIC;
     }
 
-    let value = match service.dry_run(ctx, account_id) {
+    let value = match service.dry_run(ctx.clone(), account_id) {
         Ok(v) => v,
         Err(e) => {
             let message = e.to_string();
@@ -643,7 +658,9 @@ fn cmd_dry_run(format: Format, platform_id: &str, account_id: &str) -> u8 {
         }
         Format::Human => match serde_json::from_value::<DryRunPlan>(value) {
             Ok(plan) => {
-                output::render_dry_run(&plan);
+                // The plan names the account the engine resolved the input to.
+                let label = resolve_display_label(service, ctx, platform_id, &plan.account_id);
+                output::render_dry_run(&plan, label.as_deref());
                 exit::OK
             }
             Err(e) => {

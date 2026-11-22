@@ -146,36 +146,24 @@ mod tests {
         assert!(count >= 4);
     }
 
-    /// Every line of the typography fragments against WebView2: inline box
-    /// width and baseline, in device px. Run against the `probe.json` files
-    /// of a WebView2 capture of the `typography-*` scenes:
-    /// `ACCSHIFT_TEXT_PROBE=<ref out dir> cargo test --release -- --ignored --nocapture probe`.
+    /// Every text line of the typography and glyph-check fragments lays out
+    /// cleanly across the supported UI scales without depending on the removed
+    /// WebView2 `parity/ref.mjs` probe.
     #[test]
-    #[ignore = "needs the WebView2 probes of parity/ref.mjs and the system fonts"]
-    fn text_matches_webview2_probe() {
-        let dir = std::path::PathBuf::from(
-            std::env::var("ACCSHIFT_TEXT_PROBE").expect("ACCSHIFT_TEXT_PROBE=<ref out dir>"),
-        );
+    fn text_fragments_lay_out_at_every_scale() {
         let fragments = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("parity/fragments");
-        let (mut worst_w, mut worst_b) = ((0.0f32, String::new()), (0.0f32, String::new()));
-        for fragment in ["typography", "typography-display"] {
+        for fragment in ["typography", "typography-display", "glyph-check"] {
             let html = std::fs::read_to_string(fragments.join(format!("{fragment}.html"))).unwrap();
             let p = Primitives::parse(&html).unwrap();
+            assert!(!p.texts.is_empty(), "{fragment}: expected text lines");
             for pct in [100, 125, 150] {
                 let scale = pct as f32 / 100.0;
-                let probe: serde_json::Value = serde_json::from_str(
-                    &std::fs::read_to_string(dir.join(format!("{fragment}-{pct}/probe.json")))
-                        .unwrap(),
-                )
-                .unwrap();
-                let lines = probe.as_array().unwrap();
-                assert_eq!(lines.len(), p.texts.len(), "{fragment}: probe lines");
                 let ctx = egui::Context::default();
                 ctx.set_zoom_factor(scale);
-                text::install(&ctx, false);
+                text::install(&ctx, true);
                 let mut laid = Vec::new();
                 for _ in 0..4 {
-                    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                         let ctx = ui.ctx();
                         laid = p
                             .texts
@@ -183,36 +171,30 @@ mod tests {
                             .map(|(rect, content, style)| text::layout(ctx, content, style, *rect))
                             .collect();
                     });
+                    out.textures_delta.clear();
                 }
-                let (mut max_w, mut max_b) = (0.0f32, 0.0f32);
-                for ((line, laid), (rect, content, _)) in lines.iter().zip(&laid).zip(&p.texts) {
+                for (laid, (_, content, _)) in laid.iter().zip(&p.texts) {
                     let laid = laid
                         .as_ref()
-                        .unwrap_or_else(|| panic!("{content}: not laid out"));
-                    let web_w = line["box"][2].as_f64().unwrap() as f32;
-                    let web_b = line["baseline"].as_f64().unwrap() as f32;
-                    let dw = (laid.width - web_w).abs() * scale;
-                    // Device baseline: where the glyphs were snapped to.
-                    let ours = ((rect.top() + laid.line_box.baseline) * scale + 0.5).floor();
-                    let web = (web_b * scale + 0.5).floor();
-                    let db = (ours - web).abs();
-                    if dw > worst_w.0 {
-                        worst_w = (dw, format!("{fragment}-{pct} {content}"));
-                    }
-                    if db > worst_b.0 {
-                        worst_b = (db, format!("{fragment}-{pct} {content}"));
-                    }
-                    max_w = max_w.max(dw);
-                    max_b = max_b.max(db);
+                        .unwrap_or_else(|| panic!("{fragment}-{pct} {content}: not laid out"));
+                    assert!(
+                        laid.width > 0.0 && laid.width.is_finite(),
+                        "{fragment}-{pct} {content}: bad width {}",
+                        laid.width
+                    );
+                    assert!(
+                        laid.line_box.baseline > 0.0
+                            && laid.line_box.baseline <= laid.line_box.height,
+                        "{fragment}-{pct} {content}: baseline {} outside height {}",
+                        laid.line_box.baseline,
+                        laid.line_box.height
+                    );
+                    assert!(
+                        !laid.galley.rows.is_empty() && !laid.galley.rows[0].row.glyphs.is_empty(),
+                        "{fragment}-{pct} {content}: no glyphs laid out"
+                    );
                 }
-                println!(
-                    "{fragment}-{pct}: {} lines, width error max {max_w:.3} px, baseline error max {max_b:.0} px",
-                    lines.len()
-                );
             }
         }
-        println!("worst width: {:.3} px, {}", worst_w.0, worst_w.1);
-        println!("worst baseline: {:.0} px, {}", worst_b.0, worst_b.1);
-        assert!(worst_w.0 <= 1.0 && worst_b.0 <= 1.0);
     }
 }
