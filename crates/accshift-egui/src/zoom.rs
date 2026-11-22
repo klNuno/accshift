@@ -21,6 +21,7 @@ const BASE: &str = "accshift-zoom/base";
 const UI: &str = "accshift-zoom/ui";
 const STAGE: &str = "accshift-zoom/stage";
 const FRAME_INPUT: &str = "accshift-zoom/frame-input";
+const WINDOW: &str = "accshift-zoom/window";
 const UPSCALE: &str = "accshift-zoom/upscale";
 const CLEAR_HOVER: &str = "accshift-zoom/clear-hover";
 
@@ -82,14 +83,19 @@ pub fn ui(ctx: &Context) -> f32 {
 }
 
 /// Before a software frame: `stage` is the zoom the runner scales the
-/// frame by, 1 when egui's zoom factor carries it. Call it before the pass
-/// starts: the zoom factor in force now is the one the frame's events were
-/// converted with ([`input_frame`]).
-pub fn begin_frame(ctx: &Context, stage: f32) {
+/// frame by, 1 when egui's zoom factor carries it, and `raw` the frame's
+/// input once in the stage's points ([`stage_input`]). Call it before the
+/// pass starts: the zoom factor in force now is the one the frame's events
+/// and screen were converted with ([`input_frame`]).
+pub fn begin_frame(ctx: &Context, stage: f32, raw: &RawInput) {
     let input = stage * ctx.zoom_factor() / base(ctx);
+    let window = raw.screen_rect.map(|r| r.size() * input);
     ctx.data_mut(|d| {
         d.insert_temp(Id::unique(STAGE), stage);
         d.insert_temp(Id::unique(FRAME_INPUT), input);
+        if let Some(window) = window {
+            d.insert_temp(Id::unique(WINDOW), window);
+        }
     });
 }
 
@@ -115,9 +121,13 @@ pub fn input_frame(ctx: &Context) -> f32 {
 }
 
 /// `100vw` by `100vh` in the stage's points: the window's CSS size, which
-/// the stage's transform leaves alone.
+/// the stage's transform leaves alone. It comes from the window's own
+/// size ([`begin_frame`]): on the first frame of a zoom change egui
+/// derives its screen from the last frame's, which the boot raster had
+/// already divided by its zoom.
 pub fn viewport(ctx: &Context) -> egui::Vec2 {
-    ctx.content_rect().size() * frame(ctx)
+    ctx.data(|d| d.get_temp::<egui::Vec2>(Id::unique(WINDOW)))
+        .unwrap_or_else(|| ctx.content_rect().size() * frame(ctx))
 }
 
 /// `.app-stage` in the stage's points. It is `flex: 1` in the column

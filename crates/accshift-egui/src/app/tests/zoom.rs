@@ -73,7 +73,7 @@ fn step_shell(
     vp.minimized = Some(false);
     vp.native_pixels_per_point = Some(1.0);
     shell.input_hook(ctx, &mut raw, stage);
-    crate::zoom::begin_frame(ctx, stage);
+    crate::zoom::begin_frame(ctx, stage, &raw);
     let mut out = ctx.run_ui(raw, |ui| shell.frame(ui));
     out.textures_delta.clear();
     out
@@ -531,57 +531,86 @@ fn ctrl_equals() -> Event {
 
 #[test]
 fn overlay_keeps_the_window_size_on_the_first_frame_of_a_zoom_change() {
-    let ctx = Context::default();
-    let mut shell = demo_shell(
-        &ctx,
-        json!({
-            "animations": "off",
-            "uiScalePercent": 100,
-            "streamerMode": "auto",
-        }),
-        true,
-        false,
-    );
-    let size = [1000.0, 680.0];
-    let mut t = 1.0;
-    for _ in 0..5 {
-        t += 0.4;
-        step_shell(&mut shell, &ctx, size, t, Vec::new());
-    }
-    assert!(app_ref(&shell).booted().unwrap().streamer.active());
-    t += 0.05;
-    step_shell(&mut shell, &ctx, size, t, vec![ctrl_equals()]);
-    let zoom_before = ctx.zoom_factor();
-    let pointer = pos2(500.0, 300.0);
-    for frame in 0..3 {
-        t += 0.05;
-        step_shell(
-            &mut shell,
+    // With animations on, the app is first drawn as the boot raster (the
+    // runner scales the stage, egui's factor stays 1); the first zoom change
+    // switches to the sharp raster and egui's factor at once.
+    for (animations, percent, next) in [
+        ("off", 100, 1.05),
+        ("on", 100, 1.05),
+        ("off", 125, 1.30),
+        ("on", 125, 1.30),
+    ] {
+        let case = format!("animations {animations}, {percent}%");
+        let ctx = Context::default();
+        let mut shell = demo_shell(
             &ctx,
-            size,
-            t,
-            vec![Event::PointerMoved(pointer)],
+            json!({
+                "animations": animations,
+                "uiScalePercent": percent,
+                "streamerMode": "auto",
+            }),
+            true,
+            false,
         );
-        let (overlay_ctx, mut overlay_out) = shell
-            .take_overlay()
-            .expect("the streamer overlay runs its pass");
-        overlay_out.textures_delta.clear();
-        let screen = overlay_ctx.content_rect();
+        let size = [1000.0, 680.0];
+        let mut t = 1.0;
+        for _ in 0..5 {
+            t += 0.4;
+            step_shell(&mut shell, &ctx, size, t, Vec::new());
+        }
         assert!(
-            (screen.width() - size[0]).abs() < 0.5 && (screen.height() - size[1]).abs() < 0.5,
-            "frame {frame} after Ctrl+=: the overlay screen {screen:?} must stay the window's {size:?}"
+            app_ref(&shell).booted().unwrap().streamer.active(),
+            "{case}"
         );
-        let latest = overlay_ctx.input(|i| i.pointer.latest_pos());
+        let boot_raster = (shell.stage_zoom(&ctx) - 1.0).abs() > 1e-6;
+        assert_eq!(
+            boot_raster,
+            animations == "on" && percent != 100,
+            "{case}: the boot raster scales the stage"
+        );
+        let before = ctx.zoom_factor() * shell.stage_zoom(&ctx);
+        t += 0.05;
+        step_shell(&mut shell, &ctx, size, t, vec![ctrl_equals()]);
+        let pointer = pos2(500.0, 300.0);
+        for frame in 0..3 {
+            t += 0.05;
+            step_shell(
+                &mut shell,
+                &ctx,
+                size,
+                t,
+                vec![Event::PointerMoved(pointer)],
+            );
+            let (overlay_ctx, mut overlay_out) = shell
+                .take_overlay()
+                .expect("the streamer overlay runs its pass");
+            overlay_out.textures_delta.clear();
+            let screen = overlay_ctx.content_rect();
+            assert!(
+                (screen.width() - size[0]).abs() < 0.5 && (screen.height() - size[1]).abs() < 0.5,
+                "{case}, frame {frame} after Ctrl+=: the overlay screen {screen:?} must stay the window's {size:?}"
+            );
+            let latest = overlay_ctx.input(|i| i.pointer.latest_pos());
+            assert!(
+                latest.is_some_and(|p| (p - pointer).length() < 0.5),
+                "{case}, frame {frame} after Ctrl+=: the pointer lands at {latest:?}, not {pointer:?}"
+            );
+        }
+        let after = ctx.zoom_factor() * shell.stage_zoom(&ctx);
         assert!(
-            latest.is_some_and(|p| (p - pointer).length() < 0.5),
-            "frame {frame} after Ctrl+=: the pointer lands at {latest:?}, not {pointer:?}"
+            after > before + 0.01,
+            "{case}: Ctrl+= zoomed in ({before} -> {after})"
+        );
+        assert!(
+            (shell.stage_zoom(&ctx) - 1.0).abs() < 1e-6,
+            "{case}: the zoom change leaves the boot raster"
+        );
+        assert!(
+            (crate::zoom::ui(&ctx) - next).abs() < 1e-4,
+            "{case}: Ctrl+= steps to {next}, not {}",
+            crate::zoom::ui(&ctx)
         );
     }
-    assert!(
-        ctx.zoom_factor() > zoom_before + 0.01,
-        "Ctrl+= went through egui's zoom factor ({zoom_before} -> {})",
-        ctx.zoom_factor()
-    );
 }
 
 #[test]

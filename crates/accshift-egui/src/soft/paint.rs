@@ -62,7 +62,7 @@ impl Runner {
         let started = Instant::now();
         self.last_paint = Some(started);
         let shell = &mut live.shell;
-        crate::zoom::begin_frame(&ctx, zoom);
+        crate::zoom::begin_frame(&ctx, zoom, &raw);
         let mut out = ctx.run_ui(raw, |ui| {
             shell.frame(ui);
             if let Some(due) = script_due {
