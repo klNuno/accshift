@@ -27,6 +27,8 @@
 mod general_tab;
 mod measure;
 mod nav;
+#[cfg(test)]
+pub(crate) use nav::rail_offset;
 mod platform_tab;
 mod platforms_tab;
 mod privacy_tab;

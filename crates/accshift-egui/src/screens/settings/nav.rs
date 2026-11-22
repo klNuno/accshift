@@ -109,7 +109,8 @@ pub(super) fn rail(ui: &mut Ui, rail: Rect, f: &Frame) -> Vec<SettingsAction> {
 /// One button per visible tab, clipped to `list`; the first platform tab
 /// opens the "Platforms" group, labelled when the rail is wide. A list
 /// taller than the rail (many platforms, a short window) scrolls with the
-/// app's scrollbar and brings a newly active tab into view.
+/// app's scrollbar and brings a newly active or newly focused tab into
+/// view: Tab walks the clipped rows too.
 fn tab_list(ui: &mut Ui, list: Rect, inner_w: f32, f: &Frame) -> Vec<SettingsAction> {
     let first_platform = f.tabs.iter().position(|tab| tab.accent.is_some());
     let header = |i: usize| first_platform == Some(i) && !f.narrow;
@@ -125,15 +126,26 @@ fn tab_list(ui: &mut Ui, list: Rect, inner_w: f32, f: &Frame) -> Vec<SettingsAct
     }
     let overflow = scroll::overflows(list.height(), content);
     let item_w = inner_w - if overflow { scroll::WIDTH } else { 0.0 };
-    let id = Id::unique("settings-rail-scroll");
-    let (mut offset, seen) = ui.data(|d| d.get_temp::<(f32, String)>(id).unwrap_or_default());
-    if seen != f.active {
-        if let Some(i) = f.tabs.iter().position(|tab| tab.id == f.active) {
-            offset = scroll::nearest(offset, list.height(), tops[i], tops[i] + NAV_ITEM_H);
-        }
+    let id = rail_scroll_id();
+    let (mut offset, seen_active, seen_focus) =
+        ui.data(|d| d.get_temp::<RailScroll>(id).unwrap_or_default());
+    let focused = f
+        .tabs
+        .iter()
+        .find(|tab| ui.memory(|m| m.has_focus(tab_id(&tab.id))))
+        .map(|tab| tab.id.clone());
+    let reveal = if focused.is_some() && focused != seen_focus {
+        focused.as_deref()
+    } else if seen_active != f.active {
+        Some(f.active)
+    } else {
+        None
+    };
+    if let Some(i) = reveal.and_then(|shown| f.tabs.iter().position(|tab| tab.id == shown)) {
+        offset = scroll::nearest(offset, list.height(), tops[i], tops[i] + NAV_ITEM_H);
     }
     scroll::scroll(ui, list, id, &mut offset, content, f.vars);
-    ui.data_mut(|d| d.insert_temp(id, (offset, f.active.to_string())));
+    ui.data_mut(|d| d.insert_temp(id, (offset, f.active.to_string(), focused)));
 
     let mut list_ui = ui.new_child(UiBuilder::new().max_rect(list));
     list_ui.set_clip_rect(list.intersect(ui.clip_rect()));
@@ -164,6 +176,27 @@ fn tab_list(ui: &mut Ui, list: Rect, inner_w: f32, f: &Frame) -> Vec<SettingsAct
         }
     }
     out
+}
+
+/// The rail's offset, the active tab and the focused tab it last saw.
+type RailScroll = (f32, String, Option<String>);
+
+fn rail_scroll_id() -> Id {
+    Id::unique("settings-rail-scroll")
+}
+
+/// How far the rail's tab list is scrolled.
+#[cfg(test)]
+pub(crate) fn rail_offset(ctx: &egui::Context) -> f32 {
+    ctx.data(|d| {
+        d.get_temp::<RailScroll>(rail_scroll_id())
+            .unwrap_or_default()
+            .0
+    })
+}
+
+fn tab_id(tab: &str) -> Id {
+    Id::unique(("settings-tab", tab))
 }
 
 /// The Help and Logs buttons from `top_left`, side by side or stacked.
@@ -263,7 +296,7 @@ fn nav_item(ui: &mut Ui, rect: Rect, tab: &TabDef, f: &Frame) -> bool {
     let v = f.vars;
     let active = tab.id == f.active;
     let label = tr(f.locale, &tab.label_key);
-    let id = Id::unique(("settings-tab", tab.id.as_str()));
+    let id = tab_id(&tab.id);
     let response = ui.interact(rect, id, Sense::click());
     response.widget_info(|| WidgetInfo::selected(Role::Button, true, active, &label));
     ui.ctx().accesskit_node_builder(id, |node| {

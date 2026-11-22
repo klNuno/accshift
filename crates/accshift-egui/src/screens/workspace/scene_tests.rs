@@ -1161,3 +1161,35 @@ fn the_settings_rail_scrolls_to_its_last_platform() {
     wait(&mut run, 300);
     assert_eq!(active(&run).as_deref(), Some("platform:epic"));
 }
+
+/// Tab walks the rail's clipped rows too: the row it focuses scrolls into
+/// view, as a click on it would need.
+#[test]
+fn the_settings_rail_reveals_a_focused_tab() {
+    fn wait(run: &mut Run, ms: u64) {
+        let until = Instant::now() + Duration::from_millis(ms);
+        while Instant::now() < until {
+            run.frame();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    let mut run = Run::new("settings-epic-fr-light-100", 1.0);
+    run.settle();
+    wait(&mut run, 600);
+    run.click(pos2(87.0, 18.0));
+    wait(&mut run, 700);
+    assert_eq!(crate::screens::settings::rail_offset(&run.ctx), 0.0);
+    let epic = egui::Id::unique(("settings-tab", "platform:epic"));
+    for _ in 0..40 {
+        if run.ctx.memory(|m| m.has_focus(epic)) {
+            break;
+        }
+        run.key(Key::Tab);
+    }
+    assert!(
+        run.ctx.memory(|m| m.has_focus(epic)),
+        "Tab never reached Epic"
+    );
+    wait(&mut run, 300);
+    assert!(crate::screens::settings::rail_offset(&run.ctx) > 0.0);
+}
