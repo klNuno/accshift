@@ -348,6 +348,38 @@ fn read_in_budget(
     Ok(budget.spend(body.len() as u64, path).map(|()| body))
 }
 
+/// The store at `path` as [`read_json_if_exists`] reads it, its recovery
+/// copy served when it is missing or corrupt, with both reads bounded by
+/// `budget`: a file that grows after any check still stops at the limit. A
+/// corrupt store's bytes are given back once its copy is read instead.
+fn read_store_in_budget(path: &Path, budget: &mut ReadBudget) -> Result<Option<Value>, String> {
+    let primary = match read_in_budget(path, budget) {
+        Ok(Ok(body)) => match serde_json::from_slice::<Value>(&body) {
+            Ok(value) => return Ok(Some(value)),
+            Err(e) => {
+                budget.0 += body.len() as u64;
+                Err(format!("Could not parse JSON {}: {e}", path.display()))
+            }
+        },
+        Ok(Err(too_big)) => return Err(too_big),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        // A locked store may be good: its older copy must not stand in.
+        Err(e) => return Err(format!("Could not read file {}: {e}", path.display())),
+    };
+    let bak = backup_path(path);
+    if bak != path {
+        match read_in_budget(&bak, budget) {
+            Ok(Ok(body)) => match serde_json::from_slice::<Value>(&body) {
+                Ok(value) => return Ok(Some(value)),
+                Err(_) => budget.0 += body.len() as u64,
+            },
+            Ok(Err(too_big)) => return Err(too_big),
+            Err(_) => {}
+        }
+    }
+    primary
+}
+
 /// The files of `dir` that `loader` reads, each under its own file name with
 /// its source text, whatever id it declares and whether the loader accepts
 /// it. A file that is not JSON text loads nothing and is left out, and so
@@ -423,17 +455,7 @@ pub fn build_backup(app: &dyn AppContext, created_at: u64) -> Result<BackupFile,
     let mut stores = BTreeMap::new();
     for id in BACKUP_STORES {
         let path = client_store_path(app, id)?;
-        // A missing or corrupt store is read from its recovery copy: charge
-        // the larger of the two, so neither read passes the budget.
-        let size = |path: &Path| fs::metadata(path).map_or(0, |meta| meta.len());
-        let bak = backup_path(&path);
-        let (bytes, at) = if size(&bak) > size(&path) {
-            (size(&bak), &bak)
-        } else {
-            (size(&path), &path)
-        };
-        budget.spend(bytes, at)?;
-        let value = read_json_if_exists::<Value>(&path)?;
+        let value = read_store_in_budget(&path, &mut budget)?;
         let value = if id == STORE_SETTINGS {
             // Never written yet: the defaults, which a restore can apply.
             portable_settings(value.unwrap_or_else(|| Value::Object(Map::new())))
@@ -2479,6 +2501,29 @@ mod tests {
             error.contains(&bak),
             "BAK_BUDGET: the recovery copy was read before the size check: {error}"
         );
+    }
+
+    #[test]
+    fn a_store_read_never_passes_the_budget_left() {
+        // Regression (BAK_GROWS): the sizes were checked, then each file
+        // read whole, so one that grew in between passed the limit.
+        let app = ctx("store-budget");
+        let dir = app.0.join("user");
+        fs::create_dir_all(&dir).unwrap();
+        let store = dir.join("notes.json");
+        fs::write(&store, b"{not json").unwrap();
+        fs::write(backup_path(&store), br#"{"1":"recovered"}"#).unwrap();
+        // The corrupt store's bytes are given back for its copy.
+        let mut fits = ReadBudget(20);
+        let served = read_store_in_budget(&store, &mut fits);
+        // A copy past what is left fails, whatever its size was before.
+        let mut short = ReadBudget(12);
+        let refused = read_store_in_budget(&store, &mut short);
+        let _ = fs::remove_dir_all(&app.0);
+        assert_eq!(served.unwrap(), Some(json!({"1": "recovered"})));
+        assert_eq!(fits.0, 20 - 17);
+        let error = refused.unwrap_err();
+        assert!(error.contains("notes.bak"), "BAK_GROWS: {error}");
     }
 
     #[test]
