@@ -40,6 +40,15 @@ struct OriginLedger {
     items: BTreeMap<String, TcNoOriginRecord>,
 }
 
+/// How [`CurrentState::load`] finds the stores and snapshot folders.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Access {
+    /// The preview: legacy locations are read where they are, never moved.
+    ReadOnly,
+    /// The import, about to write: legacy locations migrate first.
+    Migrate,
+}
+
 /// Snapshot of accshift's current state needed to preview or deduplicate a
 /// TcNo import without modifying anything.
 struct CurrentState {
@@ -53,15 +62,26 @@ struct CurrentState {
 }
 
 impl CurrentState {
-    fn load(app: &dyn AppContext) -> Self {
+    /// Reads everything the import merges into. A file that exists but
+    /// cannot be read is an error: taken as empty, the import would write
+    /// over it. Only a missing file counts as empty.
+    fn load(app: &dyn AppContext, access: Access) -> Result<Self, String> {
         let cfg = config::load_config(app);
-        let roblox_accounts = load_roblox_accounts(app, &cfg);
-        let notes = read_notes_map(app);
-        let folders = read_folders_value(app);
-        let ubisoft_snapshots = storage::platform_snapshots_dir(app, "ubisoft").ok();
-        let epic_snapshots = storage::platform_snapshots_dir(app, "epic").ok();
-        let origins = load_origin_ledger(app);
-        Self {
+        let roblox_accounts = load_roblox_accounts(app, &cfg)?;
+        let store_path = |id: &str| match access {
+            Access::ReadOnly => storage::peek_client_store_path(app, id),
+            Access::Migrate => storage::client_store_path(app, id),
+        };
+        let notes = read_notes_map(&store_path(STORE_ACCOUNT_CARD_NOTES)?)?;
+        let folders = read_folders_value(&store_path(STORE_FOLDERS)?)?;
+        let snapshots = |id: &str| match access {
+            Access::ReadOnly => storage::peek_platform_snapshots_dir(app, id),
+            Access::Migrate => storage::platform_snapshots_dir(app, id),
+        };
+        let ubisoft_snapshots = snapshots("ubisoft").ok();
+        let epic_snapshots = snapshots("epic").ok();
+        let origins = load_origin_ledger(app)?;
+        Ok(Self {
             cfg,
             roblox_accounts,
             notes,
@@ -69,7 +89,7 @@ impl CurrentState {
             ubisoft_snapshots,
             epic_snapshots,
             origins,
-        }
+        })
     }
 
     fn account_exists(&self, acc: &PlannedAccount) -> bool {
@@ -152,22 +172,24 @@ impl CurrentState {
     fn snapshot_exists(&self, acc: &PlannedAccount) -> bool {
         let id = self.resolved_accshift_id(acc);
         match acc.platform_id {
+            // Both files or none: half a session would restore broken.
             "ubisoft" => self.ubisoft_snapshots.as_deref().is_some_and(|root| {
                 let dir = root.join(&id);
-                dir.join("user.dat").exists() || dir.join("ConnectSecureStorage.dat").exists()
+                dir.join("user.dat").is_file() && dir.join("ConnectSecureStorage.dat").is_file()
             }),
-            "epic" => self
-                .epic_snapshots
-                .as_deref()
-                .is_some_and(|root| root.join(&id).join("GameUserSettings.ini").exists()),
+            "epic" => self.epic_snapshots.as_deref().is_some_and(|root| {
+                let dir = root.join(&id);
+                dir.join("GameUserSettings.ini").is_file()
+                    && dir.join("registry_account_id.txt").is_file()
+            }),
             _ => false,
         }
     }
 }
 
 /// Compute a read-only preview of `plan` against the current state of `app`.
-pub(super) fn preview_plan(app: &dyn AppContext, plan: &ImportPlan) -> TcNoPreview {
-    let state = CurrentState::load(app);
+pub(super) fn preview_plan(app: &dyn AppContext, plan: &ImportPlan) -> Result<TcNoPreview, String> {
+    let state = CurrentState::load(app, Access::ReadOnly)?;
     let mut preview = TcNoPreview {
         path: plan.path.clone(),
         version: plan.version,
@@ -182,13 +204,14 @@ pub(super) fn preview_plan(app: &dyn AppContext, plan: &ImportPlan) -> TcNoPrevi
         preview.notes_new += stats.notes_new;
         preview.notes_existing += stats.notes_existing;
         preview.snapshots_new += stats.snapshots_new;
+        preview.order_new += stats.order_new;
         preview.to_capture += stats.to_capture;
         preview.eglv2_skipped += stats.eglv2_skipped;
         preview.vault_detected |= stats.vault_detected;
         preview.platforms.push(stats);
     }
 
-    preview
+    Ok(preview)
 }
 
 fn compute_platform_stats(state: &CurrentState, platform: &PlannedPlatform) -> TcNoPlatformPreview {
@@ -223,7 +246,22 @@ fn compute_platform_stats(state: &CurrentState, platform: &PlannedPlatform) -> T
         }
     }
 
+    if !platform.order.is_empty() {
+        let order = canonical_order(state, platform);
+        let mut folders = state.folders.clone();
+        stats.order_new = merge_platform_order(&mut folders, platform.platform_id, &order);
+    }
+
     stats
+}
+
+/// `platform`'s TcNo order, with the ids accshift already writes otherwise.
+fn canonical_order(state: &CurrentState, platform: &PlannedPlatform) -> Vec<String> {
+    platform
+        .order
+        .iter()
+        .map(|id| state.canonical_note_key(platform.platform_id, id))
+        .collect()
 }
 
 /// Apply `plan` into `app`'s config, Roblox accounts, client stores,
@@ -232,7 +270,7 @@ pub(super) fn execute_plan(
     app: &dyn AppContext,
     plan: &ImportPlan,
 ) -> Result<TcNoImportReport, String> {
-    let state = CurrentState::load(app);
+    let state = CurrentState::load(app, Access::Migrate)?;
     let now = now_unix_ms();
 
     let mut report = TcNoImportReport {
@@ -323,13 +361,8 @@ pub(super) fn execute_plan(
         }
 
         if !platform.order.is_empty() {
-            let canonical_order: Vec<String> = platform
-                .order
-                .iter()
-                .map(|id| state.canonical_note_key(platform.platform_id, id))
-                .collect();
-            let added =
-                merge_platform_order(&mut folders_val, platform.platform_id, &canonical_order);
+            let order = canonical_order(&state, platform);
+            let added = merge_platform_order(&mut folders_val, platform.platform_id, &order);
             if added > 0 {
                 report.order_entries_added += added;
                 folders_dirty = true;
@@ -499,22 +532,39 @@ fn upsert_simple(accounts: &mut Vec<SimpleAccountConfig>, acc: &PlannedAccount) 
 /// Write an encrypted snapshot into the descriptor engine's snapshot directory
 /// for Ubisoft (`user.dat` + `ConnectSecureStorage.dat`) or Epic legacy
 /// (`GameUserSettings.ini` + `registry_account_id.txt`).
+///
+/// Both files are written to a staging folder beside the snapshots folder
+/// (never inside it, where it would read as an account), then published
+/// together: half a credential set would restore as a broken
+/// session, and a later import would take it as saved.
 pub(super) fn write_snapshot(
     app: &dyn AppContext,
     acc: &PlannedAccount,
     snap: &PlannedSnapshot,
 ) -> Result<(), String> {
-    let dir = storage::platform_snapshots_dir(app, acc.platform_id)?.join(&acc.accshift_id);
-    let existed = dir.exists();
-    fs::create_dir_all(&dir)
-        .map_err(|e| format!("Could not create snapshot dir {}: {e}", dir.display()))?;
-    let written = write_snapshot_files(&dir, snap);
-    if written.is_err() && !existed {
-        // Half a credential set would restore as a broken session: a folder
-        // this import created goes with the failure.
-        let _ = fs::remove_dir_all(&dir);
+    let root = storage::platform_snapshots_dir(app, acc.platform_id)?;
+    let dir = root.join(&acc.accshift_id);
+    let staging = root
+        .parent()
+        .unwrap_or(&root)
+        .join(format!(".tcno-staging-{}", acc.accshift_id));
+    let _ = fs::remove_dir_all(&staging);
+    fs::create_dir_all(&staging)
+        .map_err(|e| format!("Could not create snapshot dir {}: {e}", staging.display()))?;
+    let published = write_snapshot_files(&staging, snap).and_then(|()| {
+        fs::create_dir_all(&root)
+            .map_err(|e| format!("Could not create snapshot dir {}: {e}", root.display()))?;
+        // Only an incomplete session can be there: a whole one is skipped.
+        if dir.exists() {
+            fs::remove_dir_all(&dir)
+                .map_err(|e| format!("Could not replace {}: {e}", dir.display()))?;
+        }
+        fs::rename(&staging, &dir).map_err(|e| format!("Could not publish {}: {e}", dir.display()))
+    });
+    if published.is_err() {
+        let _ = fs::remove_dir_all(&staging);
     }
-    written
+    published
 }
 
 fn write_snapshot_files(dir: &std::path::Path, snap: &PlannedSnapshot) -> Result<(), String> {
@@ -622,48 +672,47 @@ fn merge_platform_order(
     added
 }
 
-fn load_roblox_accounts(app: &dyn AppContext, cfg: &AppConfig) -> Vec<RobloxAccountConfig> {
-    if let Ok(path) = storage::roblox_accounts_path(app) {
-        if let Ok(Some(accounts)) = storage::read_json_if_exists::<Vec<RobloxAccountConfig>>(&path)
-        {
-            return accounts;
-        }
-    }
-    cfg.roblox.accounts.clone()
+/// The Roblox list, from its file, or from the config while there is none.
+fn load_roblox_accounts(
+    app: &dyn AppContext,
+    cfg: &AppConfig,
+) -> Result<Vec<RobloxAccountConfig>, String> {
+    let path = storage::roblox_accounts_path(app)?;
+    Ok(
+        storage::read_json_if_exists::<Vec<RobloxAccountConfig>>(&path)
+            .map_err(|e| format!("Could not read the Roblox accounts: {e}"))?
+            .unwrap_or_else(|| cfg.roblox.accounts.clone()),
+    )
 }
 
-fn read_notes_map(app: &dyn AppContext) -> Map<String, Value> {
-    let Ok(path) = storage::client_store_path(app, STORE_ACCOUNT_CARD_NOTES) else {
-        return Map::new();
-    };
-    match storage::read_json_if_exists::<Value>(&path) {
-        Ok(Some(Value::Object(map))) => map,
-        _ => Map::new(),
+fn read_notes_map(path: &std::path::Path) -> Result<Map<String, Value>, String> {
+    match storage::read_json_if_exists::<Value>(path)
+        .map_err(|e| format!("Could not read the notes: {e}"))?
+    {
+        None | Some(Value::Null) => Ok(Map::new()),
+        Some(Value::Object(map)) => Ok(map),
+        Some(_) => Err(format!(
+            "Could not read the notes: {} holds no notes",
+            path.display()
+        )),
     }
 }
 
-fn read_folders_value(app: &dyn AppContext) -> Value {
-    let Ok(path) = storage::client_store_path(app, STORE_FOLDERS) else {
-        return Value::Null;
-    };
-    match storage::read_json_if_exists::<Value>(&path) {
-        Ok(Some(val)) => val,
-        _ => Value::Null,
-    }
+fn read_folders_value(path: &std::path::Path) -> Result<Value, String> {
+    Ok(storage::read_json_if_exists::<Value>(path)
+        .map_err(|e| format!("Could not read the folders: {e}"))?
+        .unwrap_or(Value::Null))
 }
 
 fn origin_key(platform_id: &str, tcno_uid: &str) -> String {
     format!("{platform_id}:{}", tcno_uid.trim().to_ascii_lowercase())
 }
 
-fn load_origin_ledger(app: &dyn AppContext) -> OriginLedger {
-    let Ok(path) = storage::tcno_import_origins_path(app) else {
-        return OriginLedger::default();
-    };
-    storage::read_json_if_exists::<OriginLedger>(&path)
-        .ok()
-        .flatten()
-        .unwrap_or_default()
+fn load_origin_ledger(app: &dyn AppContext) -> Result<OriginLedger, String> {
+    let path = storage::tcno_import_origins_path(app)?;
+    Ok(storage::read_json_if_exists::<OriginLedger>(&path)
+        .map_err(|e| format!("Could not read the TcNo import record: {e}"))?
+        .unwrap_or_default())
 }
 
 fn save_origin_ledger(app: &dyn AppContext, ledger: &OriginLedger) -> Result<(), String> {
@@ -677,5 +726,5 @@ fn save_origin_ledger(app: &dyn AppContext, ledger: &OriginLedger) -> Result<(),
 
 #[cfg(all(test, windows))]
 pub(super) fn read_origins_for_test(app: &dyn AppContext) -> BTreeMap<String, TcNoOriginRecord> {
-    load_origin_ledger(app).items
+    load_origin_ledger(app).unwrap().items
 }

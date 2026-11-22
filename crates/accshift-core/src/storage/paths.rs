@@ -113,6 +113,27 @@ pub(super) fn old_legacy_snapshots_name(platform_id: &str) -> Option<&'static st
     }
 }
 
+/// [`platform_snapshots_dir`] for a reader that must change nothing: the
+/// legacy folder while only it exists, never migrated.
+pub fn peek_platform_snapshots_dir(
+    app_handle: &dyn AppContext,
+    platform_id: &str,
+) -> Result<PathBuf, String> {
+    let target = app_local_data_root(app_handle)?
+        .join("platforms")
+        .join(platform_id)
+        .join("snapshots");
+    if !target.exists() {
+        if let Some(name) = old_legacy_snapshots_name(platform_id) {
+            let old_legacy = legacy_app_data_root(app_handle)?.join(name);
+            if old_legacy.exists() {
+                return Ok(old_legacy);
+            }
+        }
+    }
+    Ok(target)
+}
+
 /// Snapshot directory for a platform (`<local data>/platforms/<id>/snapshots`),
 /// migrating any legacy locations to it on first access.
 pub fn platform_snapshots_dir(

@@ -21,6 +21,8 @@ mod test_support;
 mod tests;
 #[cfg(test)]
 mod tests_edge;
+#[cfg(test)]
+mod tests_safety;
 
 use crate::AppContext;
 use serde::{Deserialize, Serialize};
@@ -73,6 +75,8 @@ pub struct TcNoPlatformPreview {
     pub notes_new: usize,
     pub notes_existing: usize,
     pub snapshots_new: usize,
+    /// Accounts the import would add to the platform's order.
+    pub order_new: usize,
     pub to_capture: usize,
     pub eglv2_skipped: usize,
     pub vault_detected: bool,
@@ -90,6 +94,8 @@ pub struct TcNoPreview {
     pub notes_new: usize,
     pub notes_existing: usize,
     pub snapshots_new: usize,
+    /// Accounts the import would add to the platform's order.
+    pub order_new: usize,
     pub to_capture: usize,
     pub eglv2_skipped: usize,
     pub vault_detected: bool,
@@ -128,7 +134,7 @@ pub fn default_tcno_root() -> Option<PathBuf> {
 pub fn preview_tcno_import(app: &dyn AppContext, root: &Path) -> Result<TcNoPreview, String> {
     let scan = reader::scan_root(root)?;
     let plan = mapper::build_plan(scan);
-    Ok(apply::preview_plan(app, &plan))
+    apply::preview_plan(app, &plan)
 }
 
 /// Import accounts, labels, notes, order and eligible Ubisoft/Epic legacy
