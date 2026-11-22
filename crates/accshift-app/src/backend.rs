@@ -124,9 +124,11 @@ pub trait Backend: Send + Sync {
     /// that does not read. Writes nothing.
     fn backup_preview(&self, path: &str) -> BackendResult<BackupPreview>;
     /// Copies the current files to `user/backups/pre-restore-<timestamp>/`,
-    /// then replaces the stores with the backup's. A failure says whether
-    /// it left restored files it could not put back.
-    fn backup_restore(&self, path: &str) -> Result<BackupReport, RestoreError>;
+    /// then replaces the stores with the backup's. Refused, with nothing
+    /// written, when the file is no longer the one whose preview answered
+    /// `digest`. A failure says whether it left restored files it could not
+    /// put back.
+    fn backup_restore(&self, path: &str, digest: &str) -> Result<BackupReport, RestoreError>;
 
     // ---------------------------------------------------------------- utility
 

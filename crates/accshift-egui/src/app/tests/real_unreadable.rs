@@ -132,7 +132,10 @@ fn a_restore_whose_descriptors_do_not_all_read_asks_for_a_restart() {
     let Some(lock) = unreadable(&locked) else {
         return;
     };
-    app.start_backup_restore(file.display().to_string());
+    let digest = accshift_core::storage::preview_backup(&file)
+        .unwrap()
+        .digest;
+    app.start_backup_restore(file.display().to_string(), digest);
     pump_until(&mut app, &ctx, "the restore never ended", |a| {
         a.backup.restart_needed() || !a.backup.holds_writes()
     });

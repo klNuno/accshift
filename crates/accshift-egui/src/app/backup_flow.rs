@@ -218,6 +218,8 @@ enum Stage {
     /// Waiting for the writes and reads already running.
     Draining {
         path: String,
+        /// The digest of the previewed file a restore applies.
+        digest: String,
         purpose: Purpose,
         /// A write that failed while draining: the backup does not run.
         failed: Option<String>,
@@ -252,8 +254,8 @@ pub(super) struct BackupFlow {
     pub(super) card: BackupState,
     pub(super) gate: WriteGate,
     job: Option<(Pending<BackendResult<BackupDone>>, BackupStep)>,
-    /// The previewed file the confirm is about, and its ticket.
-    pending_restore: Option<(String, ConfirmTicket)>,
+    /// The previewed file the confirm is about, its digest and its ticket.
+    pending_restore: Option<(String, String, ConfirmTicket)>,
     stage: Stage,
 }
 
@@ -361,11 +363,12 @@ fn with_one(locale: Locale, key: &str, name: &str, value: String) -> String {
     Text::with(key, [(name, TranslationValue::Str(value))]).resolve(locale)
 }
 
-/// The restore job: the files, then the descriptors, the stores and the
-/// themes read back. Descriptors not all read count as not reloaded: the
-/// settings would be checked against platforms that may lack one.
-fn restore_job(b: &dyn Backend, path: &str) -> Result<Restored, RestoreError> {
-    let report = b.backup_restore(path)?;
+/// The restore job: the files, if still the ones of `digest`, then the
+/// descriptors, the stores and the themes read back. Descriptors not all
+/// read count as not reloaded: the settings would be checked against
+/// platforms that may lack one.
+fn restore_job(b: &dyn Backend, path: &str, digest: &str) -> Result<Restored, RestoreError> {
+    let report = b.backup_restore(path, digest)?;
     let platforms = b
         .reload_user_platforms()
         .ok()
@@ -447,13 +450,15 @@ impl AppModel {
                 self.backup.set_notice(text, true);
             }
             Ok(BackupDone::Picked(None)) => {}
-            Ok(BackupDone::ExportTo(path)) => self.hold_boundary(path, Purpose::Export),
+            Ok(BackupDone::ExportTo(path)) => {
+                self.hold_boundary(path, String::new(), Purpose::Export)
+            }
             Ok(BackupDone::Picked(Some((path, preview)))) => {
                 let mut effects = Vec::new();
                 let ticket = self
                     .dialogs
                     .request_confirm(restore_confirm(&preview, locale), &mut effects);
-                self.backup.pending_restore = Some((path, ticket));
+                self.backup.pending_restore = Some((path, preview.digest, ticket));
                 self.apply_effects(ctx, effects);
             }
         }
@@ -462,28 +467,29 @@ impl AppModel {
     /// The restore confirm settled: an allowed restore sends the panel's
     /// draft to the stores, then waits behind the boundary.
     pub(super) fn settle_backup_restore(&mut self, ticket: ConfirmTicket, allowed: bool) {
-        let Some((path, pending)) = self.backup.pending_restore.take() else {
+        let Some((path, digest, pending)) = self.backup.pending_restore.take() else {
             return;
         };
         if pending != ticket {
-            self.backup.pending_restore = Some((path, pending));
+            self.backup.pending_restore = Some((path, digest, pending));
             return;
         }
         if allowed {
-            self.start_backup_restore(path);
+            self.start_backup_restore(path, digest);
         }
     }
 
-    /// Starts the restore of `path` behind the boundary.
-    pub(super) fn start_backup_restore(&mut self, path: String) {
+    /// Starts the restore of `path`, the file whose preview answered
+    /// `digest`, behind the boundary.
+    pub(super) fn start_backup_restore(&mut self, path: String, digest: String) {
         if self.backup.holds_writes() {
             return;
         }
-        self.hold_boundary(path, Purpose::Restore);
+        self.hold_boundary(path, digest, Purpose::Restore);
     }
 
     /// Raises the boundary for an export to, or a restore from, `path`.
-    fn hold_boundary(&mut self, path: String, purpose: Purpose) {
+    fn hold_boundary(&mut self, path: String, digest: String, purpose: Purpose) {
         if self.booted.is_none() {
             return;
         }
@@ -500,6 +506,7 @@ impl AppModel {
         self.backup.set_notice(String::new(), false);
         self.backup.set_stage(Stage::Draining {
             path,
+            digest,
             purpose,
             failed: None,
         });
@@ -531,6 +538,7 @@ impl AppModel {
         }
         let Stage::Draining {
             path,
+            digest,
             purpose,
             failed,
         } = std::mem::take(&mut self.backup.stage)
@@ -549,7 +557,9 @@ impl AppModel {
         }
         let stage = match purpose {
             Purpose::Export => Stage::Exporting(self.jobs.run(move |b| b.backup_export(&path))),
-            Purpose::Restore => Stage::Restoring(self.jobs.run(move |b| restore_job(b, &path))),
+            Purpose::Restore => {
+                Stage::Restoring(self.jobs.run(move |b| restore_job(b, &path, &digest)))
+            }
         };
         self.backup.set_stage(stage);
     }

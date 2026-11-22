@@ -284,8 +284,8 @@ impl Backend for RealBackend {
     fn backup_preview(&self, path: &str) -> BackendResult<BackupPreview> {
         backup::preview(path)
     }
-    fn backup_restore(&self, path: &str) -> Result<BackupReport, RestoreError> {
-        backup::restore(&self.ctx, path)
+    fn backup_restore(&self, path: &str, digest: &str) -> Result<BackupReport, RestoreError> {
+        backup::restore(&self.ctx, path, digest)
     }
     fn open_url(&self, url: &str) -> BackendResult<()> {
         utility::open_url(url)

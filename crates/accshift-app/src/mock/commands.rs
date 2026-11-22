@@ -188,7 +188,7 @@ impl Backend for MockBackend {
     fn backup_preview(&self, path: &str) -> BackendResult<BackupPreview> {
         self.call("backup_preview", json!({ "path": path }))
     }
-    fn backup_restore(&self, path: &str) -> Result<BackupReport, RestoreError> {
+    fn backup_restore(&self, path: &str, _digest: &str) -> Result<BackupReport, RestoreError> {
         let answer = self.call("backup_restore", json!({ "path": path }));
         if let Some(message) = self.lock().restore_left.clone() {
             return Err(RestoreError {
@@ -344,16 +344,18 @@ impl Backend for MockBackend {
         self.call("roblox_check_sessions", json!({}))
     }
     fn list_custom_themes(&self) -> BackendResult<Vec<CustomTheme>> {
+        self.read_custom_themes().map(|list| list.themes)
+    }
+    /// One read of the locked themes for the list and its `complete` flag:
+    /// a theme locked between two reads would be left out of a list that
+    /// says it is whole.
+    fn read_custom_themes(&self) -> BackendResult<CustomThemeList> {
         let mut themes: Vec<CustomTheme> = self.call("list_custom_themes", json!({}))?;
         let locked = self.lock().locked_themes.clone();
         themes.retain(|theme| !locked.contains(&theme.id));
-        Ok(themes)
-    }
-    fn read_custom_themes(&self) -> BackendResult<CustomThemeList> {
-        let themes = self.list_custom_themes()?;
         Ok(CustomThemeList {
             themes,
-            complete: self.lock().locked_themes.is_empty(),
+            complete: locked.is_empty(),
         })
     }
     fn save_custom_theme(&self, theme: &CustomTheme) -> BackendResult<()> {

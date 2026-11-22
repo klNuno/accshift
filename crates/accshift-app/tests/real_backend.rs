@@ -544,7 +544,9 @@ fn a_restored_folder_keeps_accounts_a_partial_load_misses() {
     source.backup_export(&file.display().to_string()).unwrap();
 
     let (_to, real) = backend("restore-partial-to");
-    real.backup_restore(&file.display().to_string()).unwrap();
+    let path = file.display().to_string();
+    let digest = real.backup_preview(&path).unwrap().digest;
+    real.backup_restore(&path, &digest).unwrap();
     let load = |real: &RealBackend| {
         ClientStores::new(
             ClientStorage::from_snapshot(real.load_client_storage_snapshot().unwrap()),

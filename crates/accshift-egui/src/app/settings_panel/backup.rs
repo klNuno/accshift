@@ -75,6 +75,7 @@ mod tests {
             themes: 4,
             descriptors: 0,
             has_settings: true,
+            digest: String::new(),
         }
     }
 

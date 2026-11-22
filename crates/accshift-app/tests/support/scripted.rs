@@ -357,12 +357,12 @@ impl Backend for Scripted {
         }
         self.inner.backup_preview(path)
     }
-    fn backup_restore(&self, path: &str) -> Result<BackupReport, RestoreError> {
-        self.record("backup_restore", format!("{:?}", (&path,)));
+    fn backup_restore(&self, path: &str, digest: &str) -> Result<BackupReport, RestoreError> {
+        self.record("backup_restore", format!("{:?}", (&path, &digest)));
         if let Some(answer) = self.next("backup_restore") {
             return answer.map_err(RestoreError::from);
         }
-        self.inner.backup_restore(path)
+        self.inner.backup_restore(path, digest)
     }
     fn descriptor_select_file(&self) -> BackendResult<String> {
         self.record("descriptor_select_file", String::new());

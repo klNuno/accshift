@@ -42,6 +42,9 @@
 //!
 //! The settings must be a JSON object, checked by the same function on export
 //! and on restore: an export never writes a backup its restore refuses.
+//! An export never writes over a file the app reads (a store, its `.bak`,
+//! the portable config, a theme or descriptor), and a restore after a
+//! preview applies the bytes that preview read or nothing.
 
 #[allow(unused_imports)]
 use super::*;
@@ -109,6 +112,10 @@ pub struct BackupPreview {
     pub themes: usize,
     pub descriptors: usize,
     pub has_settings: bool,
+    /// SHA-256 of the file's bytes, hex: the restore of a preview checks
+    /// it against the bytes it plans from.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub digest: String,
 }
 
 /// Why a restore failed, and whether it left restored files behind.
@@ -269,9 +276,9 @@ fn destination_key(name: &str) -> String {
 }
 
 /// The file a descriptor or theme key of a backup restores to: the key
-/// itself, a file name. `None` refuses it.
-fn file_name_of_key(key: &str) -> Option<&str> {
-    is_contained_json_name(key).then_some(key)
+/// itself, a file name its `loader` reads. `None` refuses it.
+fn file_name_of_key(key: &str, loader: Loader) -> Option<&str> {
+    (is_contained_json_name(key) && loader.reads(Path::new(key))).then_some(key)
 }
 
 /// Which files of a folder its loader reads.
@@ -300,13 +307,58 @@ impl Loader {
     }
 }
 
+/// The bytes an export may still read: the sources of a backup a restore
+/// can read add up to less than its size limit, so the export stops at the
+/// file that passes it, before reading more. The encoded backup is checked
+/// again once written, for its escapes and envelope.
+struct ReadBudget(u64);
+
+impl ReadBudget {
+    fn new() -> Self {
+        Self(MAX_JSON_STORE_BYTES)
+    }
+
+    /// Counts `bytes` read from `path`, or fails once they pass the limit.
+    fn spend(&mut self, bytes: u64, path: &Path) -> Result<(), String> {
+        if bytes > self.0 {
+            return Err(too_big_at(path));
+        }
+        self.0 -= bytes;
+        Ok(())
+    }
+}
+
+fn too_big_at(path: &Path) -> String {
+    format!(
+        "The backup would pass {MAX_JSON_STORE_BYTES} bytes at {}, too big for a restore to read",
+        path.display()
+    )
+}
+
+/// The bytes of `path`, read no further than `budget` allows.
+fn read_in_budget(
+    path: &Path,
+    budget: &mut ReadBudget,
+) -> std::io::Result<Result<Vec<u8>, String>> {
+    use std::io::Read;
+    let mut body = Vec::new();
+    fs::File::open(path)?
+        .take(budget.0.saturating_add(1))
+        .read_to_end(&mut body)?;
+    Ok(budget.spend(body.len() as u64, path).map(|()| body))
+}
+
 /// The files of `dir` that `loader` reads, each under its own file name with
 /// its source text, whatever id it declares and whether the loader accepts
 /// it. A file that is not JSON text loads nothing and is left out, and so
 /// are a folder and a file gone since `dir` was listed. A file whose metadata or bytes cannot
 /// be read, or whose name a backup cannot carry, fails the export rather
-/// than be left out.
-fn read_loaded_dir(dir: &Path, loader: Loader) -> Result<BTreeMap<String, Value>, String> {
+/// than be left out, and so does one past the `budget`.
+fn read_loaded_dir(
+    dir: &Path,
+    loader: Loader,
+    budget: &mut ReadBudget,
+) -> Result<BTreeMap<String, Value>, String> {
     let gone = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
     let mut out = BTreeMap::new();
     for entry in dir_entries(dir)? {
@@ -315,6 +367,10 @@ fn read_loaded_dir(dir: &Path, loader: Loader) -> Result<BTreeMap<String, Value>
             continue;
         }
         match fs::metadata(&path) {
+            // Past the budget: refused before it is read.
+            Ok(meta) if meta.is_file() && meta.len() > budget.0 => {
+                return Err(too_big_at(&path));
+            }
             Ok(meta) if meta.is_file() => {}
             Ok(_) => continue,
             // Removed since the folder was listed: no longer loaded either.
@@ -332,8 +388,8 @@ fn read_loaded_dir(dir: &Path, loader: Loader) -> Result<BTreeMap<String, Value>
                 path.display()
             ));
         };
-        let body = match fs::read(&path) {
-            Ok(body) => body,
+        let body = match read_in_budget(&path, budget) {
+            Ok(body) => body?,
             Err(e) if gone(&e) => continue,
             Err(e) => return Err(format!("Could not read {}: {e}", path.display())),
         };
@@ -363,9 +419,13 @@ fn portable_settings(value: Value) -> Value {
 
 /// Builds the backup of the current setup, without writing it.
 pub fn build_backup(app: &dyn AppContext, created_at: u64) -> Result<BackupFile, String> {
+    let mut budget = ReadBudget::new();
     let mut stores = BTreeMap::new();
     for id in BACKUP_STORES {
         let path = client_store_path(app, id)?;
+        if let Ok(meta) = fs::metadata(&path) {
+            budget.spend(meta.len(), &path)?;
+        }
         let value = read_json_if_exists::<Value>(&path)?;
         let value = if id == STORE_SETTINGS {
             // Never written yet: the defaults, which a restore can apply.
@@ -381,30 +441,100 @@ pub fn build_backup(app: &dyn AppContext, created_at: u64) -> Result<BackupFile,
         created_at,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         stores,
-        themes: read_loaded_dir(&themes_dir(app)?, Loader::Themes)?,
+        themes: read_loaded_dir(&themes_dir(app)?, Loader::Themes, &mut budget)?,
         descriptors: read_loaded_dir(
             &crate::platforms::descriptor::user_dir(app)?,
             Loader::Descriptors,
+            &mut budget,
         )?,
     })
 }
 
-/// Writes the backup of the current setup to `target`.
+/// Writes the backup of the current setup to `target`, which must not be
+/// a file the app manages.
 pub fn export_backup(app: &dyn AppContext, target: &Path) -> Result<BackupReport, String> {
+    if let Some(managed) = managed_file_at(app, target)? {
+        return Err(format!(
+            "{} is accshift's own {managed}: a backup written there would replace it, choose another file",
+            target.display()
+        ));
+    }
     let backup = build_backup(app, now_s())?;
-    write_backup(&backup, target)?;
+    let digest = write_backup(&backup, target)?;
+    let mut preview = preview_of(&backup, target);
+    preview.digest = digest;
     Ok(BackupReport {
-        preview: preview_of(&backup, target),
+        preview,
         pre_restore_dir: String::new(),
     })
+}
+
+/// `path` with its folder resolved (links, `..`, and on Windows the case
+/// of the folder names); `path` itself when the folder cannot be resolved.
+fn resolved(path: &Path) -> PathBuf {
+    if let Ok(path) = fs::canonicalize(path) {
+        return path;
+    }
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return path.to_path_buf();
+    };
+    let parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
+    fs::canonicalize(parent).map_or_else(|_| path.to_path_buf(), |parent| parent.join(name))
+}
+
+/// What two paths that name one file have in common once resolved: Windows
+/// and macOS ignore case.
+fn same_file_key(path: &Path) -> String {
+    let text = resolved(path).to_string_lossy().into_owned();
+    if cfg!(any(windows, target_os = "macos")) {
+        destination_key(&text)
+    } else {
+        text
+    }
+}
+
+/// What `target` is when it names a file the app reads: a store under
+/// `user/`, its `.bak` recovery copy, the portable config, or a file of the
+/// theme or descriptor folder. `None` for any other file, a backup too.
+fn managed_file_at(app: &dyn AppContext, target: &Path) -> Result<Option<&'static str>, String> {
+    let key = same_file_key(target);
+    let mut files = Vec::new();
+    for id in BACKUP_STORES {
+        let path = client_store_path(app, id)?;
+        files.push((backup_path(&path), "recovery copy of a store"));
+        files.push((path, "store"));
+    }
+    let portable = portable_config_path(app)?;
+    files.push((backup_path(&portable), "recovery copy of its config"));
+    files.push((portable, "config"));
+    if let Some((_, what)) = files.iter().find(|(path, _)| same_file_key(path) == key) {
+        return Ok(Some(what));
+    }
+    let folder = target.parent().map(same_file_key);
+    for (dir, what) in [
+        (themes_dir(app)?, "theme folder"),
+        (
+            crate::platforms::descriptor::user_dir(app)?,
+            "descriptor folder",
+        ),
+    ] {
+        if folder.as_ref() == Some(&same_file_key(&dir)) {
+            return Ok(Some(what));
+        }
+    }
+    Ok(None)
 }
 
 /// Writes `backup` to `target`, unless a restore would refuse it: the
 /// checks [`read_backup`] makes run first, so settings that are not an
 /// object, or two files only a case-sensitive folder keeps apart (`A.json`,
 /// `a.json`), fail the export rather than make a backup no restore reads,
-/// even on this PC.
-fn write_backup(backup: &BackupFile, target: &Path) -> Result<(), String> {
+/// even on this PC. Answers the digest of the bytes written.
+fn write_backup(backup: &BackupFile, target: &Path) -> Result<String, String> {
     check_contents(backup).map_err(|e| format!("{e}; a restore would refuse it"))?;
     let body = serde_json::to_vec_pretty(backup)
         .map_err(|e| format!("Could not encode the backup: {e}"))?;
@@ -415,12 +545,27 @@ fn write_backup(backup: &BackupFile, target: &Path) -> Result<(), String> {
             body.len()
         ));
     }
-    write_bytes_atomic(target, &body)
+    write_bytes_atomic(target, &body)?;
+    Ok(digest_of(&body))
+}
+
+/// SHA-256 of `bytes`, hex.
+fn digest_of(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// Reads and checks a backup file: refused when it is too big, does not
 /// parse, is not a backup or comes from a newer format.
 pub fn read_backup(path: &Path) -> Result<BackupFile, String> {
+    read_backup_digest(path).map(|(backup, _)| backup)
+}
+
+/// [`read_backup`], with the digest of the bytes it read.
+fn read_backup_digest(path: &Path) -> Result<(BackupFile, String), String> {
     let meta = fs::metadata(path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
     if meta.len() > MAX_JSON_STORE_BYTES {
         return Err(format!("{} is too big to be a backup", path.display()));
@@ -444,7 +589,7 @@ pub fn read_backup(path: &Path) -> Result<BackupFile, String> {
         .map_err(|e| format!("{} is not a readable backup: {e}", path.display()))?;
     // Checked whole before anything is written.
     check_contents(&backup).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(backup)
+    Ok((backup, digest_of(&raw)))
 }
 
 /// What an export and a restore both check: settings that are an object,
@@ -493,8 +638,10 @@ fn check_file_names<'a>(
     let kind = loader.kind();
     let mut names: HashMap<String, String> = HashMap::new();
     for key in keys {
-        let Some(name) = file_name_of_key(key) else {
-            return Err(format!("the backup names an unsafe {kind} file `{key}`"));
+        let Some(name) = file_name_of_key(key, loader) else {
+            return Err(format!(
+                "the backup names an unsafe {kind} file `{key}`, or one the {kind} loader does not read"
+            ));
         };
         if let Some(reason) = unwritable_reason(name, cfg!(windows)) {
             return Err(format!(
@@ -535,12 +682,17 @@ pub fn preview_of(backup: &BackupFile, path: &Path) -> BackupPreview {
         themes: backup.themes.len(),
         descriptors: backup.descriptors.len(),
         has_settings: store(STORE_SETTINGS).is_some(),
+        // The bytes are the caller's: the file read or written.
+        digest: String::new(),
     }
 }
 
 /// Reads `path` and answers what it holds, writing nothing.
 pub fn preview_backup(path: &Path) -> Result<BackupPreview, String> {
-    read_backup(path).map(|backup| preview_of(&backup, path))
+    let (backup, digest) = read_backup_digest(path)?;
+    let mut preview = preview_of(&backup, path);
+    preview.digest = digest;
+    Ok(preview)
 }
 
 /// `YYYYMMDD-HHMMSS` in UTC.
@@ -607,14 +759,11 @@ impl PlannedWrite {
 
     /// Writes `bytes` to the file, renamed over it or not at all: a write
     /// that fails leaves the file and its `.bak` as they were, never a copy
-    /// over either. A `.bak` older than the bytes written then goes, as
-    /// after any atomic write; the rollback puts back the one it replaced.
+    /// over either. The `.bak`, now older than the file, is the restore's to
+    /// remove, apart from this write: the rollback puts the file back
+    /// without trying again a removal that just failed.
     fn put(&self, bytes: &[u8]) -> Result<(), String> {
-        write_bytes_replacing(&self.path, bytes)?;
-        if self.bak_path != self.path {
-            let _ = fs::remove_file(&self.bak_path);
-        }
-        Ok(())
+        write_bytes_replacing(&self.path, bytes)
     }
 
     /// Whether `path` holds `bytes`, `None` meaning no file.
@@ -669,6 +818,17 @@ fn plan_restore(app: &dyn AppContext, backup: &BackupFile) -> Result<Vec<Planned
         } else {
             Some(encode(value)?)
         };
+        // Written pretty, a store can pass the size its read refuses, and
+        // then never load again.
+        if let Some(bytes) = next
+            .as_ref()
+            .filter(|b| b.len() as u64 > MAX_JSON_STORE_BYTES)
+        {
+            return Err(format!(
+                "the {id} store would be {} bytes once written, more than accshift reads (limit {MAX_JSON_STORE_BYTES})",
+                bytes.len()
+            ));
+        }
         let name = path.file_name().map(PathBuf::from).unwrap_or_default();
         plan.push(PlannedWrite::new(
             path,
@@ -679,7 +839,7 @@ fn plan_restore(app: &dyn AppContext, backup: &BackupFile) -> Result<Vec<Planned
     // Each file back under its own name, so the loader chooses as before.
     let themes = themes_dir(app)?;
     for (key, value) in &backup.themes {
-        let Some(name) = file_name_of_key(key) else {
+        let Some(name) = file_name_of_key(key, Loader::Themes) else {
             return Err(format!("the backup names an unsafe theme file `{key}`"));
         };
         plan.push(PlannedWrite::new(
@@ -690,7 +850,7 @@ fn plan_restore(app: &dyn AppContext, backup: &BackupFile) -> Result<Vec<Planned
     }
     let descriptors = crate::platforms::descriptor::user_dir(app)?;
     for (key, value) in &backup.descriptors {
-        let Some(name) = file_name_of_key(key) else {
+        let Some(name) = file_name_of_key(key, Loader::Descriptors) else {
             return Err(format!(
                 "the backup names an unsafe descriptor file `{key}`"
             ));
@@ -765,7 +925,7 @@ fn put_back(written: &[&PlannedWrite]) -> Vec<String> {
         if let Err(error) = result {
             failures.push(format!("{} ({error})", write.path.display()));
         }
-        // Written last: putting the file back drops a stale .bak.
+        // Written last, once the file is back.
         if let Some(bytes) = &write.previous_bak {
             if PlannedWrite::holds(&write.bak_path, Some(bytes)) {
                 continue;
@@ -802,7 +962,19 @@ fn failed_restore(error: String, written: &[&PlannedWrite], copy_dir: &Path) -> 
 /// reads and checks; see the module documentation. A failure says whether
 /// it left restored files behind.
 pub fn restore_backup(app: &dyn AppContext, path: &Path) -> Result<BackupReport, RestoreError> {
-    restore_backup_at(app, path, now_s())
+    restore_checked(app, path, None, now_s())
+}
+
+/// [`restore_backup`] of the file a preview showed: refused, with nothing
+/// written, when the bytes at `path` are no longer the ones of `digest`
+/// ([`BackupPreview::digest`]), as when a sync client replaced the file
+/// since the preview.
+pub fn restore_previewed(
+    app: &dyn AppContext,
+    path: &Path,
+    digest: &str,
+) -> Result<BackupReport, RestoreError> {
+    restore_checked(app, path, Some(digest), now_s())
 }
 
 /// [`restore_backup`] with the clock given, for the pre-restore folder name.
@@ -811,7 +983,22 @@ pub fn restore_backup_at(
     path: &Path,
     now_s: u64,
 ) -> Result<BackupReport, RestoreError> {
-    let backup = read_backup(path)?;
+    restore_checked(app, path, None, now_s)
+}
+
+fn restore_checked(
+    app: &dyn AppContext,
+    path: &Path,
+    expected: Option<&str>,
+    now_s: u64,
+) -> Result<BackupReport, RestoreError> {
+    let (backup, digest) = read_backup_digest(path)?;
+    if expected.is_some_and(|expected| expected != digest) {
+        return Err(RestoreError::untouched(format!(
+            "{} changed since its preview: open it again to see what it holds",
+            path.display()
+        )));
+    }
     let plan = plan_restore(app, &backup)?;
 
     let copy_dir = pre_restore_dir(app, now_s)?;
@@ -838,9 +1025,9 @@ pub fn restore_backup_at(
         if let Err(error) = result {
             return Err(failed_restore(error, &written, &copy_dir));
         }
-        if write.next.is_none() && write.bak_path != write.path {
-            // A stale .bak would bring the removed store back on the next
-            // read: one that stays fails the restore.
+        if write.bak_path != write.path {
+            // A stale .bak would bring the old store back on the next read
+            // that misses the file: one that stays fails the restore.
             let removed = injected(Step::RemoveBak, &write.bak_path)
                 .and_then(|()| remove_if_there(&write.bak_path));
             if let Err(error) = removed {
@@ -848,8 +1035,10 @@ pub fn restore_backup_at(
             }
         }
     }
+    let mut preview = preview_of(&backup, path);
+    preview.digest = digest;
     Ok(BackupReport {
-        preview: preview_of(&backup, path),
+        preview,
         pre_restore_dir: copy_dir.display().to_string(),
     })
 }
@@ -2172,6 +2361,175 @@ mod tests {
         let _ = fs::remove_dir_all(&to.0);
         assert!(left.left_restored, "{left}");
         assert!(!whole.left_restored, "{whole}");
+    }
+
+    #[test]
+    fn an_export_never_writes_over_a_file_the_app_reads() {
+        // Regression (EXPORT_OVER_STORE): the export read the settings,
+        // then wrote the backup envelope over them as the target.
+        let app = ctx("export-managed");
+        seed(&app);
+        let settings = client_store_path(&app, STORE_SETTINGS).unwrap();
+        let notes = client_store_path(&app, STORE_ACCOUNT_CARD_NOTES).unwrap();
+        fs::write(backup_path(&notes), br#"{"765":"older"}"#).unwrap();
+        let mut managed = vec![
+            settings.clone(),
+            backup_path(&notes),
+            portable_config_path(&app).unwrap(),
+            themes_dir(&app).unwrap().join("midnight.json"),
+            crate::platforms::descriptor::user_dir(&app)
+                .unwrap()
+                .join("new.json"),
+        ];
+        if cfg!(windows) {
+            let name = settings
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_uppercase();
+            managed.push(settings.with_file_name(name));
+        }
+        let before = tree(&app.0);
+        for target in &managed {
+            let result = export_backup(&app, target);
+            assert!(
+                result.is_err(),
+                "EXPORT_OVER_STORE: exported over {}",
+                target.display()
+            );
+        }
+        let after = tree(&app.0);
+        // A backup file, new or there already, is still a destination.
+        let file = app.0.join("accshift-backup.json");
+        export_backup(&app, &file).unwrap();
+        export_backup(&app, &file).unwrap();
+        let _ = fs::remove_dir_all(&app.0);
+        assert_eq!(after, before, "a managed file changed");
+    }
+
+    #[test]
+    fn a_restore_after_a_preview_refuses_a_file_changed_since() {
+        // Regression (PREVIEW_SWAP): the restore applied whatever file was
+        // at the path once confirmed, not the one the preview showed.
+        let from = ctx("swap-from");
+        seed(&from);
+        let file = from.0.join("b.json");
+        export_backup(&from, &file).unwrap();
+        let preview = preview_backup(&file).unwrap();
+        assert_eq!(preview.digest.len(), 64);
+        // A sync client replaces it with another valid backup.
+        let other = file_with_settings(&from.0, json!({"language": "es"}));
+        fs::copy(&other, &file).unwrap();
+
+        let to = ctx("swap-to");
+        let before = tree(&to.0);
+        let result = restore_previewed(&to, &file, &preview.digest);
+        let after = tree(&to.0);
+        let again = restore_previewed(&to, &file, &preview_backup(&file).unwrap().digest);
+        let _ = fs::remove_dir_all(&from.0);
+        let _ = fs::remove_dir_all(&to.0);
+        let error = result.expect_err("PREVIEW_SWAP: restored a file the preview never showed");
+        assert!(!error.left_restored);
+        assert!(
+            error.message.contains("changed since its preview"),
+            "{error}"
+        );
+        assert_eq!(after, before);
+        // Previewed again, the new file restores.
+        again.unwrap();
+    }
+
+    #[test]
+    fn a_source_past_the_size_limit_fails_the_export_before_it_is_read() {
+        // Regression (READ_BUDGET): every file was read whole, then the
+        // encoded backup measured, so a huge file was read into memory
+        // before the size error.
+        let app = ctx("read-budget");
+        let dir = crate::platforms::descriptor::user_dir(&app).unwrap();
+        fs::create_dir_all(&dir).unwrap();
+        let pad = "x".repeat(MAX_JSON_STORE_BYTES as usize);
+        fs::write(dir.join("huge.json"), format!(r#"{{"pad":"{pad}"}}"#)).unwrap();
+        let result = export_backup(&app, &app.0.join("out.json"));
+        let _ = fs::remove_dir_all(&app.0);
+        let error = result.unwrap_err();
+        assert!(
+            error.contains("huge.json"),
+            "READ_BUDGET: the file was read before the size check: {error}"
+        );
+    }
+
+    #[test]
+    fn a_theme_name_the_theme_loader_skips_refuses_the_restore() {
+        // Regression (THEME_EXT): `Mine.JSON` passed the checks and was
+        // restored, though the theme loader reads lower case `.json` only.
+        let to = ctx("theme-ext");
+        let file = file_with_entries(&to.0, "upper", "themes", json!({"Mine.JSON": THEME}));
+        let before = tree(&to.0);
+        let preview = preview_backup(&file);
+        let restore = restore_backup(&to, &file);
+        let after = tree(&to.0);
+        // A descriptor keeps its upper case extension.
+        let acme = descriptor(&to, "acme", "Acme", &EVERY_OS);
+        let descriptors = file_with_descriptors(&to.0, "upper", json!({"Acme.JSON": acme}));
+        let descriptor_restore = restore_backup(&to, &descriptors);
+        let _ = fs::remove_dir_all(&to.0);
+        assert!(preview.is_err(), "THEME_EXT: previewed {preview:?}");
+        assert!(restore.is_err(), "THEME_EXT: restored");
+        assert_eq!(after, before);
+        descriptor_restore.unwrap();
+    }
+
+    #[test]
+    fn a_recovery_copy_of_a_replaced_store_that_cannot_be_removed_fails_the_restore() {
+        // Regression (BAK_KEPT): the old `.bak` stayed beside the restored
+        // notes and the restore said it went through.
+        let to = ctx("bak-kept");
+        save_client_store(&to, STORE_ACCOUNT_CARD_NOTES, &json!({"765": "old"})).unwrap();
+        let notes = client_store_path(&to, STORE_ACCOUNT_CARD_NOTES).unwrap();
+        fs::write(backup_path(&notes), br#"{"765":"older"}"#).unwrap();
+        let primary = fs::read(&notes).unwrap();
+        let file = to.0.join("notes.json");
+        let body = json!({
+            "kind": BACKUP_KIND, "format": 1, "createdAt": 1, "appVersion": "2.0.0",
+            "stores": {(STORE_ACCOUNT_CARD_NOTES): {"765": "restored"}}
+        });
+        fs::write(&file, serde_json::to_vec(&body).unwrap()).unwrap();
+        let result = with_faults(vec![(Step::RemoveBak, backup_path(&notes))], || {
+            restore_backup(&to, &file)
+        });
+        let now = fs::read(&notes).unwrap();
+        let bak = fs::read(backup_path(&notes)).ok();
+        let _ = fs::remove_dir_all(&to.0);
+        let error = result.expect_err("BAK_KEPT: the restore went through");
+        assert!(!error.left_restored, "{error}");
+        assert_eq!(now, primary, "the notes were not put back");
+        assert_eq!(bak.as_deref(), Some(&br#"{"765":"older"}"#[..]));
+    }
+
+    #[test]
+    fn a_store_too_big_once_written_refuses_the_restore_before_any_write() {
+        // Regression (STORE_SIZE): a compact backup held a store that the
+        // pretty-printed write took past the read limit, so the restored
+        // store never loaded.
+        let to = ctx("store-size");
+        save_client_store(&to, STORE_ACCOUNT_CARD_NOTES, &json!({"765": "old"})).unwrap();
+        // Deep arrays: each element is indented by two spaces a level.
+        let depth = 100;
+        let inner = vec!["0"; 170_000].join(",");
+        let nested = format!("{}{inner}{}", "[".repeat(depth), "]".repeat(depth));
+        let body = format!(
+            r#"{{"kind":"{BACKUP_KIND}","format":1,"createdAt":1,"appVersion":"2.0.0","stores":{{"{STORE_ACCOUNT_CARD_NOTES}":{{"765":{nested}}}}}}}"#
+        );
+        let file = to.0.join("deep.json");
+        fs::write(&file, body).unwrap();
+        assert!(fs::metadata(&file).unwrap().len() < MAX_JSON_STORE_BYTES);
+        let before = tree(&to.0);
+        let result = restore_backup(&to, &file);
+        let after = tree(&to.0);
+        let _ = fs::remove_dir_all(&to.0);
+        let error = result.expect_err("STORE_SIZE: restored a store no read loads");
+        assert!(error.message.contains(STORE_ACCOUNT_CARD_NOTES), "{error}");
+        assert!(after == before, "a file was written");
     }
 
     #[test]

@@ -105,7 +105,7 @@ fn a_restore_waits_for_a_running_save_and_holds_new_writes() {
     set_note(&mut app, "typed before");
     pump_until(&mut app, &ctx, |_| mock.waiting(SAVE) == 1);
 
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     // Typed while the restore waits: no new write starts.
     set_note(&mut app, "typed during the restore");
     for _ in 0..20 {
@@ -164,7 +164,7 @@ fn restored_settings_keep_the_restored_platform_they_enable() {
     // for it before they are sanitized.
     assert!(mock.hold("reload_user_platforms"));
     frame(&mut app, &ctx);
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     pump_until(&mut app, &ctx, |_| {
         mock.waiting("reload_user_platforms") == 1
     });
@@ -194,7 +194,7 @@ fn closing_settings_during_a_restore_keeps_its_outcome() {
     app.toggle_settings_panel();
     frame(&mut app, &ctx);
     assert!(mock.hold("backup_restore"));
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     pump_until(&mut app, &ctx, |_| mock.waiting("backup_restore") == 1);
     assert!(app.settings_panel.as_ref().unwrap().backup.busy);
 
@@ -207,7 +207,7 @@ fn closing_settings_during_a_restore_keeps_its_outcome() {
     frame(&mut app, &ctx);
     assert!(app.settings_panel.as_ref().unwrap().backup.busy);
     app.import_backup();
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     app.toggle_settings_panel();
 
     mock.release("backup_restore");
@@ -229,7 +229,7 @@ fn a_write_that_fails_before_the_restore_cancels_it() {
     frame(&mut app, &ctx);
     assert!(mock.fail(SAVE, Some("disk full")));
     set_note(&mut app, "typed before");
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     assert_eq!(mock.seen("backup_restore"), 0);
     assert!(app.backup.card.error);
@@ -256,7 +256,7 @@ fn a_save_job_that_dies_cancels_the_restore_and_frees_its_store() {
         .run(|_| -> BackendResult<Option<String>> { panic!("the save job died") });
     app.saves.push((save.store_id, job));
 
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     assert_eq!(mock.seen("backup_restore"), 0);
     assert!(app.backup.card.error, "{}", app.backup.card.notice);
@@ -348,7 +348,7 @@ fn restored_but_unread(ctx: &Context) -> (AppModel, Arc<MockBackend>) {
     frame(&mut app, ctx);
     assert!(mock.hold("backup_restore"));
     assert!(mock.fail("load_client_storage_snapshot", Some("manifest unreadable")));
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     pump_until(&mut app, ctx, |_| mock.waiting("backup_restore") == 1);
     set_note(&mut app, "typed while restoring");
     mock.release("backup_restore");
@@ -516,7 +516,7 @@ fn a_descriptor_task_keeps_the_boundary_up_after_settings_close() {
     pump_until(&mut app, &ctx, |_| {
         mock.waiting("reload_user_platforms") == 1
     });
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     // The panel and its handle on the task go; the task still runs.
     app.toggle_settings_panel();
     assert!(app.settings_panel.is_none());
@@ -561,7 +561,7 @@ fn a_descriptor_install_that_fails_while_the_restore_waits_cancels_it() {
         assert!(Instant::now() < deadline, "the install never started");
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     // The panel goes; the install still fails under the boundary.
     app.toggle_settings_panel();
     assert!(app.settings_panel.is_none());
@@ -588,7 +588,7 @@ fn descriptor_and_theme_writes_are_refused_while_a_backup_runs() {
     app.toggle_settings_panel();
     frame(&mut app, &ctx);
     assert!(mock.hold("backup_restore"));
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     pump_until(&mut app, &ctx, |_| mock.waiting("backup_restore") == 1);
 
     let reloads = mock.seen("reload_user_platforms");
@@ -652,7 +652,7 @@ fn no_backup_starts_while_an_update_installs() {
     );
 
     // A restore confirmed, or an export path picked, while it installs.
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     assert!(!app.backup.holds_writes());
     assert!(app.backup.card.error);
     assert_eq!(app.backup.card.notice, refused);
@@ -675,7 +675,7 @@ fn no_backup_starts_while_an_update_installs() {
     }
     assert_eq!(mock.seen("backup_restore"), 0);
     assert_eq!(mock.seen("backup_export"), 0);
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     assert_eq!(mock.seen("backup_restore"), 1);
 }
@@ -695,7 +695,7 @@ fn a_write_failing_right_after_the_boundary_goes_up_cancels_the_restore() {
     gate.on_published(move || {
         let _ = write(&*backend);
     });
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     assert_eq!(
         mock.seen("backup_restore"),
@@ -724,7 +724,7 @@ fn a_restore_whose_theme_cannot_be_read_keeps_it_selected_until_it_loads() {
     focus(&mut app, &ctx, true);
     let before = app.booted().unwrap().theme.vars.bg_card;
     assert!(mock.fail("list_custom_themes", Some("theme file locked")));
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     // Adopted: the restored stores, the theme they name kept.
     assert!(!app.backup.restart_needed());
@@ -799,7 +799,7 @@ fn a_restore_whose_theme_base_cannot_be_read_reads_the_themes_again_on_the_next_
     let child = json!({"schemaVersion": 1, "id": "child", "name": "Child", "colorScheme": "dark", "extends": "base", "tokens": {}});
     let (mut app, mock) = theme_restore_app(&ctx, "child", json!([base, child]), json!([]));
     assert!(mock.lock_theme("base", true));
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     let b = app.booted().unwrap();
     assert_eq!(b.stores.settings().theme_id, "child");
@@ -831,7 +831,7 @@ fn a_restore_whose_themes_folder_cannot_be_listed_reads_it_again_on_the_next_foc
     let restored = json!({"schemaVersion": 1, "id": "mine", "name": "Mine", "colorScheme": "dark", "tokens": {"bgCard": "#445566"}});
     let (mut app, mock) = theme_restore_app(&ctx, "mine", json!([restored]), json!([old]));
     assert!(mock.fail("list_custom_themes", Some("themes folder unreadable")));
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     // The version loaded before the restore draws.
     let before = app.booted().unwrap().theme.vars.bg_card;
@@ -855,7 +855,7 @@ fn a_restore_whose_platforms_cannot_be_reloaded_asks_for_a_restart() {
     frame(&mut app, &ctx);
     let before = app.booted().unwrap().stores.settings().clone();
     assert!(mock.fail("reload_user_platforms", Some("descriptors folder locked")));
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     pump_until(&mut app, &ctx, |a| {
         a.backup.restart_needed() || !a.backup.holds_writes()
     });
@@ -918,7 +918,7 @@ fn lost_restore(ctx: &Context, how: LostRestore) -> (AppModel, Arc<MockBackend>)
         LostRestore::LeftRestored => assert!(mock.leave_restored(Some(LEFT_RESTORED))),
     }
     assert!(mock.hold("backup_restore"));
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     pump_until(&mut app, ctx, |_| mock.waiting("backup_restore") == 1);
     set_note(&mut app, "typed over the restored files");
     mock.release("backup_restore");
@@ -984,7 +984,7 @@ fn a_restore_that_put_every_file_back_lets_the_app_go_on() {
         "backup_restore",
         Some("disk full; the files already replaced were put back")
     ));
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     assert!(!app.backup.restart_needed());
     assert!(app.backup.card.notice.contains("disk full"));
@@ -1035,7 +1035,7 @@ fn a_session_mark_written_during_a_restore_reloads_the_accounts() {
     let tab = app.booted().unwrap().nav.active_tab.clone();
     assert_eq!(tab, "riot");
     let reads = account_reads(&mock);
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     assert!(!app.backup.restart_needed());
     assert_eq!(app.booted().unwrap().nav.active_tab, tab);
@@ -1072,7 +1072,7 @@ fn a_restored_descriptor_of_the_active_tab_reloads_its_accounts() {
     frame(&mut app, &ctx);
     settle_accounts(&mut app, &ctx);
     let reads = account_reads(&mock);
-    app.start_backup_restore("C:/b.json".into());
+    app.start_backup_restore("C:/b.json".into(), String::new());
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     assert!(!app.backup.restart_needed());
     assert_eq!(app.booted().unwrap().nav.active_tab, "egui-fixture");
