@@ -1100,6 +1100,32 @@ fn a_shortcut_to_a_missing_account_says_so() {
     assert!(app.events[1].contains("toast.deepLinkAccountNotFound"));
 }
 
+/// A shortcut names an account by its exact id: a binding whose account
+/// is gone never falls back to another account's username or display
+/// name, on the active tab or another one. Links keep the name lookup.
+#[test]
+fn a_shortcut_never_resolves_an_id_by_name() {
+    for active in ["steam", "riot"] {
+        let mut app = App::new(active);
+        app.run_shortcut(&mut started(), "steam", "alice");
+        assert!(
+            !app.events.iter().any(|e| e.starts_with("switch:")),
+            "{active}: {:?}",
+            app.events
+        );
+        assert!(app
+            .events
+            .last()
+            .is_some_and(|e| e.contains("toast.deepLinkAccountNotFound")));
+        let mut app = App::new(active);
+        app.run_shortcut(&mut started(), "steam", "Account-1");
+        assert!(!app.events.iter().any(|e| e.starts_with("switch:")));
+    }
+    let mut app = App::new("steam");
+    app.run(&mut started(), "accshift://switch/steam/alice");
+    assert!(app.events.iter().any(|e| e == "switch:account-1"));
+}
+
 #[test]
 fn the_controller_tells_a_shortcut_from_a_link() {
     let mut controller = started();

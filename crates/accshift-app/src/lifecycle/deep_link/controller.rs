@@ -119,6 +119,19 @@ impl Switch {
         accounts.iter().find(|candidate| candidate.id == id)
     }
 
+    /// The account the request names in `accounts`. A shortcut stores an
+    /// account id and takes only that exact id: once its account is gone,
+    /// a name lookup could land on another account. A link keeps the id,
+    /// username or display-name lookup.
+    fn named_in<'a>(&self, accounts: &'a [PlatformAccount]) -> Option<&'a PlatformAccount> {
+        let reference = &self.request.account_ref;
+        if self.shortcut {
+            accounts.iter().find(|account| &account.id == reference)
+        } else {
+            find_account(accounts, reference)
+        }
+    }
+
     /// The name the success toast shows: display name, username or id.
     fn account_label(&self) -> String {
         self.account
@@ -328,7 +341,7 @@ impl DeepLinkController {
                     self.phase = Phase::WaitLoader { switch, since };
                     return;
                 }
-                match find_account(view.accounts, &switch.request.account_ref) {
+                match switch.named_in(view.accounts) {
                     Some(account) => self.found(switch, account.clone(), view, now, actions),
                     None => {
                         actions.push(DeepLinkAction::LoadAccounts);
@@ -401,7 +414,7 @@ impl DeepLinkController {
         actions: &mut Vec<DeepLinkAction>,
         now: Instant,
     ) {
-        match find_account(accounts, &switch.request.account_ref) {
+        match switch.named_in(accounts) {
             Some(account) => self.found(switch, account.clone(), view, now, actions),
             None => self.not_found(&switch, actions, now),
         }
