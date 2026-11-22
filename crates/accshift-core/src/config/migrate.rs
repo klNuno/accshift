@@ -63,7 +63,9 @@ fn migrate_locked(
     // migrating the defaults a failed read returns would save empty split
     // files over the only real copy. If the legacy file is corrupt we must
     // NOT destroy it: keep a backup next to it, poison saves, and surface an
-    // error so the user can recover their accounts and API key.
+    // error so the user can recover their accounts and API key. The poison
+    // matters when one split file exists: the load then reads that file and
+    // never looks at legacy, so nothing else would stop a save of defaults.
     let data = match fs::read_to_string(&legacy_path) {
         Ok(d) => d,
         Err(e) => {
@@ -143,20 +145,6 @@ pub(super) fn retire_legacy_config(app_handle: &dyn AppContext, legacy_path: &st
             &format!("Migrated config but could not retire legacy file: {e}"),
             None,
         );
-    }
-}
-
-/// The legacy config for [`super::peek_config`]: defaults when absent, an
-/// error when present but unreadable, and nothing logged or marked.
-pub(super) fn peek_legacy_config(app_handle: &dyn AppContext) -> Result<AppConfig, String> {
-    let path = crate::storage::legacy_config_path(app_handle)?;
-    let unreadable = || format!("The accshift config at {} cannot be read", path.display());
-    match fs::read_to_string(&path) {
-        Ok(data) => serde_json::from_str::<RawAppConfig>(&data)
-            .map(normalize_config)
-            .map_err(|_| unreadable()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(AppConfig::default()),
-        Err(_) => Err(unreadable()),
     }
 }
 

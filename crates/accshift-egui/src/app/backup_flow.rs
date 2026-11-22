@@ -33,6 +33,8 @@
 //! restored files, not even on close. A restore that failed and put every
 //! file back lets the app go on as before.
 
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use accshift_app::actions::dialogs::ConfirmTicket;
@@ -46,12 +48,142 @@ use accshift_app::types::{
 };
 use egui::Context;
 
-use super::external_refresh::{descriptor_of, read_themes, ThemesRead};
+use super::external_refresh::{read_themes, ThemesRead};
 use super::settings_panel::{apply_report, restore_confirm, BackupState};
-use super::tcno_flow::{import_job, tcno_restart_message, TcnoFlow, TcnoImported};
-use super::write_gate::account_writes_running;
-pub(super) use super::write_gate::WriteGate;
 use super::AppModel;
+
+/// The descriptor and custom theme writes, which bypass the client-store
+/// queue. Each admitted job counts until its call returns, even when the
+/// panel that started it is gone; none is admitted while a backup holds the
+/// boundary.
+#[derive(Clone, Default)]
+pub(super) struct WriteGate(Arc<GateState>);
+
+#[derive(Default)]
+struct GateState {
+    running: AtomicUsize,
+    closed: AtomicBool,
+    /// The first write that failed while a backup held the boundary.
+    failed: Mutex<Option<String>>,
+    /// The UI to wake when an admitted call returns: a boundary waiting
+    /// for it draws no frame otherwise, once no one polls the call's result.
+    wake: Option<Context>,
+    /// Test seam: run once the boundary is published.
+    #[cfg(test)]
+    published: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+/// One admitted call, uncounted when dropped.
+struct Admitted(Arc<GateState>);
+
+impl Drop for Admitted {
+    fn drop(&mut self) {
+        self.0.running.fetch_sub(1, Ordering::SeqCst);
+        if let Some(ctx) = &self.0.wake {
+            ctx.request_repaint();
+        }
+    }
+}
+
+impl WriteGate {
+    /// A gate that wakes `ctx` each time an admitted call returns.
+    pub(super) fn waking(ctx: &Context) -> Self {
+        Self(Arc::new(GateState {
+            wake: Some(ctx.clone()),
+            ..GateState::default()
+        }))
+    }
+
+    /// `call`, counted until it returns; `None` while a backup holds writes.
+    pub(super) fn admit<T, F>(
+        &self,
+        call: F,
+    ) -> Option<impl FnOnce(&dyn Backend) -> T + Send + 'static>
+    where
+        T: Send + 'static,
+        F: FnOnce(&dyn Backend) -> T + Send + 'static,
+    {
+        if self.0.closed.load(Ordering::SeqCst) {
+            return None;
+        }
+        self.0.running.fetch_add(1, Ordering::SeqCst);
+        let admitted = Admitted(Arc::clone(&self.0));
+        Some(move |b: &dyn Backend| {
+            let _admitted = admitted;
+            call(b)
+        })
+    }
+
+    /// [`Self::admit`] for a call that writes a file: when it fails while a
+    /// backup holds the boundary, the backup does not run, since the file
+    /// may be left changed.
+    pub(super) fn admit_write<R, E, F>(
+        &self,
+        call: F,
+    ) -> Option<impl FnOnce(&dyn Backend) -> Result<R, E> + Send + 'static>
+    where
+        R: Send + 'static,
+        E: std::fmt::Display + Send + 'static,
+        F: FnOnce(&dyn Backend) -> Result<R, E> + Send + 'static,
+    {
+        let state = Arc::clone(&self.0);
+        self.admit(move |b| {
+            let result = call(b);
+            if let Err(error) = &result {
+                if state.closed.load(Ordering::SeqCst) {
+                    let mut failed = state.failed.lock().unwrap_or_else(|p| p.into_inner());
+                    failed.get_or_insert_with(|| error.to_string());
+                }
+            }
+            result
+        })
+    }
+
+    /// An admitted call has not returned yet.
+    fn running(&self) -> bool {
+        self.0.running.load(Ordering::SeqCst) > 0
+    }
+
+    /// The write that failed since the boundary went up, taken.
+    fn take_failure(&self) -> Option<String> {
+        self.0
+            .failed
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+    }
+
+    fn set_closed(&self, closed: bool) {
+        if !closed || self.0.closed.load(Ordering::SeqCst) {
+            self.0.closed.store(closed, Ordering::SeqCst);
+            return;
+        }
+        // The failures of an earlier boundary go before this one is
+        // published, under the lock a failing write records with: a write
+        // that sees the boundary records after this, and is never erased.
+        let mut failed = self.0.failed.lock().unwrap_or_else(|p| p.into_inner());
+        *failed = None;
+        self.0.closed.store(true, Ordering::SeqCst);
+        drop(failed);
+        #[cfg(test)]
+        self.run_published_hook();
+    }
+
+    /// Test seam: runs `hook` on the UI thread the moment the next boundary
+    /// is published to the write jobs.
+    #[cfg(test)]
+    pub(super) fn on_published(&self, hook: impl FnOnce() + Send + 'static) {
+        *self.0.published.lock().unwrap() = Some(Box::new(hook));
+    }
+
+    #[cfg(test)]
+    fn run_published_hook(&self) {
+        let hook = self.0.published.lock().unwrap().take();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+}
 
 /// What an export or an import job answered.
 pub(super) enum BackupDone {
@@ -87,11 +219,9 @@ pub(super) struct ReadBack {
 
 /// What a boundary is held for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Purpose {
+enum Purpose {
     Export,
     Restore,
-    /// The TcNo import (`app::tcno_flow`).
-    TcnoImport,
 }
 
 /// Where a backup behind the boundary is.
@@ -110,7 +240,6 @@ enum Stage {
     },
     Exporting(Pending<BackendResult<BackupReport>>),
     Restoring(Pending<Result<Restored, RestoreError>>),
-    Importing(Pending<TcnoImported>),
     /// The files may hold the restored setup while the memory still holds
     /// the old one, which must never be written. Only a restart leaves it.
     RestartNeeded {
@@ -122,7 +251,7 @@ enum Stage {
 
 /// What the files hold when a restart is needed, for the modal's text.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum RestartWhy {
+enum RestartWhy {
     /// The restore went through; this session could not load all of it.
     Restored,
     /// The restore job was lost once it ran: the files may hold the backup,
@@ -131,9 +260,6 @@ pub(super) enum RestartWhy {
     /// The restore failed and could not put every file back: `error` says
     /// which ones, and where the copy of the old files is.
     Incomplete { error: String },
-    /// The TcNo import ran; this session could not read the stores back.
-    /// `detail`: why it failed, or where it left sessions it could not put back.
-    Imported { detail: Option<String> },
 }
 
 /// The backup card's jobs and the boundary's stage.
@@ -145,8 +271,6 @@ pub(super) struct BackupFlow {
     /// The previewed file the confirm is about, its digest and its ticket.
     pending_restore: Option<(String, String, ConfirmTicket)>,
     stage: Stage,
-    /// The TcNo card's picker and confirm; its import holds this boundary.
-    pub(super) tcno: TcnoFlow,
 }
 
 impl BackupFlow {
@@ -200,16 +324,11 @@ impl BackupFlow {
                 "error",
                 error.clone(),
             ),
-            RestartWhy::Imported { detail } => tcno_restart_message(detail.as_deref(), locale),
         })
     }
 
-    /// A backup or a TcNo import is being picked, confirmed or run.
-    pub(super) fn busy(&self) -> bool {
-        self.job.is_some()
-            || self.pending_restore.is_some()
-            || self.tcno.busy()
-            || self.holds_writes()
+    fn busy(&self) -> bool {
+        self.job.is_some() || self.pending_restore.is_some() || self.holds_writes()
     }
 
     fn set_stage(&mut self, stage: Stage) {
@@ -233,14 +352,6 @@ impl BackupFlow {
     fn set_notice(&mut self, text: String, error: bool) {
         self.card.notice = text;
         self.card.error = error;
-    }
-
-    /// Sets the notice of the card that started `purpose`.
-    fn notice_for(&mut self, purpose: Purpose, text: String, error: bool) {
-        match purpose {
-            Purpose::TcnoImport => self.tcno.set_notice(text, error),
-            Purpose::Export | Purpose::Restore => self.set_notice(text, error),
-        }
     }
 
     /// "Export setup": the save dialog; the export itself runs behind the
@@ -274,20 +385,15 @@ impl BackupFlow {
 /// What a backup picker's `error` ends in: nothing for a cancel, the
 /// backup notice for any other failure (a path the backend cannot use).
 fn picker_failed(error: BackendError) -> BackendResult<BackupDone> {
-    if picker_cancelled(&error) {
+    if error.message == accshift_core::error::AppError::Cancelled.to_string() {
         Ok(BackupDone::Picked(None))
     } else {
         Err(error)
     }
 }
 
-/// The picker that answered `error` was cancelled.
-pub(super) fn picker_cancelled(error: &BackendError) -> bool {
-    error.message == accshift_core::error::AppError::Cancelled.to_string()
-}
-
 /// `{key}` with `{name}` set to `value`.
-pub(super) fn with_one(locale: Locale, key: &str, name: &str, value: String) -> String {
+fn with_one(locale: Locale, key: &str, name: &str, value: String) -> String {
     Text::with(key, [(name, TranslationValue::Str(value))]).resolve(locale)
 }
 
@@ -349,8 +455,6 @@ impl AppModel {
         self.drain_boundary();
         self.poll_export();
         self.poll_restore(ctx);
-        self.poll_tcno_import(ctx);
-        self.tick_tcno(ctx);
         let busy = self.backup.busy();
         self.backup.card.busy = busy;
         if let Some(panel) = self.settings_panel.as_mut() {
@@ -419,7 +523,7 @@ impl AppModel {
     }
 
     /// Raises the boundary for an export to, or a restore from, `path`.
-    pub(super) fn hold_boundary(&mut self, path: String, digest: String, purpose: Purpose) {
+    fn hold_boundary(&mut self, path: String, digest: String, purpose: Purpose) {
         if self.booted.is_none() {
             return;
         }
@@ -427,16 +531,13 @@ impl AppModel {
         // backup between two files: it waits for the install to fail.
         if self.updates.installing() {
             let text = translate(self.backup_locale(), "settings.backupUpdateInstalling");
-            self.backup.notice_for(purpose, text, true);
+            self.backup.set_notice(text, true);
             return;
         }
         // The draft is part of the setup an export saves; written after a
         // restore, it would put the old setup back.
         self.flush_settings(Instant::now());
-        self.backup.notice_for(purpose, String::new(), false);
-        // The boundary's refusals name it until the next one is raised.
-        let tcno = purpose == Purpose::TcnoImport;
-        self.backup.gate.set_tcno(tcno);
+        self.backup.set_notice(String::new(), false);
         self.backup.set_stage(Stage::Draining {
             path,
             digest,
@@ -446,8 +547,8 @@ impl AppModel {
     }
 
     /// The boundary: hands out the debounced writes, then waits until no
-    /// store, descriptor, theme or account write and no refresh is running
-    /// before the export, restore or import job starts.
+    /// store, descriptor or theme write and no refresh is running before
+    /// the export or restore job starts.
     fn drain_boundary(&mut self) {
         if !matches!(self.backup.stage, Stage::Draining { .. }) {
             return;
@@ -466,9 +567,6 @@ impl AppModel {
             || b.stores.storage().has_unsaved()
             || self.external_refresh.running()
             || self.backup.gate.running()
-            || !self.task_jobs.is_empty()
-            || !self.rename_jobs.is_empty()
-            || account_writes_running(b)
         {
             return;
         }
@@ -486,10 +584,9 @@ impl AppModel {
             let key = match purpose {
                 Purpose::Export => "settings.backupExportFailed",
                 Purpose::Restore => "settings.backupRestoreFailed",
-                Purpose::TcnoImport => "settings.tcnoImportFailed",
             };
             let text = with_one(self.backup_locale(), key, "error", error);
-            self.backup.notice_for(purpose, text, true);
+            self.backup.set_notice(text, true);
             return;
         }
         let stage = match purpose {
@@ -497,7 +594,6 @@ impl AppModel {
             Purpose::Restore => {
                 Stage::Restoring(self.jobs.run(move |b| restore_job(b, &path, &digest)))
             }
-            Purpose::TcnoImport => Stage::Importing(self.jobs.run(move |b| import_job(b, &path))),
         };
         self.backup.set_stage(stage);
     }
@@ -536,26 +632,6 @@ impl AppModel {
         self.backup.set_notice(text, error);
     }
 
-    fn poll_tcno_import(&mut self, ctx: &Context) {
-        let Stage::Importing(job) = &mut self.backup.stage else {
-            return;
-        };
-        let imported = match job.poll() {
-            Poll::Waiting => return,
-            Poll::Ready(imported) => imported,
-            // It may have died once the stores were written.
-            Poll::Gone => {
-                let text = translate(self.backup_locale(), "settings.tcnoRestartNeeded");
-                self.backup.tcno.set_notice(text, true);
-                self.keep_restored_files(RestartWhy::Imported { detail: None });
-                ctx.request_repaint();
-                return;
-            }
-        };
-        self.backup.set_stage(Stage::Idle);
-        self.finish_tcno_import(ctx, imported);
-    }
-
     fn poll_restore(&mut self, ctx: &Context) {
         let Stage::Restoring(job) = &mut self.backup.stage else {
             return;
@@ -579,7 +655,7 @@ impl AppModel {
     /// The files may hold the restored setup, as `why` says: the boundary
     /// stays up until the restart, and the writes queued for the old stores
     /// go.
-    pub(super) fn keep_restored_files(&mut self, why: RestartWhy) {
+    fn keep_restored_files(&mut self, why: RestartWhy) {
         self.backup
             .set_stage(Stage::RestartNeeded { why, failed: None });
         if let Some(b) = self.booted.as_mut() {
@@ -629,15 +705,6 @@ impl AppModel {
                 }
                 None => {
                     self.keep_restored_files(RestartWhy::Unknown);
-                    return;
-                }
-            },
-            // As a restore: the imported stores are adopted before the
-            // last writes, or the old ones dropped.
-            Stage::Importing(job) => match job.wait() {
-                Some(imported) => Some(imported.into_snapshot()),
-                None => {
-                    self.keep_restored_files(RestartWhy::Imported { detail: None });
                     return;
                 }
             },
@@ -787,4 +854,14 @@ impl AppModel {
         }
         b.accounts.reload_source(&self.jobs, &mut b.stores, tab);
     }
+}
+
+/// The descriptor `report` loaded for the platform `id`, as JSON, to tell a
+/// changed one apart; `None` for a platform no descriptor declares.
+fn descriptor_of(report: Option<&UserPlatformReport>, id: &str) -> Option<serde_json::Value> {
+    report?
+        .loaded
+        .iter()
+        .find(|descriptor| descriptor.id == id)
+        .and_then(|descriptor| serde_json::to_value(descriptor).ok())
 }

@@ -185,31 +185,6 @@ fn busy_is_non_terminal_and_the_poll_keeps_the_flow_alive() {
     assert!(rig.flow.next_deadline().is_some());
 }
 
-#[test]
-fn a_held_boundary_sends_no_setup_poll_until_released() {
-    // A poll may finish the setup and save the account: none while a
-    // backup or an import holds writes.
-    let mut rig = Rig::new("steam");
-    rig.with_ctx(0, |flow, ctx, _| {
-        flow.start(ctx, "steam", status("setup-1", "waiting_for_login"))
-    });
-    let due = POLL_DELAY.as_millis() as u64;
-    rig.flow.hold_polls(true);
-    rig.backend.push(
-        "platform_get_setup_status",
-        Ok(setup_json("setup-1", "busy", "", "", "")),
-    );
-    rig.tick(due);
-    let held = rig.backend.calls("platform_get_setup_status").len();
-    let deadline_held = rig.flow.next_deadline();
-    rig.flow.hold_polls(false);
-    rig.tick(due);
-    assert_eq!(held, 0, "a setup poll ran while writes were held");
-    assert_eq!(deadline_held, None, "a held poll still asks for frames");
-    assert_eq!(rig.backend.calls("platform_get_setup_status").len(), 1);
-    rig.flow.stop();
-}
-
 // ------------------------------------------------------------ Steam
 
 #[test]

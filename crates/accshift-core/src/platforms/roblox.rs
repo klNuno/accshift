@@ -78,24 +78,6 @@ static SETUP_JOBS: SetupJobs<QuickLoginJob> = SetupJobs::new("Roblox", DEFAULT_S
 // Public operations
 // ---------------------------------------------------------------------------
 
-/// The cookie saved for `account`, decrypted.
-fn stored_cookie(account: &RobloxAccountConfig) -> Result<String, String> {
-    // An account imported from another switcher comes without a session:
-    // signing in again through "Add account" stores its cookie.
-    if account.cookie_encrypted.trim().is_empty() {
-        return Err(
-            "Sign in to this Roblox account again with Add account: accshift has no saved session for it yet"
-                .to_string(),
-        );
-    }
-    let cookie = crate::os::decrypt_secret(&account.cookie_encrypted)
-        .map_err(|e| format!("Could not decrypt Roblox cookie: {e}"))?;
-    if cookie.trim().is_empty() {
-        return Err("Stored Roblox cookie is empty".to_string());
-    }
-    Ok(cookie)
-}
-
 pub fn get_accounts(app_handle: &dyn AppContext) -> Result<Vec<RobloxAccount>, String> {
     Ok(read_accounts(app_handle))
 }
@@ -109,8 +91,9 @@ pub fn get_startup_snapshot(app_handle: &dyn AppContext) -> Result<RobloxStartup
 }
 
 /// The account the live HKCU cookie belongs to: the one switched to last.
-/// An account without a saved session (imported from TcNo, whose date says
-/// when it was last used there) was never switched to by accshift.
+/// The portable config half drops cookies, so a config carried to another
+/// machine holds accounts with a date but no cookie: none of them was
+/// switched to here, and taking one would lose the live rotation.
 fn live_cookie_owner(accounts: &[RobloxAccountConfig]) -> Option<&RobloxAccountConfig> {
     accounts
         .iter()
@@ -145,7 +128,12 @@ pub fn switch_account(app_handle: &dyn AppContext, user_id: &str) -> Result<(), 
         .find(|a| a.user_id == user_id)
         .ok_or_else(|| "Roblox account not found".to_string())?;
 
-    let cookie = stored_cookie(account)?;
+    let cookie = crate::os::decrypt_secret(&account.cookie_encrypted)
+        .map_err(|e| format!("Could not decrypt Roblox cookie: {e}"))?;
+
+    if cookie.trim().is_empty() {
+        return Err("Stored Roblox cookie is empty".to_string());
+    }
 
     log_platform_info(
         app_handle,

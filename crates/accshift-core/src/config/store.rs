@@ -119,8 +119,11 @@ pub fn load_config(app_handle: &dyn AppContext) -> AppConfig {
     // load retries the read instead of serving the defaults.
     let cacheable = !config_unreadable(&portable_path) && !config_unreadable(&local_path);
 
-    // A missing half may still live in legacy config. Do not cache that
-    // result against just the split paths: it depends on the legacy file.
+    // A missing half may still live in legacy config, after a migration that
+    // stopped between the two writes or a half deleted by hand. Defaults
+    // there would be saved over it on the next write, and migration would
+    // then retire legacy. A half present but unreadable keeps the defaults
+    // and the poison. Not cached: the result also depends on legacy.
     let merged = match (portable, local) {
         (Some(portable), Some(local)) => merge_split_configs(portable, local),
         (Some(portable), None) => {
@@ -139,6 +142,8 @@ pub fn load_config(app_handle: &dyn AppContext) -> AppConfig {
             };
             return merge_split_configs(portable, local);
         }
+        // No split config yet, fall back to legacy (pre-migration). Not
+        // cached: the next save creates the split files.
         (None, None) => return load_legacy_config(app_handle),
     };
     if !cacheable {
@@ -202,41 +207,6 @@ pub(super) fn with_config_write_locks<T>(
         .map_err(|e| e.to_string())?;
     let _io = config_io_mutex().lock().unwrap_or_else(|e| e.into_inner());
     write()
-}
-
-/// The config as the files hold it, for a caller that only looks: an error
-/// when a file is present but cannot be read. Unlike [`load_config`] it
-/// logs nothing, marks no file unreadable and fills no cache.
-pub fn peek_config(app_handle: &dyn AppContext) -> Result<AppConfig, String> {
-    let read = |path: std::path::PathBuf| {
-        crate::storage::read_json_if_exists::<AppConfig>(&path)
-            .map_err(|_| format!("The accshift config at {} cannot be read", path.display()))
-    };
-    let portable = read(crate::storage::portable_config_path(app_handle)?)?;
-    let local = read(crate::storage::local_config_path(app_handle)?)?;
-    let legacy = || super::migrate::peek_legacy_config(app_handle);
-    Ok(match (portable, local) {
-        (Some(portable), Some(local)) => merge_split_configs(portable, local),
-        (Some(portable), None) => merge_split_configs(portable, legacy()?),
-        (None, Some(local)) => merge_split_configs(legacy()?, local),
-        (None, None) => legacy()?,
-    })
-}
-
-/// [`load_config`] for a caller about to write elsewhere first: an error
-/// when a config file is present but could not be read, which
-/// [`save_config`] would refuse to write over anyway.
-pub fn load_config_checked(app_handle: &dyn AppContext) -> Result<AppConfig, String> {
-    let config = peek_config(app_handle)?;
-    let paths = [
-        crate::storage::portable_config_path(app_handle),
-        crate::storage::local_config_path(app_handle),
-        crate::storage::legacy_config_path(app_handle),
-    ];
-    for path in paths.into_iter().flatten() {
-        set_config_unreadable(&path, false);
-    }
-    Ok(config)
 }
 
 pub fn save_config(app_handle: &dyn AppContext, config: &AppConfig) -> Result<(), String> {

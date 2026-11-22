@@ -93,9 +93,6 @@ pub fn dispatch(
             json(b.backup_select_import_file(&a.str("title"), &a.str("allFiles")))
         }
         "backup_preview" => json(b.backup_preview(&a.str("path"))),
-        "tcno_select_folder" => json(b.tcno_select_folder(&a.str("title"))),
-        "tcno_preview" => json(b.tcno_preview(&a.str("path"))),
-        "tcno_import" => json(b.tcno_import(&a.str("path"))),
         "backup_restore" => json(
             b.backup_restore(&a.str("path"), &a.str("digest"))
                 .map_err(BackendError::from),
@@ -308,9 +305,6 @@ pub const COMMANDS: &[&str] = &[
     "backup_select_import_file",
     "backup_preview",
     "backup_restore",
-    "tcno_select_folder",
-    "tcno_preview",
-    "tcno_import",
     "open_url",
     "open_logs_folder",
     "get_desktop_wallpaper",

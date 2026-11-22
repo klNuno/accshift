@@ -347,16 +347,3 @@ impl AppModel {
         }
     }
 }
-
-/// The descriptor `report` loaded for the platform `id`, as JSON, to tell a
-/// changed one apart; `None` for a platform no descriptor declares.
-pub(super) fn descriptor_of(
-    report: Option<&accshift_app::types::UserPlatformReport>,
-    id: &str,
-) -> Option<serde_json::Value> {
-    report?
-        .loaded
-        .iter()
-        .find(|descriptor| descriptor.id == id)
-        .and_then(|descriptor| serde_json::to_value(descriptor).ok())
-}

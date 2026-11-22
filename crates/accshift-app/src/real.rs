@@ -22,7 +22,6 @@ mod riot;
 mod roblox;
 mod runtime;
 mod steam;
-mod tcno;
 mod telemetry;
 mod utility;
 mod wallpaper;
@@ -308,16 +307,6 @@ impl Backend for RealBackend {
     }
     fn backup_restore(&self, path: &str, digest: &str) -> Result<BackupReport, RestoreError> {
         backup::restore(&self.ctx, path, digest)
-    }
-    /// The folder picker: same thread rule as [`Self::descriptor_select_file`].
-    fn tcno_select_folder(&self, title: &str) -> BackendResult<String> {
-        tcno::select_folder(title)
-    }
-    fn tcno_preview(&self, path: &str) -> BackendResult<TcNoPreview> {
-        tcno::preview(&self.ctx, path)
-    }
-    fn tcno_import(&self, path: &str) -> BackendResult<TcNoImportReport> {
-        tcno::import(&self.ctx, path)
     }
     fn open_url(&self, url: &str) -> BackendResult<()> {
         utility::open_url(url)

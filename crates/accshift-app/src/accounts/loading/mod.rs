@@ -227,12 +227,6 @@ impl AccountLoading {
         false
     }
 
-    /// A switch or an add still running: both may write the platform's
-    /// account list.
-    pub fn writes_in_flight(&self) -> bool {
-        !(self.switches.is_empty() && self.adds.is_empty())
-    }
-
     /// An account load still to land.
     pub fn loads_in_flight(&self) -> bool {
         !self.loads.is_empty()

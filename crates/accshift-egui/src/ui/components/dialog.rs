@@ -36,7 +36,7 @@ use egui::{
     Sense, Stroke, StrokeKind, Ui, UiBuilder,
 };
 
-use accshift_app::actions::dialogs::{ConfirmDialogState, InputDialogState, CONFIRM_ACCENT};
+use accshift_app::actions::dialogs::{ConfirmDialogState, InputDialogState};
 use accshift_app::i18n::{self, Locale};
 use accshift_theme::ResolvedTheme;
 
@@ -112,16 +112,6 @@ pub fn confirm_background(color: &str, theme: &ResolvedTheme, vars: &Vars) -> Rg
             .unwrap_or(vars.danger);
     }
     css::color(color).unwrap_or(vars.danger)
-}
-
-/// The text colour on the confirm button: the accent's own for
-/// [`CONFIRM_ACCENT`], white on any other colour.
-pub fn confirm_foreground(color: &str, accent_fg: Rgba) -> Rgba {
-    if color.trim() == CONFIRM_ACCENT {
-        accent_fg
-    } else {
-        WHITE
-    }
 }
 
 /// The confirm is destructive (focus starts on Cancel) when its colour is
@@ -494,14 +484,12 @@ pub const CONFIRM_ID: &str = "accshift-confirm-dialog";
 pub const INPUT_ID: &str = "accshift-input-dialog";
 /// The confirm dialog: `width: min(360px, 100vw - 24px)`, the message
 /// in 12 px `--fg-muted` (`line-height: 1.35`, `pre-line`), Cancel and the
-/// confirm button in `--confirm-bg` (the danger red by default), its text
-/// in `confirm_fg`.
+/// confirm button in `--confirm-bg` (the danger red by default).
 pub fn confirm_dialog(
     ui: &mut Ui,
     props: &DialogProps,
     state: &ConfirmDialogState,
     confirm_bg: Rgba,
-    confirm_fg: Rgba,
 ) -> Vec<DialogEvent> {
     let ctx = ui.ctx().clone();
     let v = props.vars;
@@ -566,9 +554,9 @@ pub fn confirm_dialog(
                         confirm_bg
                     },
                     color: if hovered {
-                        confirm_fg.mix(0.85, Rgba::new(0.0, 0.0, 0.0, confirm_fg.a))
+                        WHITE.mix(0.85, Rgba::new(0.0, 0.0, 0.0, 1.0))
                     } else {
-                        confirm_fg
+                        WHITE
                     },
                     border_color: Rgba::TRANSPARENT,
                     opacity: 1.0,
@@ -839,14 +827,5 @@ mod tests {
         );
         assert!(destructive("") && destructive("var(--danger, #ef4444)"));
         assert!(!destructive("#3b82f6"));
-        // The non-destructive confirm: the accent and its text colour.
-        assert_eq!(
-            confirm_background(CONFIRM_ACCENT, &resolved, &vars),
-            vars.accent
-        );
-        assert!(!destructive(CONFIRM_ACCENT));
-        let fg = Rgba::hex(0x101010, 1.0);
-        assert_eq!(confirm_foreground(CONFIRM_ACCENT, fg), fg);
-        assert_eq!(confirm_foreground("", fg), WHITE);
     }
 }

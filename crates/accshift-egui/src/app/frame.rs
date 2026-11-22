@@ -149,11 +149,9 @@ impl AppModel {
     /// One frame of the accounts: loads, switches, the add flow and avatar
     /// priming, then what their outcomes ask of the app.
     fn update_accounts(&mut self, ctx: &Context) {
-        let writes_held = self.backup.holds_writes();
         let Some(b) = self.booted.as_mut() else {
             return;
         };
-        b.accounts.add_flow.hold_polls(writes_held);
         // Priming waits for a grid the user can see, in the foreground
         // window and not behind the privacy screen.
         let foreground = ctx.input(|i| {

@@ -62,14 +62,6 @@ pub fn secrets_index_path(app_handle: &dyn AppContext) -> Result<PathBuf, String
         .join("secret-entries.txt"))
 }
 
-/// Origin ledger recording accounts imported from TcNo Account Switcher so
-/// re-runs deduplicate cleanly.
-pub fn tcno_import_origins_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    Ok(app_data_root(app_handle)?
-        .join("state")
-        .join("tcno-import.json"))
-}
-
 /// Where a Riot restore stages the encrypted copy of the live session it may
 /// have to put back. It sits in the state directory next to the local config,
 /// because like it, it describes this machine and never moves with the user's
@@ -111,31 +103,6 @@ pub(super) fn old_legacy_snapshots_name(platform_id: &str) -> Option<&'static st
         "discord" => Some("discord_cache"),
         _ => None,
     }
-}
-
-/// [`platform_snapshots_dir`] for a reader that must change nothing: the
-/// legacy folder while only it exists, never migrated.
-pub fn peek_platform_snapshots_dir(
-    app_handle: &dyn AppContext,
-    platform_id: &str,
-) -> Result<PathBuf, String> {
-    let target = app_local_data_root(app_handle)?
-        .join("platforms")
-        .join(platform_id)
-        .join("snapshots");
-    let path_exists = |path: &Path| {
-        path.try_exists()
-            .map_err(|e| format!("Could not check {}: {e}", path.display()))
-    };
-    if !path_exists(&target)? {
-        if let Some(name) = old_legacy_snapshots_name(platform_id) {
-            let old_legacy = legacy_app_data_root(app_handle)?.join(name);
-            if path_exists(&old_legacy)? {
-                return Ok(old_legacy);
-            }
-        }
-    }
-    Ok(target)
 }
 
 /// Snapshot directory for a platform (`<local data>/platforms/<id>/snapshots`),

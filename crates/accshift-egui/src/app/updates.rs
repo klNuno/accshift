@@ -363,7 +363,7 @@ impl AppModel {
         }
         if self.backup.holds_writes() {
             self.toasts.push(
-                Toast::new(Text::key(self.backup.gate.refusal_key()), ToastKind::Error),
+                Toast::new(Text::key("settings.backupHoldsWrites"), ToastKind::Error),
                 Instant::now(),
             );
             ctx.request_repaint();

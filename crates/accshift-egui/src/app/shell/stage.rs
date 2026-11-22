@@ -349,9 +349,8 @@ impl Stage<'_> {
         if let (Some(state), Some(mount)) = (self.dialogs.confirm_dialog(), self.confirm_mount) {
             let bg =
                 dialog::confirm_background(&state.confirm_color, &self.theme.resolved, &fv.vars);
-            let fg = dialog::confirm_foreground(&state.confirm_color, fv.accent_fg);
             self.actions.extend(
-                dialog::confirm_dialog(ui, &fv.dialog_props(mount), state, bg, fg)
+                dialog::confirm_dialog(ui, &fv.dialog_props(mount), state, bg)
                     .into_iter()
                     .map(|event| Action::ConfirmDialog(mount, event)),
             );

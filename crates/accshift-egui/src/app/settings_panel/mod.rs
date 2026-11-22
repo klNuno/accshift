@@ -36,7 +36,6 @@ mod draft;
 mod jobs;
 mod persist;
 mod state;
-mod tcno;
 mod update;
 
 use std::time::Instant;
@@ -55,9 +54,6 @@ pub use cs2::{Cs2Form, Cs2Status};
 pub use draft::{clamp_int, js_number, normalize, NumericField, NumericInput};
 pub(in crate::app) use jobs::apply_report;
 pub use state::{visible_tabs, SettingsPanel, TabDef};
-pub use tcno::{
-    tcno_confirm, tcno_nothing, tcno_preview_is_empty, tcno_recovery, tcno_report, TcnoState,
-};
 pub use update::{update_row, version_line, UpdateRow, UpdateStatus};
 
 /// Digits in a PIN code.
@@ -144,8 +140,6 @@ pub enum SettingsAction {
     ExportBackup,
     /// The backup card's "Restore from a file".
     ImportBackup,
-    /// The TcNo card's "Choose the TcNo folder".
-    ImportTcno,
     RetryTelemetryLoad,
     /// The Platforms tab's search field.
     PlatformSearch(String),

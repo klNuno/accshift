@@ -130,19 +130,6 @@ pub trait Backend: Send + Sync {
     /// put back.
     fn backup_restore(&self, path: &str, digest: &str) -> Result<BackupReport, RestoreError>;
 
-    // ------------------------------------------------------------ TcNo import
-
-    /// Opens a folder picker titled `title`, on TcNo Account Switcher's data
-    /// folder when it exists. Cancelling is an error. Same thread rule as
-    /// [`Self::descriptor_select_file`].
-    fn tcno_select_folder(&self, title: &str) -> BackendResult<String>;
-    /// What importing the TcNo folder at `path` would add or skip. Writes
-    /// nothing.
-    fn tcno_preview(&self, path: &str) -> BackendResult<TcNoPreview>;
-    /// Imports the accounts, labels, notes, order and the sessions accshift
-    /// can use from the TcNo folder at `path`, which is only read.
-    fn tcno_import(&self, path: &str) -> BackendResult<TcNoImportReport>;
-
     // ---------------------------------------------------------------- utility
 
     fn open_url(&self, url: &str) -> BackendResult<()>;
