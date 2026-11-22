@@ -28,20 +28,18 @@ impl AppModel {
             b.bulk.toggle_account(&account.id);
             return;
         }
-        // The pending setup card has no menu; any other target drops a
-        // setup of this tab, unless it is the setup account itself.
+        // The pending setup card has no menu. Another account's menu can
+        // switch, so it drops a setup of this tab; the background and folder
+        // menus (refresh, new folder, rename, colour) leave it running.
         let tab = b.nav.active_tab.clone();
-        let target_account = match &target {
+        match &target {
             MenuTarget::Account(account) if b.accounts.is_pending_setup(&account.id) => return,
-            MenuTarget::Account(account) => Some(account.id.clone()),
-            MenuTarget::Folder(_) | MenuTarget::Background => None,
-        };
-        b.accounts.cancel_add_flow_if_conflicting(
-            &self.jobs,
-            &tab,
-            &tab,
-            target_account.as_deref(),
-        );
+            MenuTarget::Account(account) => {
+                b.accounts
+                    .cancel_add_flow_if_conflicting(&self.jobs, &tab, &tab, Some(&account.id))
+            }
+            MenuTarget::Folder(_) | MenuTarget::Background => {}
+        }
         match target {
             MenuTarget::Account(account) => {
                 self.dialogs.open_account_context_menu(at.x, at.y, account)

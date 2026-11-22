@@ -198,11 +198,15 @@ impl AppModel {
         }
     }
 
-    /// Opens `folder`, `None` being the root, dropping a pending setup.
+    /// Opens `folder`, `None` being the root, dropping a pending setup. The
+    /// folder already open (the breadcrumb's current crumb) changes nothing.
     fn navigate_to_folder(&mut self, folder: Option<String>) {
         let Some(b) = self.booted.as_mut() else {
             return;
         };
+        if b.accounts.navigation.current_folder_id() == folder.as_deref() {
+            return;
+        }
         let tab = b.nav.active_tab.clone();
         b.accounts
             .cancel_add_flow_if_conflicting(&self.jobs, &tab, &tab, None);

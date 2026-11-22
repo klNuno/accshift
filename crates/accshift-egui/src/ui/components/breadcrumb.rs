@@ -194,7 +194,8 @@ pub fn breadcrumb(ui: &mut Ui, rect: Rect, props: &BreadcrumbProps) -> Option<Op
         if props.focus_visible && response.has_focus() {
             super::focus::ua_ring(ui, placed.rect, 3.0, v);
         }
-        if response.clicked() {
+        // The current crumb is where the list already is.
+        if response.clicked() && !current {
             clicked = Some(folder);
         }
     }
