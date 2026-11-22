@@ -2,8 +2,8 @@ use super::*;
 use crate::app::onboarding::Step;
 use crate::{Screen, Shell};
 use egui::{
-    pos2, vec2, Event, FullOutput, Modifiers, PointerButton, Pos2, RawInput, Rect, ViewportCommand,
-    ViewportId,
+    pos2, vec2, Event, FullOutput, Key, Modifiers, PointerButton, Pos2, RawInput, Rect,
+    ViewportCommand, ViewportId,
 };
 use serde_json::json;
 
@@ -312,6 +312,113 @@ fn onboarding_modal_stays_unscaled_at_150_percent() {
             "onboarding Welcome Next button must stay at 100% coordinates (677, 472) at 150% ({animations})"
         );
     }
+}
+
+#[test]
+fn zoom_shortcut_clears_stuck_hover() {
+    let ctx = Context::default();
+    let mut shell = demo_shell(
+        &ctx,
+        json!({
+            "animations": "off",
+            "uiScalePercent": 100,
+        }),
+        false,
+        false,
+    );
+    let size = [860.0, 440.0];
+    let mut t = 1.0;
+    for _ in 0..4 {
+        t += 0.05;
+        step_shell(&mut shell, &ctx, size, t, Vec::new());
+    }
+    // Hover over a clickable title-bar tab.
+    for _ in 0..2 {
+        t += 0.05;
+        step_shell(
+            &mut shell,
+            &ctx,
+            size,
+            t,
+            vec![Event::PointerMoved(pos2(24.0, 18.0))],
+        );
+    }
+    assert!(
+        ctx.input(|i| i.pointer.hover_pos()).is_some(),
+        "pointer is hovering before zoom shortcut"
+    );
+    assert!(
+        ctx.viewport(|vp| vp
+            .hits
+            .contains_pointer
+            .iter()
+            .any(|w| w.sense.senses_click())),
+        "a clickable widget is under the pointer before zoom shortcut"
+    );
+    // Zoom in with Ctrl+= without moving the mouse.
+    t += 0.05;
+    step_shell(
+        &mut shell,
+        &ctx,
+        size,
+        t,
+        vec![Event::Key {
+            key: Key::Equals,
+            physical_key: Some(Key::Equals),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::CTRL,
+        }],
+    );
+    // Advance frames so the new zoom factor applies.
+    for _ in 0..2 {
+        t += 0.05;
+        step_shell(&mut shell, &ctx, size, t, Vec::new());
+    }
+    assert!(
+        crate::zoom::ui(&ctx) > 1.0,
+        "Ctrl+= increased ui zoom (got {})",
+        crate::zoom::ui(&ctx)
+    );
+    assert_eq!(
+        ctx.input(|i| i.pointer.hover_pos()),
+        None,
+        "hover must be cleared after a zoom shortcut so the old widget does not stay hovered"
+    );
+    // A subsequent pointer move restores hover normally.
+    t += 0.05;
+    step_shell(
+        &mut shell,
+        &ctx,
+        size,
+        t,
+        vec![Event::PointerMoved(pos2(24.0, 18.0))],
+    );
+    assert!(ctx.input(|i| i.pointer.hover_pos()).is_some());
+    // Ctrl+wheel zoom also clears stuck hover.
+    t += 0.05;
+    step_shell(
+        &mut shell,
+        &ctx,
+        size,
+        t,
+        vec![Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: vec2(0.0, 1.0),
+            modifiers: Modifiers::CTRL,
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+        }],
+    );
+    for _ in 0..2 {
+        t += 0.05;
+        step_shell(&mut shell, &ctx, size, t, Vec::new());
+    }
+    assert_eq!(
+        ctx.input(|i| i.pointer.hover_pos()),
+        None,
+        "hover must also be cleared after Ctrl+wheel zoom"
+    );
 }
 
 #[test]

@@ -21,6 +21,7 @@ const BASE: &str = "accshift-zoom/base";
 const UI: &str = "accshift-zoom/ui";
 const FRAME: &str = "accshift-zoom/frame";
 const UPSCALE: &str = "accshift-zoom/upscale";
+const CLEAR_HOVER: &str = "accshift-zoom/clear-hover";
 
 /// The factor the window itself needs, before the UI zoom.
 pub fn set_base(ctx: &Context, base: f32) {
@@ -41,7 +42,20 @@ pub fn clear_ui(ctx: &Context) {
     ctx.data_mut(|d| {
         d.remove_temp::<f32>(Id::unique(UI));
         d.remove_temp::<bool>(Id::unique(UPSCALE));
+        d.remove_temp::<bool>(Id::unique(CLEAR_HOVER));
     });
+}
+
+/// Asks the next frame to drop any stale pointer hover after a zoom change
+/// (unless a fresh pointer move arrives on that frame).
+pub fn request_hover_clear(ctx: &Context) {
+    ctx.data_mut(|d| d.insert_temp(Id::unique(CLEAR_HOVER), true));
+}
+
+/// Takes the pending hover-clear request, if any.
+pub fn take_hover_clear(ctx: &Context) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(Id::unique(CLEAR_HOVER)))
+        .unwrap_or(false)
 }
 
 /// Whether the software runner scales the rendered stage (the boot

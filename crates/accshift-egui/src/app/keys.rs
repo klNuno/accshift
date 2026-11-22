@@ -637,9 +637,9 @@ impl AppModel {
             KeyAction::OpenPersonas => self.apply_one(ctx, Action::OpenPersonas),
             KeyAction::ToggleViewMode => self.toggle_view_mode(ctx),
             KeyAction::ChangeTab(tab) => self.apply_one(ctx, Action::TabChange(tab)),
-            KeyAction::ZoomIn => self.zoom_key(ZoomKey::In, Instant::now()),
-            KeyAction::ZoomOut => self.zoom_key(ZoomKey::Out, Instant::now()),
-            KeyAction::ResetZoom => self.zoom_key(ZoomKey::Reset, Instant::now()),
+            KeyAction::ZoomIn => self.zoom_key(ctx, ZoomKey::In, Instant::now()),
+            KeyAction::ZoomOut => self.zoom_key(ctx, ZoomKey::Out, Instant::now()),
+            KeyAction::ResetZoom => self.zoom_key(ctx, ZoomKey::Reset, Instant::now()),
             KeyAction::NavigateBack => self.apply_one(ctx, Action::NavigateBack),
             KeyAction::ToggleBulkEditAccount(id) => {
                 if let Some(b) = self.booted.as_mut() {

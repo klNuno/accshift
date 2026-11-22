@@ -232,6 +232,14 @@ impl Shell {
         if let Some(run) = &mut self.scenes {
             run.feed(ctx, raw_input, self.screen.ready());
         }
+        if zoom::take_hover_clear(ctx)
+            && !raw_input
+                .events
+                .iter()
+                .any(|e| matches!(e, egui::Event::PointerMoved(_)))
+        {
+            raw_input.events.insert(0, egui::Event::PointerGone);
+        }
         zoom::stage_input(raw_input, stage);
         if sequence_input(&mut self.held, &mut raw_input.events) {
             ctx.request_repaint();

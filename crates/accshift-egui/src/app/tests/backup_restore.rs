@@ -1160,7 +1160,7 @@ fn a_descriptor_locked_at_boot_keeps_the_platform_the_settings_enable() {
         a.settings_panel.as_ref().is_some_and(|p| p.hydrated)
     });
     let zoom = app.booted().unwrap().stores.settings().ui_scale_percent;
-    app.zoom_key(super::super::ui_scale::ZoomKey::In, Instant::now());
+    app.zoom_key(&ctx, super::super::ui_scale::ZoomKey::In, Instant::now());
     pump_until(&mut app, &ctx, |a| {
         a.booted().unwrap().stores.settings().ui_scale_percent != zoom
     });
@@ -1284,7 +1284,7 @@ fn a_zoom_made_during_the_restore_is_not_saved_over_it() {
     let restored = app.booted().unwrap().stores.settings().ui_scale_percent;
     // Its save is due long after the restore ends.
     let later = Instant::now() + std::time::Duration::from_secs(30);
-    app.zoom_key(super::super::ui_scale::ZoomKey::In, later);
+    app.zoom_key(&ctx, super::super::ui_scale::ZoomKey::In, later);
     assert!(app.ui_scale_live.is_some());
     mock.release("backup_restore");
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
