@@ -15,6 +15,7 @@
 mod apply;
 mod mapper;
 mod reader;
+mod session;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]

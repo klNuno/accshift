@@ -2,7 +2,7 @@
 //! read, migrate anything while only previewing, count half a session as
 //! saved, or call a folder that only brings an order empty.
 
-use super::apply::{publish_staged, SnapshotError};
+use super::session::{publish_staged, SnapshotError};
 use super::test_support::{config_guard, write_json, TempDir, TestCtx};
 use super::{apply_tcno_import, preview_tcno_import};
 use crate::config;
@@ -287,6 +287,42 @@ fn a_failed_publish_keeps_the_session_that_was_there() {
     publish_staged(&staging, &dir, &aside, |from, to| fs::rename(from, to)).unwrap();
     assert_eq!(fs::read(dir.join("user.dat")).unwrap(), b"new");
     assert!(!aside.exists() && !staging.exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_failed_record_write_replaces_no_session() {
+    use super::test_support::write_file;
+    let _config = config_guard();
+    let uuid = "11111111-2222-3333-4444-666666666666";
+    let tcno = TempDir::new("record-fail-src");
+    write_json(
+        tcno.path(),
+        "LoginCache/Ubisoft/ids.json",
+        &json!({ uuid: "UbiAlt" }),
+    );
+    write_file(tcno.path(), "LoginCache/Ubisoft/UbiAlt/user.dat", b"user");
+    write_file(
+        tcno.path(),
+        "LoginCache/Ubisoft/UbiAlt/ConnectSecureStorage.dat",
+        b"secure",
+    );
+    let ctx = TestCtx::new("record-fail-app");
+    let dir = storage::platform_snapshots_dir(&ctx, "ubisoft")
+        .unwrap()
+        .join(uuid);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("user.dat"), b"stale").unwrap();
+    let ledger = storage::tcno_import_origins_path(&ctx).unwrap();
+    let blocked = storage::block_temp_file(&ledger);
+
+    let result = apply_tcno_import(&ctx, tcno.path());
+    drop(blocked);
+    assert!(result.is_err(), "the record write did not fail");
+    // The session is replaced only once every record is written: a failed
+    // write cannot drop the path of a copy left aside.
+    assert_eq!(fs::read(dir.join("user.dat")).unwrap(), b"stale");
+    assert!(!dir.join("ConnectSecureStorage.dat").exists());
 }
 
 #[test]

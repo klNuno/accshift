@@ -1,12 +1,12 @@
 //! Edge cases of the TcNo import: ids accshift cannot match, the Epic
 //! AccountId kept as written, and a session that fails half way.
 
-#[cfg(windows)]
-use super::apply::write_snapshot;
 use super::mapper::normalize_account_id;
 #[cfg(windows)]
 use super::mapper::{PlannedAccount, PlannedSnapshot};
 use super::reader::read_reg_json_account_id;
+#[cfg(windows)]
+use super::session::write_snapshot;
 #[cfg(windows)]
 use super::test_support::write_file;
 use super::test_support::{config_guard, write_json, TempDir, TestCtx};
