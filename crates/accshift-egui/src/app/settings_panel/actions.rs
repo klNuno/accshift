@@ -132,6 +132,7 @@ impl AppModel {
             SettingsAction::ExportTelemetry => panel.export_telemetry(jobs),
             SettingsAction::ExportBackup => self.export_backup(),
             SettingsAction::ImportBackup => self.import_backup(),
+            SettingsAction::ImportTcno => self.import_tcno(),
             SettingsAction::RetryTelemetryLoad => panel.refresh_telemetry(jobs),
             SettingsAction::PlatformSearch(text) => panel.platform_search = text,
             SettingsAction::TogglePlatform(id) => {
@@ -176,7 +177,7 @@ impl AppModel {
             }
             SettingsAction::ChoosePlatformPath(id) => panel.choose_platform_path(jobs, id),
             SettingsAction::RobloxCookie(text) => panel.roblox_cookie = text,
-            SettingsAction::AddRobloxCookie => panel.add_roblox_cookie(jobs),
+            SettingsAction::AddRobloxCookie => panel.add_roblox_cookie(jobs, gate),
             SettingsAction::SteamLaunchOptions(text) => {
                 panel.draft.platform_settings.steam.launch_options = text;
             }
@@ -515,7 +516,7 @@ impl SettingsPanel {
         };
         let Some(job) = job else {
             self.descriptor_notice.clear();
-            self.descriptor_error = translate(self.draft.language, "settings.backupHoldsWrites");
+            self.descriptor_error = translate(self.draft.language, gate.refusal_key());
             return;
         };
         self.descriptor_busy = true;
@@ -554,21 +555,27 @@ impl SettingsPanel {
 /// The Roblox cookie and the data refresh.
 impl SettingsPanel {
     /// Adds the Roblox account a pasted cookie signs in to, unless the field
-    /// is blank or an add is under way.
-    fn add_roblox_cookie(&mut self, jobs: &Jobs) {
+    /// is blank or an add is under way. It writes the Roblox list: behind
+    /// the backup's gate.
+    fn add_roblox_cookie(&mut self, jobs: &Jobs, gate: &WriteGate) {
         let trimmed = self.roblox_cookie.trim().to_string();
         if trimmed.is_empty() || self.roblox_adding {
             return;
         }
-        self.roblox_adding = true;
-        self.roblox_error.clear();
-        self.roblox_job = Some(jobs.run(move |b| {
+        let call = move |b: &dyn Backend| {
             // The paste is the second door into adding a Roblox account: it
             // reports its own funnel start. The failure half is reported by
             // the backend command.
             let _ = b.telemetry_track_account_add_started("roblox");
             b.roblox_add_account_by_cookie(&trimmed)
-        }));
+        };
+        let Some(call) = gate.admit(call) else {
+            self.roblox_error = translate(self.draft.language, gate.refusal_key());
+            return;
+        };
+        self.roblox_adding = true;
+        self.roblox_error.clear();
+        self.roblox_job = Some(jobs.run(call));
     }
 
     /// A "Refresh now" button, unless a run of that kind is in flight. The

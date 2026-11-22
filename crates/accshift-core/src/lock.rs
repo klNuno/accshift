@@ -15,6 +15,7 @@
 //! | GUI cancel setup | exclusive | 30 s | waits out a detached setup launch |
 //! | Riot and Steam detached setup launch ([`with_exclusive`]) | exclusive | 30 s | the setup reports the failure |
 //! | CLI switch | exclusive | 2 s | exits with "Another instance" |
+//! | TcNo import (`tcno::apply_tcno_import`), its whole read-modify-write | exclusive | 2 s | the import fails before any write |
 //! | `config::save_config` and every `update_config` | write | 5 s | the write fails, nothing is half-written |
 //! | GUI client store save (settings, folders, caches) | write | 2 s | the save fails and the debounce retries |
 //! | CLI PIN writes | write | 5 s | the command fails |

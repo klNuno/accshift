@@ -14,6 +14,7 @@ pub mod runtime;
 pub mod secrets;
 pub mod snapshot_crypto;
 pub mod storage;
+pub mod tcno;
 pub mod telemetry;
 #[cfg(test)]
 pub(crate) mod test_fs;
@@ -40,6 +41,7 @@ mod tests {
         "snapshot_crypto.rs",
         "storage",
         "storage.rs",
+        "tcno",
         "telemetry",
     ];
 

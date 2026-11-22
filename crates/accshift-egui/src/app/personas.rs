@@ -513,6 +513,15 @@ impl AppModel {
             return;
         };
         if let Some(persona) = self.personas.switch.confirm_settled(ticket, allowed) {
+            // A persona switch writes accounts: not behind a held boundary.
+            if self.backup.holds_writes() {
+                self.toasts.add(
+                    Text::key(self.backup.gate.refusal_key()),
+                    accshift_app::actions::toasts::AddToastOptions::default(),
+                    std::time::Instant::now(),
+                );
+                return;
+            }
             b.personas.start_switch(
                 jobs,
                 &b.accounts.registry,

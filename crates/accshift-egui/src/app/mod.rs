@@ -49,12 +49,14 @@ pub mod session;
 pub mod settings_panel;
 mod shell;
 pub mod shortcuts;
+mod tcno_flow;
 mod theme;
 pub mod theme_editor;
 mod ui_scale;
 mod updates;
 pub mod vars;
 mod wallpaper;
+mod write_gate;
 
 use std::sync::Arc;
 

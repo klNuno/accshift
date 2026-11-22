@@ -9,6 +9,7 @@ use accshift_app::accounts::LoadingEvent;
 use accshift_app::actions::dialogs::{finish_rename_account, rename_account_blocking};
 use accshift_app::actions::toasts::AddToastOptions;
 use accshift_app::actions::{card_actions, load_options, toasts, AppEffect};
+use accshift_app::backend::Backend;
 use accshift_app::jobs::{Pending, Poll};
 use accshift_app::menu::{PlatformTask, TaskEffect};
 use accshift_app::platform_add_flow::{AddFlowEvent, SetupChipAction};
@@ -70,6 +71,7 @@ impl AppModel {
                 AppEffect::ConfirmSettled { ticket, allowed } => {
                     self.settle_descriptor_removal(ticket, allowed);
                     self.settle_backup_restore(ticket, allowed);
+                    self.settle_tcno_import(ticket, allowed);
                     self.settle_persona_confirm(ticket, allowed);
                     self.settle_deep_link_confirm(ctx, ticket, allowed);
                 }
@@ -167,7 +169,8 @@ impl AppModel {
             .cancel_add_flow_if_conflicting(&self.jobs, &tab, platform_id, account_id);
     }
 
-    /// A menu task on the job pool, with the active tab's adapter.
+    /// A menu task on the job pool, with the active tab's adapter, behind
+    /// the backup's gate: it may write the platform's accounts.
     fn run_platform_task(&mut self, task: PlatformTask) {
         let Some(b) = self.booted.as_ref() else {
             return;
@@ -176,10 +179,13 @@ impl AppModel {
             return;
         };
         let settings = b.stores.settings().clone();
-        let job = self
-            .jobs
-            .run(move |backend| adapter.run_task(&task, backend, &settings));
-        self.task_jobs.push(job);
+        let call = move |backend: &dyn Backend| adapter.run_task(&task, backend, &settings);
+        match self.backup.gate.admit(call) {
+            Some(call) => self.task_jobs.push(self.jobs.run(call)),
+            None => {
+                self.refuse_account_write();
+            }
+        }
     }
 
     /// The adapter's account label set on the job pool.
@@ -191,10 +197,15 @@ impl AppModel {
         else {
             return;
         };
-        let job = self
-            .jobs
-            .run(move |backend| rename_account_blocking(backend, &adapter, &account_id, &label));
-        self.rename_jobs.push(job);
+        let call = move |backend: &dyn Backend| {
+            rename_account_blocking(backend, &adapter, &account_id, &label)
+        };
+        match self.backup.gate.admit(call) {
+            Some(call) => self.rename_jobs.push(self.jobs.run(call)),
+            None => {
+                self.refuse_account_write();
+            }
+        }
     }
 
     /// Lands finished menu tasks and renames, each task's effects in the
@@ -247,6 +258,9 @@ impl AppModel {
     /// switch runs; the outcome comes back from the loader. False when it
     /// did not start.
     pub(super) fn switch_account(&mut self, account: &PlatformAccount) -> bool {
+        if self.refuse_account_write() {
+            return false;
+        }
         let Some(b) = self.booted.as_mut() else {
             return false;
         };

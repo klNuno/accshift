@@ -218,6 +218,15 @@ impl Backend for MockBackend {
         }
         answer.map_err(RestoreError::from)
     }
+    fn tcno_select_folder(&self, title: &str) -> BackendResult<String> {
+        self.call("tcno_select_folder", json!({ "title": title }))
+    }
+    fn tcno_preview(&self, path: &str) -> BackendResult<TcNoPreview> {
+        self.call("tcno_preview", json!({ "path": path }))
+    }
+    fn tcno_import(&self, path: &str) -> BackendResult<TcNoImportReport> {
+        self.call("tcno_import", json!({ "path": path }))
+    }
     fn open_url(&self, url: &str) -> BackendResult<()> {
         self.call("open_url", json!({ "url": url }))
     }

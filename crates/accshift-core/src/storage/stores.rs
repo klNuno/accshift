@@ -117,6 +117,33 @@ pub fn client_store_path(app_handle: &dyn AppContext, store_id: &str) -> Result<
     Ok(target)
 }
 
+/// [`client_store_path`] for a reader that must change nothing: the legacy
+/// file while only it exists, never migrated.
+pub fn peek_client_store_path(
+    app_handle: &dyn AppContext,
+    store_id: &str,
+) -> Result<PathBuf, String> {
+    let layout = client_store_layout(store_id)
+        .ok_or_else(|| format!("Unknown client store id: {store_id}"))?;
+    let root = match layout.root {
+        StoreRoot::Config => app_config_root(app_handle)?,
+        StoreRoot::Cache => app_cache_root(app_handle)?,
+    };
+    let target = join_all(root, layout.current);
+    let path_exists = |path: &Path| {
+        path.try_exists()
+            .map_err(|e| format!("Could not check {}: {e}", path.display()))
+    };
+    if !path_exists(&target)? {
+        if let Some(legacy) = legacy_client_store_path(app_handle, store_id)? {
+            if path_exists(&legacy)? {
+                return Ok(legacy);
+            }
+        }
+    }
+    Ok(target)
+}
+
 /// Persist one client store, returning the file's post-write fingerprint.
 ///
 /// The GUI records it as its own write: without that, the next focus manifest

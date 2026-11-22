@@ -364,6 +364,27 @@ impl Backend for Scripted {
         }
         self.inner.backup_restore(path, digest)
     }
+    fn tcno_select_folder(&self, title: &str) -> BackendResult<String> {
+        self.record("tcno_select_folder", title.to_string());
+        if let Some(answer) = self.next("tcno_select_folder") {
+            return answer;
+        }
+        self.inner.tcno_select_folder(title)
+    }
+    fn tcno_preview(&self, path: &str) -> BackendResult<TcNoPreview> {
+        self.record("tcno_preview", format!("{:?}", (&path,)));
+        if let Some(answer) = self.next("tcno_preview") {
+            return answer;
+        }
+        self.inner.tcno_preview(path)
+    }
+    fn tcno_import(&self, path: &str) -> BackendResult<TcNoImportReport> {
+        self.record("tcno_import", format!("{:?}", (&path,)));
+        if let Some(answer) = self.next("tcno_import") {
+            return answer;
+        }
+        self.inner.tcno_import(path)
+    }
     fn descriptor_select_file(&self) -> BackendResult<String> {
         self.record("descriptor_select_file", String::new());
         if let Some(answer) = self.next("descriptor_select_file") {

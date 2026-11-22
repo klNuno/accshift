@@ -116,7 +116,7 @@ fn start_import(
             .map_err(|e| e.to_string())?;
         backend.save_custom_theme(&theme).map_err(|e| e.message)
     }) else {
-        toast(toasts, "settings.backupHoldsWrites", ToastType::Error, now);
+        toast(toasts, gate.refusal_key(), ToastType::Error, now);
         return None;
     };
     let job = jobs.run(call);

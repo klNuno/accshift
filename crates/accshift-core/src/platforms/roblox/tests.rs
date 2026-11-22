@@ -45,3 +45,42 @@ fn a_switch_never_kills_roblox_studio() {
     // Studio can hold unsaved work: only the game client is closed.
     assert_eq!(ROBLOX_SWITCH_KILL_NAMES, ["RobloxPlayerBeta.exe"]);
 }
+
+#[test]
+fn an_account_imported_without_a_cookie_asks_for_a_sign_in() {
+    // An account imported from TcNo has no saved session: the switch must
+    // say how to get one, not that a cookie failed to decrypt.
+    let account = RobloxAccountConfig {
+        user_id: "1234".into(),
+        username: "Imported".into(),
+        display_name: "Imported".into(),
+        cookie_encrypted: String::new(),
+        last_used_at: None,
+    };
+    let error = stored_cookie(&account).unwrap_err();
+    assert!(
+        error.starts_with("Sign in to this Roblox account again"),
+        "{error}"
+    );
+}
+
+#[test]
+fn an_account_without_a_session_never_owns_the_live_cookie() {
+    // Imported from TcNo with a recent date but no cookie: the live cookie
+    // still belongs to the account last switched to, whose rotation must
+    // be kept.
+    let account = |id: &str, cookie: &str, last_used_at| RobloxAccountConfig {
+        user_id: id.into(),
+        username: id.into(),
+        display_name: id.into(),
+        cookie_encrypted: cookie.into(),
+        last_used_at: Some(last_used_at),
+    };
+    let accounts = [
+        account("active", "encrypted", 1_000),
+        account("imported", "", 2_000),
+    ];
+    let owner = live_cookie_owner(&accounts).map(|a| a.user_id.as_str());
+    assert_eq!(owner, Some("active"));
+    assert!(live_cookie_owner(&accounts[1..]).is_none());
+}

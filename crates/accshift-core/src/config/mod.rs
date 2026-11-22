@@ -21,7 +21,7 @@ use self::store::*;
 pub use self::migrate::migrate_legacy_config;
 #[cfg(test)]
 pub(crate) use self::store::config_io_test_mutex;
-pub use self::store::{load_config, save_config, update_config};
+pub use self::store::{load_config, load_config_checked, peek_config, save_config, update_config};
 #[cfg(test)]
 use self::window::{clamp_window_position, clamp_window_size};
 pub use self::window::{load_window, logical_from_physical, save_window_geometry, SavedWindow};

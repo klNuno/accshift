@@ -16,6 +16,7 @@ mod early_boot;
 mod native_regressions;
 mod real_unreadable;
 mod shortcuts;
+mod tcno_import;
 mod updates;
 
 struct Scratch {

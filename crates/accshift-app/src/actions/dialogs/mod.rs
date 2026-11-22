@@ -66,6 +66,10 @@ impl ConfirmDialogState {
     }
 }
 
+/// The `confirm_color` of a confirm that is not destructive: the button
+/// takes the theme's accent and its text colour, and focus starts on it.
+pub const CONFIRM_ACCENT: &str = "var(--accent)";
+
 /// What a confirmation request asks.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConfirmConfig {
