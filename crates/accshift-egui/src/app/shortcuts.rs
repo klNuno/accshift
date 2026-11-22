@@ -669,6 +669,12 @@ impl AppModel {
 
     /// A row's capture field: listens, or stops listening on a second click.
     pub(super) fn listen_shortcut(&mut self, target: ShortcutTarget) {
+        // A session without global shortcuts never listens: from the tab's
+        // picker or the card menu, the combination could never fire.
+        if !self.shortcuts_available() {
+            self.shortcuts.capture = None;
+            return;
+        }
         let again = self
             .shortcuts
             .capture
@@ -713,6 +719,15 @@ impl AppModel {
     }
 
     /// What the Shortcuts tab reads.
+    /// Whether the session takes global shortcuts; true until the service
+    /// is built.
+    fn shortcuts_available(&self) -> bool {
+        self.shortcuts
+            .service
+            .as_ref()
+            .is_none_or(ShortcutService::available)
+    }
+
     pub(super) fn shortcuts_view(&self) -> ShortcutsView {
         let Some(b) = self.booted.as_ref() else {
             return ShortcutsView::default();
@@ -863,8 +878,13 @@ impl AppModel {
                 }
             }
         }
+        let available = self.shortcuts_available();
+        if !available {
+            // Nothing could fire: the tab offers nothing to listen for.
+            picker.clear();
+        }
         ShortcutsView {
-            available: s.service.as_ref().is_none_or(ShortcutService::available),
+            available,
             stops_on_close: !(b.runtime_os == RuntimeOs::Windows && settings.close_to_tray),
             rows,
             unusable: s.capture.as_ref().is_some_and(|c| c.unusable),

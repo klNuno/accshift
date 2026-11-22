@@ -702,3 +702,21 @@ fn a_binding_fires_and_shows_active_only_once_the_portal_bound_it() {
     frame(&mut app, &ctx);
     assert!(app.palette.is_some());
 }
+
+/// Regression: with no global shortcuts in the session (a Wayland session
+/// without the portal) the combination boxes were disabled but the add
+/// picker still offered every account and started listening.
+#[test]
+fn a_session_without_shortcuts_offers_nothing_to_add() {
+    let ctx = Context::default();
+    let (mut app, _) = app_with(&ctx, bound(json!({ "openPalette": "Ctrl+Alt+K" })), "*");
+    settle(&mut app, &ctx);
+    let view = app.shortcuts_view();
+    assert!(!view.available);
+    assert!(view.picker.is_empty(), "picker offered {:?}", view.picker);
+    // The card menu's entry asks the same thing: nothing listens.
+    app.listen_shortcut(ShortcutTarget::Persona {
+        persona_id: "persona-main".into(),
+    });
+    assert!(app.shortcuts.capture.is_none());
+}

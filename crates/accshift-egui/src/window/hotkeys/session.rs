@@ -61,7 +61,7 @@ impl Bindings {
     /// A fresh session asked to bind `keys`: each one pending.
     pub fn start(&mut self, session: &str, keys: Vec<(u32, String)>) {
         self.session = Some(session.to_string());
-        self.answered_once = false;
+        self.forget_close();
         self.outcomes = keys.iter().map(|(id, _)| (*id, Outcome::Pending)).collect();
         self.keys = keys;
     }
@@ -69,6 +69,7 @@ impl Bindings {
     /// The table could not reach the portal (no session): each one refused.
     pub fn fail(&mut self, keys: Vec<(u32, String)>) {
         self.session = None;
+        self.forget_close();
         self.outcomes = keys.iter().map(|(id, _)| (*id, Outcome::Refused)).collect();
         self.keys = keys;
     }
@@ -76,6 +77,7 @@ impl Bindings {
     /// The session closed with nothing left to bind.
     pub fn clear(&mut self) {
         self.session = None;
+        self.forget_close();
         self.keys.clear();
         self.outcomes.clear();
     }
@@ -120,6 +122,13 @@ impl Bindings {
             *outcome = Outcome::Refused;
         }
         self.rebind = std::mem::take(&mut self.answered_once);
+    }
+
+    /// The worker replaced the session: a `Closed` the old one sent before
+    /// the replacement must not bind the new table again.
+    fn forget_close(&mut self) {
+        self.answered_once = false;
+        self.rebind = false;
     }
 
     /// Whether the next commit sends the table even when it did not change,
@@ -205,6 +214,27 @@ mod tests {
         assert_eq!(b.outcome(1), Outcome::Refused);
         assert_eq!(b.pressed("/s/1", "palette"), None);
         assert_eq!(b.outcome(2), Outcome::Active(Some("Meta+1".into())));
+    }
+
+    /// The worker closes the old session before it opens the next one: a
+    /// `Closed` for the old one landing in between must not bind the new
+    /// table a second time.
+    #[test]
+    fn a_close_of_the_replaced_session_does_not_rebind_the_next_one() {
+        for next in ["start", "fail", "clear"] {
+            let mut b = Bindings::default();
+            b.start("/s/1", table());
+            b.answered("/s/1", Some(&[bound("palette", "Ctrl+Alt+K")]));
+            b.closed("/s/1");
+            match next {
+                "start" => b.start("/s/2", table()),
+                "fail" => b.fail(table()),
+                _ => b.clear(),
+            }
+            assert!(!b.take_rebind(), "{next} kept the old session's rebind");
+            b.closed("/s/1");
+            assert!(!b.take_rebind(), "{next}: a late close re-armed it");
+        }
     }
 
     #[test]
