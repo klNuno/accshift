@@ -1,5 +1,5 @@
-//! The cards of the Privacy tab: privacy, security (the PIN lock) and
-//! telemetry.
+//! The cards of the Privacy tab: privacy, security (the PIN lock), backup
+//! and telemetry.
 
 use accshift_app::i18n::Locale;
 use accshift_app::settings::StreamerMode;
