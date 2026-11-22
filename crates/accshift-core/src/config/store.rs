@@ -95,6 +95,7 @@ pub fn load_config(app_handle: &dyn AppContext) -> AppConfig {
                 && cached.portable_sig == portable_sig
                 && cached.local_sig == local_sig
                 && portable_sig.is_some()
+                && local_sig.is_some()
             {
                 return cached.value.clone();
             }
@@ -118,9 +119,29 @@ pub fn load_config(app_handle: &dyn AppContext) -> AppConfig {
     // load retries the read instead of serving the defaults.
     let cacheable = !config_unreadable(&portable_path) && !config_unreadable(&local_path);
 
+    // A missing half may still live in legacy config, after a migration that
+    // stopped between the two writes or a half deleted by hand. Defaults
+    // there would be saved over it on the next write, and migration would
+    // then retire legacy. A half present but unreadable keeps the defaults
+    // and the poison. Not cached: the result also depends on legacy.
     let merged = match (portable, local) {
-        (Some(portable), local) => merge_split_configs(portable, local.unwrap_or_default()),
-        (None, Some(local)) => merge_split_configs(AppConfig::default(), local),
+        (Some(portable), Some(local)) => merge_split_configs(portable, local),
+        (Some(portable), None) => {
+            let local = if config_unreadable(&local_path) {
+                AppConfig::default()
+            } else {
+                load_legacy_config(app_handle)
+            };
+            return merge_split_configs(portable, local);
+        }
+        (None, Some(local)) => {
+            let portable = if config_unreadable(&portable_path) {
+                AppConfig::default()
+            } else {
+                load_legacy_config(app_handle)
+            };
+            return merge_split_configs(portable, local);
+        }
         // No split config yet, fall back to legacy (pre-migration). Not
         // cached: the next save creates the split files.
         (None, None) => return load_legacy_config(app_handle),

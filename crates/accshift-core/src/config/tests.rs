@@ -306,8 +306,8 @@ fn a_corrupt_legacy_beside_one_split_file_poisons_saves() {
     let local_path = crate::storage::local_config_path(&*ctx).unwrap();
 
     assert!(matches!(migrate_legacy_config(&*ctx), Some(Err(_))));
-    // The load reads the portable file and never looks at legacy, so only
-    // the poison set by the failed migration stops this save.
+    // The load reads legacy for the missing local half and finds it corrupt:
+    // saves stay refused, so this one cannot write a local file of defaults.
     let _ = load_config(&*ctx);
     assert!(update_config(&*ctx, |cfg| cfg.window_width = Some(900.0)).is_err());
     assert!(!local_path.exists());
@@ -955,4 +955,99 @@ fn battle_net_owed_saved_accounts_stay_local_and_missing_field_is_noop() {
     assert!(parsed.battle_net.owed_saved_accounts.is_empty());
     let reserialized = serde_json::to_string(&parsed).unwrap();
     assert!(!reserialized.contains("owed_saved_accounts"));
+}
+
+#[test]
+fn a_missing_split_half_is_read_from_legacy_not_defaults() {
+    let _test_guard = config_io_test_mutex()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let ctx = tmp_ctx("half-from-legacy");
+    let legacy_path = crate::storage::legacy_config_path(&*ctx).unwrap();
+    std::fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
+    let legacy = br#"{"steam_api_key":"kept-secret","riot":{"profiles":[{"id":"p1","label":"Legacy"}],"current_profile_id":"p1"}}"#;
+    std::fs::write(&legacy_path, legacy).unwrap();
+
+    // Only the portable half exists: the local settings must come from legacy,
+    // or the next save writes defaults over them and migration retires legacy.
+    let mut current = AppConfig::default();
+    current.riot.profiles.push(RiotProfileConfig {
+        id: "p1".into(),
+        label: "Current".into(),
+        ..Default::default()
+    });
+    let portable_path = crate::storage::portable_config_path(&*ctx).unwrap();
+    crate::storage::write_json_atomic(&portable_path, &portable_config(&current)).unwrap();
+    let local_path = crate::storage::local_config_path(&*ctx).unwrap();
+    assert!(!local_path.exists());
+
+    let loaded = load_config(&*ctx);
+    assert_eq!(loaded.steam.api_key, "kept-secret");
+    assert_eq!(loaded.riot.profiles[0].label, "Current");
+
+    // The merge depends on legacy too: a cache keyed on the split files alone
+    // would keep serving it after legacy changes.
+    let changed = br#"{"steam_api_key":"changed-secret"}"#;
+    std::fs::write(&legacy_path, changed).unwrap();
+    assert_eq!(load_config(&*ctx).steam.api_key, "changed-secret");
+
+    update_config(&*ctx, |cfg| cfg.window_width = Some(1280.0)).unwrap();
+    assert!(local_path.exists());
+    std::fs::remove_file(&legacy_path).unwrap();
+    let saved = load_config(&*ctx);
+    assert_eq!(
+        saved.steam.api_key, "changed-secret",
+        "the save must write the local settings legacy held, not defaults"
+    );
+    assert_eq!(saved.window_width, Some(1280.0));
+
+    // The reverse: only the local half exists, the portable one is in legacy.
+    let reverse = tmp_ctx("portable-from-legacy");
+    let reverse_legacy = crate::storage::legacy_config_path(&*reverse).unwrap();
+    std::fs::create_dir_all(reverse_legacy.parent().unwrap()).unwrap();
+    std::fs::write(&reverse_legacy, legacy).unwrap();
+    let mut local_only = AppConfig::default();
+    local_only.steam.api_key = "local-secret".into();
+    let reverse_local = crate::storage::local_config_path(&*reverse).unwrap();
+    crate::storage::write_json_atomic(&reverse_local, &local_config(&local_only)).unwrap();
+    let loaded = load_config(&*reverse);
+    assert_eq!(loaded.steam.api_key, "local-secret");
+    assert_eq!(loaded.riot.profiles.len(), 1);
+    assert_eq!(loaded.riot.profiles[0].label, "Legacy");
+
+    // Neither the half nor legacy exists: defaults.
+    let bare = tmp_ctx("half-without-legacy");
+    let bare_portable = crate::storage::portable_config_path(&*bare).unwrap();
+    crate::storage::write_json_atomic(&bare_portable, &portable_config(&current)).unwrap();
+    let loaded = load_config(&*bare);
+    assert!(loaded.steam.api_key.is_empty());
+    assert_eq!(loaded.riot.profiles[0].label, "Current");
+
+    let _ = std::fs::remove_dir_all(&ctx.root);
+    let _ = std::fs::remove_dir_all(&reverse.root);
+    let _ = std::fs::remove_dir_all(&bare.root);
+}
+
+#[test]
+fn an_unreadable_split_half_is_not_replaced_from_legacy() {
+    let _test_guard = config_io_test_mutex()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let ctx = tmp_ctx("unreadable-half-legacy");
+    let legacy_path = crate::storage::legacy_config_path(&*ctx).unwrap();
+    std::fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
+    std::fs::write(&legacy_path, br#"{"steam_api_key":"stale-secret"}"#).unwrap();
+    let portable_path = crate::storage::portable_config_path(&*ctx).unwrap();
+    crate::storage::write_json_atomic(&portable_path, &portable_config(&AppConfig::default()))
+        .unwrap();
+    let local_path = crate::storage::local_config_path(&*ctx).unwrap();
+    std::fs::write(&local_path, b"{ corrupt local half").unwrap();
+
+    // The local file is there but unreadable: its content is unknown, so the
+    // load keeps defaults and saves stay refused.
+    let loaded = load_config(&*ctx);
+    assert!(loaded.steam.api_key.is_empty());
+    assert!(config_unreadable(&local_path));
+
+    let _ = std::fs::remove_dir_all(&ctx.root);
 }
