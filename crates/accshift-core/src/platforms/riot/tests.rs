@@ -353,3 +353,20 @@ fn setup_reset_keeps_the_device_cookie_and_drops_the_login() {
     reset_riot_settings_file(&file).unwrap();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn riot_close_list_handles_crash_handlers_without_counting_them_as_survivors() {
+    let close = super::close_process_names();
+    for client in super::RIOT_CLIENT_PROCESS_NAMES {
+        assert!(
+            close.contains(client),
+            "close list must include client process {client}"
+        );
+    }
+    assert!(close.contains(&"RiotClientCrashHandler.exe"));
+    assert!(close.contains(&"LeagueCrashHandler64.exe"));
+    // Crash handlers can linger under Vanguard without holding session tokens:
+    // they are killed best-effort but must not trigger the survivor check.
+    assert!(!super::RIOT_CLIENT_PROCESS_NAMES.contains(&"RiotClientCrashHandler.exe"));
+    assert!(!super::RIOT_CLIENT_PROCESS_NAMES.contains(&"LeagueCrashHandler64.exe"));
+}

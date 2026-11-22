@@ -72,6 +72,26 @@ const RIOT_CLIENT_PROCESS_NAMES: &[&str] = &[
     "LeagueClientUxRender.exe",
 ];
 
+// Crash handlers stay alive after the client closes and may resist termination
+// under Vanguard; kill them best-effort on close without counting them as
+// surviving client processes.
+const RIOT_CRASH_HANDLER_PROCESS_NAMES: &[&str] = &[
+    "RiotClientCrashHandler.exe",
+    "LeagueCrashHandler64.exe",
+];
+
+const RIOT_CLOSE_PROCESS_NAMES: &[&str] = &[
+    "RiotClientServices.exe",
+    "Riot Client.exe",
+    "RiotClientUx.exe",
+    "RiotClientUxRender.exe",
+    "LeagueClient.exe",
+    "LeagueClientUx.exe",
+    "LeagueClientUxRender.exe",
+    "RiotClientCrashHandler.exe",
+    "LeagueCrashHandler64.exe",
+];
+
 // The League game process has spaces in its name; the client processes do not.
 const RIOT_GAME_PROCESS_NAMES: &[&str] = &["League of Legends.exe", "VALORANT-Win64-Shipping.exe"];
 

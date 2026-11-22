@@ -63,12 +63,16 @@ pub(super) fn client_closed_or_error(survivors: &[&str]) -> Result<(), String> {
     ))
 }
 
+pub(super) fn close_process_names() -> &'static [&'static str] {
+    RIOT_CLOSE_PROCESS_NAMES
+}
+
 pub(super) fn kill_riot_client_processes() {
     for _ in 0..KILL_RETRY_COUNT {
         // Resolve what is actually running with one refresh, then kill only
         // those. Calling kill_process per name re-scanned the whole process
-        // table six times per round even when nothing was running.
-        let running = os::running_process_names(RIOT_CLIENT_PROCESS_NAMES);
+        // table per round even when nothing was running.
+        let running = os::running_process_names(close_process_names());
         for name in running {
             let _ = os::kill_process(name);
         }
@@ -76,6 +80,15 @@ pub(super) fn kill_riot_client_processes() {
             break;
         }
         thread::sleep(std::time::Duration::from_millis(KILL_RETRY_DELAY_MS));
+    }
+}
+
+/// Best-effort cleanup of lingering crash handlers after a graceful quit.
+/// Never retried or counted against `ensure_riot_client_closed`.
+pub(super) fn kill_riot_crash_handlers() {
+    let running = os::running_process_names(RIOT_CRASH_HANDLER_PROCESS_NAMES);
+    for name in running {
+        let _ = os::kill_process(name);
     }
 }
 
@@ -141,6 +154,7 @@ pub(super) fn graceful_riot_quit() -> Result<(), String> {
     // Wait for the process to exit (up to 8 seconds)
     for _ in 0..16 {
         if !is_any_process_running(RIOT_CLIENT_PROCESS_NAMES) {
+            kill_riot_crash_handlers();
             thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
             return Ok(());
         }
