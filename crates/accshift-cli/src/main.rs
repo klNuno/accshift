@@ -12,10 +12,10 @@ mod telemetry;
 use accshift_core::error::PlatformErrorKind;
 use accshift_core::lock::{acquire_exclusive, LockError};
 use accshift_core::platforms::descriptor::plan::DryRunPlan;
-use accshift_core::platforms::{get_service, PlatformService};
 use accshift_core::platforms::steam::switch_params::{
     steam_switch_params, PersonaMode, ShutdownMode, SteamSwitchDefaults, SteamSwitchOverrides,
 };
+use accshift_core::platforms::{get_service, PlatformService};
 use clap::{Parser, Subcommand};
 use output::{emit_err, emit_json_ok, Format};
 use serde_json::{json, Value};

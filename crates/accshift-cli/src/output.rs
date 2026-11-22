@@ -189,11 +189,7 @@ pub fn render_accounts(
 /// Non-sensitive human label for a requested account id (persona name,
 /// BattleTag, display name or user label), never falling back to the raw
 /// account id or email address.
-pub fn display_label_for(
-    platform_id: &str,
-    accounts: &[Value],
-    requested: &str,
-) -> Option<String> {
+pub fn display_label_for(platform_id: &str, accounts: &[Value], requested: &str) -> Option<String> {
     let get = |account: &Value, key: &str| {
         account
             .get(key)
@@ -204,8 +200,7 @@ pub fn display_label_for(
     };
     accounts.iter().find_map(|account| {
         let row = extract_row(platform_id, account)?;
-        let matches =
-            requested.eq_ignore_ascii_case(&row.switch_id) || requested == row.storage_id;
+        let matches = requested.eq_ignore_ascii_case(&row.switch_id) || requested == row.storage_id;
         if !matches {
             return None;
         }

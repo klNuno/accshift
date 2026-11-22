@@ -25,10 +25,8 @@ pub(super) fn purge_expired_battle_net_setup_jobs(
     jobs.retain(|_, job| {
         let expired = crate::platforms::setup_expired(job.last_touched_at, BATTLE_NET_SETUP_TTL_MS);
         if expired {
-            expired_saved = merge_saved_after_setup(
-                std::mem::take(&mut expired_saved),
-                &job.previous_saved,
-            );
+            expired_saved =
+                merge_saved_after_setup(std::mem::take(&mut expired_saved), &job.previous_saved);
         }
         !expired
     });
