@@ -1300,3 +1300,45 @@ fn the_last_admitted_write_wakes_a_draining_backup() {
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     assert_eq!(mock.seen("backup_restore"), 1);
 }
+
+#[test]
+fn a_restore_that_disables_the_active_tab_falls_back_to_an_enabled_one() {
+    // The restored settings leave out the platform shown: the tab moves to
+    // one they enable.
+    let ctx = Context::default();
+    let (mut app, mock) = restore_app_with(&ctx, |commands| {
+        let settings =
+            &mut commands["load_client_storage_snapshot"][0]["result"]["stores"]["client.settings"];
+        settings["enabledPlatforms"] = json!(["egui-fixture"]);
+    });
+    assert_eq!(app.booted().unwrap().nav.active_tab, "steam");
+    frame(&mut app, &ctx);
+    app.start_backup_restore("C:/b.json".into(), String::new());
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert!(!app.backup.restart_needed(), "{}", app.backup.card.notice);
+    assert_eq!(mock.seen("backup_restore"), 1);
+    assert_eq!(app.booted().unwrap().nav.active_tab, "egui-fixture");
+}
+
+#[test]
+fn a_pin_typed_during_the_restore_is_dropped_with_it() {
+    // Regression (PIN_DRAINED): a code typed while the restore ran stayed
+    // in the field, marked seen, with no save left to commit it, and the
+    // privacy toggle showed a PIN the stored settings did not have.
+    let ctx = Context::default();
+    let (mut app, mock) = restore_held_with_panel(&ctx);
+    let panel = app.settings_panel.as_mut().unwrap();
+    panel.pin_setup_pending = true;
+    panel.pin_code_input = "1234".into();
+    frame(&mut app, &ctx);
+    mock.release("backup_restore");
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert!(!app.backup.card.error, "{}", app.backup.card.notice);
+    let panel = app.settings_panel.as_ref().unwrap();
+    assert_eq!(
+        (panel.pin_code_input.as_str(), panel.pin_setup_pending),
+        ("", false),
+        "PIN_DRAINED: the code typed during the restore is still pending"
+    );
+    assert!(!app.booted().unwrap().stores.settings().pin_enabled);
+}

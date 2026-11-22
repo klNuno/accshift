@@ -106,12 +106,16 @@ impl SettingsPanel {
 
     /// A restore replaced the stored settings with `stored`: the draft takes
     /// them whole and its pending save goes, so an edit made during the
-    /// restore never lands over it. The API key and the platform paths,
-    /// which a backup does not carry, keep their pending save.
+    /// restore never lands over it, a PIN being set or removed included.
+    /// The API key and the platform paths, which a backup does not carry,
+    /// keep their pending save.
     pub(in crate::app) fn take_restored(&mut self, stored: &AppSettings) {
         self.seen_store = stored.clone();
         self.persisted = stored.clone();
         self.draft = stored.clone();
+        self.pin_code_input.clear();
+        self.pin_setup_pending = false;
+        self.pin_disable_pending = false;
         self.refresh_numeric();
         let mut saved: Value =
             serde_json::from_str(&self.last_persisted_snapshot).unwrap_or(Value::Null);
