@@ -1260,3 +1260,52 @@ fn the_app_never_writes_its_environment() {
     );
     assert!(found.is_empty(), "{found:?}");
 }
+
+/// The updater timeout is an idle limit, not a total deadline: a download
+/// that takes twice the timeout but never goes silent that long finishes.
+#[test]
+fn a_slow_download_that_keeps_sending_is_not_cut() {
+    const CHUNKS: usize = 5;
+    const GAP: Duration = Duration::from_millis(400);
+    let body: Vec<u8> = (0..CHUNKS * 1000).map(|i| (i % 251) as u8).collect();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind 127.0.0.1");
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let served = body.clone();
+    std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buffer = [0u8; 4096];
+            let _ = stream.read(&mut buffer);
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                served.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            for chunk in served.chunks(served.len() / CHUNKS) {
+                std::thread::sleep(GAP);
+                let _ = stream.write_all(chunk);
+                let _ = stream.flush();
+            }
+        }
+    });
+    let key = TestKey::new();
+    let (os, arch) = os_arch();
+    let platform = format!("{os}-{arch}");
+    let signature = key.sign(&body);
+    let server = Server::start(move |path| {
+        if path.starts_with("/latest.json") {
+            let manifest = static_manifest("1.2.0", &base, &[(platform.as_str(), &signature)]);
+            (200, manifest.to_string().into_bytes())
+        } else {
+            (404, Vec::new())
+        }
+    });
+    let mut quick = config(&server, &key.pubkey(), "1.0.5", None);
+    quick.timeout = Some(STALL_TIMEOUT);
+    let update = check(quick).unwrap().expect("1.2.0 is newer");
+    let started = std::time::Instant::now();
+    let bytes = within(move || update.download())
+        .expect("the download ended")
+        .expect("a download that keeps sending is not cut");
+    assert_eq!(bytes, body);
+    assert!(started.elapsed() > STALL_TIMEOUT, "{:?}", started.elapsed());
+}
