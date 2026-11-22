@@ -7,6 +7,9 @@ use crate::text::Text;
 pub enum WarningTone {
     Red,
     Orange,
+    /// A session to renew (expired, or a password to type again): not a
+    /// ban, so never the ban colours.
+    Blue,
 }
 
 /// One warning chip.
@@ -23,6 +26,7 @@ pub struct WarningPresentation {
     pub card_outline_tone: Option<WarningTone>,
     pub list_has_red: bool,
     pub list_has_orange: bool,
+    pub list_has_blue: bool,
     pub chips: Vec<WarningChip>,
 }
 

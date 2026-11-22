@@ -132,11 +132,12 @@ pub struct RobloxSessions {
 pub fn expired_presentation() -> WarningPresentation {
     WarningPresentation {
         tooltip: Text::key("roblox.sessionExpiredTooltip"),
-        card_outline_tone: Some(WarningTone::Orange),
+        card_outline_tone: Some(WarningTone::Blue),
         list_has_red: false,
-        list_has_orange: true,
+        list_has_orange: false,
+        list_has_blue: true,
         chips: vec![WarningChip {
-            tone: WarningTone::Orange,
+            tone: WarningTone::Blue,
             text: Text::key("roblox.sessionExpired"),
         }],
     }

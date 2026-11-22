@@ -24,6 +24,8 @@ const T300: Transition = Transition::new(0.3, Timing::EASE_OUT);
 /// A ban outline: red or yellow at 60 %.
 const BAN_RED: Rgba = Rgba::new(239.0, 68.0, 68.0, 0.6);
 const BAN_YELLOW: Rgba = Rgba::new(234.0, 179.0, 8.0, 0.6);
+/// A session to renew: the blue chip's hue, never a ban colour.
+const SESSION_BLUE: Rgba = Rgba::new(59.0, 130.0, 246.0, 0.6);
 
 /// The values the card eases toward this frame, eased.
 pub(super) struct Look {
@@ -184,6 +186,7 @@ fn ban_color(tone: WarningTone, custom: bool) -> Rgba {
     let base = match tone {
         WarningTone::Red => BAN_RED,
         WarningTone::Orange => BAN_YELLOW,
+        WarningTone::Blue => SESSION_BLUE,
     };
     if custom {
         base.alpha(1.0)

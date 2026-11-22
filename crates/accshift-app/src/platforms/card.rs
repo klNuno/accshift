@@ -19,6 +19,7 @@ impl From<WarningTone> for ChipTone {
         match tone {
             WarningTone::Red => ChipTone::Red,
             WarningTone::Orange => ChipTone::Orange,
+            WarningTone::Blue => ChipTone::Blue,
         }
     }
 }

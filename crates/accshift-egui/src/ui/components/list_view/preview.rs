@@ -10,7 +10,7 @@ use egui::{pos2, vec2, Id, Painter, Pos2, Rect, Sense, Ui};
 use super::avatar::{paint_avatar, AvatarSize};
 use super::{
     ceil_unit, has_username, last_login_color, last_login_label, meta_style, ListEvent, ListHost,
-    ListProps, ORANGE, RADIUS, RED, T_BUTTON,
+    ListProps, BLUE, ORANGE, RADIUS, RED, T_BUTTON,
 };
 use crate::app::vars::Vars;
 use crate::icons;
@@ -217,6 +217,7 @@ impl Chips {
                 let (bg, fg) = match tone {
                     WarningTone::Red => (RED.alpha(0.2), Rgba::hex(0xf87171, 1.0)),
                     WarningTone::Orange => (ORANGE.alpha(0.2), Rgba::hex(0xfb923c, 1.0)),
+                    WarningTone::Blue => (BLUE.alpha(0.2), Rgba::hex(0x60a5fa, 1.0)),
                 };
                 let chip = Rect::from_min_size(pos2(x, y), vec2(*w, self.h));
                 BoxStyle {

@@ -273,16 +273,17 @@ pub struct RiotSessions {
     expired: std::collections::BTreeSet<String>,
 }
 
-/// The warning of an expired session: orange chip and outline, never red.
+/// The warning of an expired session: blue chip and outline, never a ban colour.
 pub fn session_expired_presentation() -> super::warnings::WarningPresentation {
     use super::warnings::{WarningChip, WarningPresentation, WarningTone};
     WarningPresentation {
         tooltip: Text::key("session.expiredTooltip"),
-        card_outline_tone: Some(WarningTone::Orange),
+        card_outline_tone: Some(WarningTone::Blue),
         list_has_red: false,
-        list_has_orange: true,
+        list_has_orange: false,
+        list_has_blue: true,
         chips: vec![WarningChip {
-            tone: WarningTone::Orange,
+            tone: WarningTone::Blue,
             text: Text::key("session.expired"),
         }],
     }

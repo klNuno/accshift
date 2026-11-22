@@ -9,7 +9,7 @@ use egui::{pos2, vec2, Id, Key, Pos2, Rect, Sense, Ui};
 
 use super::{
     ceil_unit, has_username, last_login_color, last_login_label, meta_style, shows_last_login,
-    ListHost, ListProps, ICON, ORANGE, RED, ROW_GAP, ROW_PAD_X, ROW_PAD_Y, T_ROW, YELLOW,
+    ListHost, ListProps, BLUE, ICON, ORANGE, RED, ROW_GAP, ROW_PAD_X, ROW_PAD_Y, T_ROW, YELLOW,
 };
 use crate::app::vars::Vars;
 use crate::theme::Rgba;
@@ -49,6 +49,8 @@ pub(super) struct RowLook {
     pub(super) custom: Option<Rgba>,
     pub(super) red: bool,
     pub(super) orange: bool,
+    /// A session to renew.
+    pub(super) blue: bool,
     /// A drop target under a drag.
     pub(super) drag_over: bool,
     /// Focused by the arrow keys.
@@ -71,6 +73,7 @@ pub(super) fn account_look(
         custom: host.card_color(&a.card_color),
         red: warning.is_some_and(|w| w.list_has_red),
         orange: warning.is_some_and(|w| w.list_has_orange),
+        blue: warning.is_some_and(|w| w.list_has_blue),
         kb_focus,
         ..RowLook::default()
     }
@@ -106,6 +109,7 @@ fn row_colors(look: RowLook, hovered: bool, v: &Vars, accent: Rgba) -> (Rgba, Rg
         custom,
         red,
         orange,
+        blue,
         drag_over,
         ..
     } = look;
@@ -125,8 +129,10 @@ fn row_colors(look: RowLook, hovered: bool, v: &Vars, accent: Rgba) -> (Rgba, Rg
         (2, selected, Rgba::new(255.0, 255.0, 255.0, 0.1)),
         (2, drag_over, accent),
         (2, red, RED.alpha(0.45)),
+        (3, blue && !red && !orange, BLUE.alpha(0.45)),
         (3, orange && !red, YELLOW.alpha(0.45)),
         (3, c && red, RED),
+        (4, c && blue && !red && !orange, BLUE),
         (4, c && orange && !red, YELLOW),
     ]);
     (background, border)
@@ -255,6 +261,7 @@ pub(super) fn account_info(
     let dots: Vec<WarningTone> = [
         (look.red, WarningTone::Red),
         (look.orange, WarningTone::Orange),
+        (look.blue, WarningTone::Blue),
     ]
     .into_iter()
     .filter_map(|(on, tone)| on.then_some(tone))
@@ -364,6 +371,7 @@ fn warning_dot(ui: &Ui, at: Pos2, band_h: f32, tone: WarningTone) {
     let (base, glyph) = match tone {
         WarningTone::Red => (RED, Rgba::hex(0xfca5a5, 1.0)),
         WarningTone::Orange => (ORANGE, Rgba::hex(0xfdba74, 1.0)),
+        WarningTone::Blue => (BLUE, Rgba::hex(0x93c5fd, 1.0)),
     };
     let dot = Rect::from_min_size(
         pos2(at.x, at.y + snap::centre(band_h, 14.0, ppp)),
@@ -389,13 +397,15 @@ fn warning_dot(ui: &Ui, at: Pos2, band_h: f32, tone: WarningTone) {
 }
 
 /// The avatar's warning rings: a 2 px red outline for a red warning, a
-/// yellow spread shadow for an orange one (wider with both).
+/// yellow spread shadow for an orange one (wider with both), a blue one for
+/// a session to renew alone.
 pub(super) fn avatar_rings(ui: &Ui, rect: Rect, look: RowLook, v: &Vars) {
     let ppp = ui.ctx().pixels_per_point();
     let snapped = snap::rect(rect, ppp);
-    let shadow = match (look.red, look.orange) {
-        (true, true) => Some((4.0, YELLOW.alpha(0.45))),
-        (false, true) => Some((2.0, YELLOW.alpha(0.7))),
+    let shadow = match (look.red, look.orange, look.blue) {
+        (true, true, _) => Some((4.0, YELLOW.alpha(0.45))),
+        (false, true, _) => Some((2.0, YELLOW.alpha(0.7))),
+        (false, false, true) => Some((2.0, BLUE.alpha(0.7))),
         _ => None,
     };
     if let Some((spread, color)) = shadow {
