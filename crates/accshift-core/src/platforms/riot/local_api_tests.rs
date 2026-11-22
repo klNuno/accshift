@@ -214,3 +214,55 @@ fn persist_is_none_only_when_no_route_gives_a_bool() {
     )]);
     assert_eq!(login(&read_riot_login_state(&access)), (true, None));
 }
+
+#[test]
+fn riot_local_client_bypasses_configured_proxy() {
+    // A proxy listener that always rejects requests with 502; if the local
+    // Riot client routes 127.0.0.1 through it, the request fails.
+    let proxy_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let proxy_port = proxy_listener.local_addr().unwrap().port();
+    let proxy_hits = Arc::new(Mutex::new(0usize));
+    let hits = Arc::clone(&proxy_hits);
+    thread::spawn(move || {
+        for stream in proxy_listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            *hits.lock().unwrap() += 1;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+        }
+    });
+
+    let (access, seen) = synthetic_api(vec![(
+        RSO_SESSION,
+        "200 OK",
+        r#"{"type":"authenticated","persistLogin":true}"#,
+    )]);
+
+    let proxy = reqwest::Proxy::all(format!("http://127.0.0.1:{proxy_port}")).unwrap();
+    let client = configure_riot_local_client(crate::http::client_builder().proxy(proxy))
+        .build()
+        .unwrap();
+
+    let url = format!(
+        "{}://127.0.0.1:{}{}",
+        access.protocol, access.port, RSO_SESSION
+    );
+    let response = crate::runtime::block_on(async {
+        client
+            .get(url)
+            .basic_auth("riot", Some(access.password.as_str()))
+            .send()
+            .await
+            .unwrap()
+    });
+    assert!(
+        response.status().is_success(),
+        "expected direct 200 OK, got {} (proxy hits: {})",
+        response.status(),
+        *proxy_hits.lock().unwrap()
+    );
+    assert_eq!(*proxy_hits.lock().unwrap(), 0);
+    assert_eq!(*seen.lock().unwrap(), [RSO_SESSION]);
+}

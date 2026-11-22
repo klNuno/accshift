@@ -88,12 +88,19 @@ pub(super) fn kill_riot_client_processes() {
 /// fails fast.
 pub(super) static RIOT_LOCAL_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
+pub(super) fn configure_riot_local_client(
+    builder: reqwest::ClientBuilder,
+) -> reqwest::ClientBuilder {
+    builder
+        .no_proxy()
+        .danger_accept_invalid_certs(true)
+        .connect_timeout(Duration::from_secs(2))
+        .timeout(Duration::from_secs(5))
+}
+
 pub(super) fn riot_local_client() -> &'static reqwest::Client {
     RIOT_LOCAL_CLIENT.get_or_init(|| {
-        crate::http::client_builder()
-            .danger_accept_invalid_certs(true)
-            .connect_timeout(Duration::from_secs(2))
-            .timeout(Duration::from_secs(5))
+        configure_riot_local_client(crate::http::client_builder())
             .build()
             .expect("Riot local API client should build")
     })
