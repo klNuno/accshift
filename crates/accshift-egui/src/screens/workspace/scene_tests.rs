@@ -533,22 +533,22 @@ fn context_menu_opens_closes_and_copies() {
     assert!(!open(&run));
     run.rclick(pos2(205.0, 152.0));
     assert!(open(&run));
-    // The reference draws the menu at 205..425 x 111..436.
+    // The reference draws the menu at 205..425 x 72..436.
     assert!(context_menu::contains(&run.ctx, pos2(300.0, 300.0)));
     run.click(pos2(845.0, 425.0));
     assert!(!open(&run));
-    // "Copy..." at 210..420 x 254..284, its submenu right of the menu.
+    // "Copy..." at 210..420 x 215..245, its submenu right of the menu.
     run.rclick(pos2(205.0, 152.0));
-    run.send(Event::PointerMoved(pos2(260.0, 269.0)));
+    run.send(Event::PointerMoved(pos2(260.0, 230.0)));
     run.frame();
     run.frame();
-    assert!(context_menu::contains(&run.ctx, pos2(500.0, 270.0)));
-    run.send(Event::PointerMoved(pos2(500.0, 305.0)));
+    assert!(context_menu::contains(&run.ctx, pos2(500.0, 231.0)));
+    run.send(Event::PointerMoved(pos2(500.0, 266.0)));
     run.frame();
     let mut copied = Vec::new();
     for pressed in [true, false] {
         run.send(Event::PointerButton {
-            pos: pos2(500.0, 305.0),
+            pos: pos2(500.0, 266.0),
             button: PointerButton::Primary,
             pressed,
             modifiers: Modifiers::NONE,
@@ -739,7 +739,7 @@ fn forget_confirm_runs_the_task() {
     // The scene's "Forget" entry, then the dialog's red button at the
     // right end of its actions row (250..610 x 242..274).
     run.rclick(pos2(205.0, 152.0));
-    run.click(pos2(240.0, 377.0));
+    run.click(pos2(240.0, 338.0));
     assert!(state(&run).0);
     run.click(pos2(575.0, 258.0));
     let deadline = Instant::now() + Duration::from_secs(5);
