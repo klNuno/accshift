@@ -8,7 +8,7 @@ use super::{tr, Frame};
 use crate::app::settings_panel::{SettingsAction, TabDef};
 use crate::theme::Rgba;
 use crate::ui::anim;
-use crate::ui::components::controls::{focus_ring, take_focus, T120, WHITE};
+use crate::ui::components::controls::{focus_ring, scroll, take_focus, T120, WHITE};
 use crate::ui::components::icon;
 use crate::ui::paint::{Border, BoxStyle, Corners, Sides};
 use crate::ui::snap;
@@ -16,6 +16,9 @@ use crate::ui::text::{self, LineHeight, TextStyle, TextTransform};
 
 /// A rail button: an 18 px line and 8 px of padding above and below.
 const NAV_ITEM_H: f32 = 34.0;
+/// The "Platforms" group label: 12 above, a 13.5 px line, 4 below and the
+/// 2 px gap the label keeps from the rows.
+const GROUP_H: f32 = 12.0 + 17.5 + 2.0;
 
 macro_rules! svg14 {
     ($body:expr) => {
@@ -104,17 +107,41 @@ pub(super) fn rail(ui: &mut Ui, rail: Rect, f: &Frame) -> Vec<SettingsAction> {
 }
 
 /// One button per visible tab, clipped to `list`; the first platform tab
-/// opens the "Platforms" group, labelled when the rail is wide.
+/// opens the "Platforms" group, labelled when the rail is wide. A list
+/// taller than the rail (many platforms, a short window) scrolls with the
+/// app's scrollbar and brings a newly active tab into view.
 fn tab_list(ui: &mut Ui, list: Rect, inner_w: f32, f: &Frame) -> Vec<SettingsAction> {
+    let first_platform = f.tabs.iter().position(|tab| tab.accent.is_some());
+    let header = |i: usize| first_platform == Some(i) && !f.narrow;
+    // Each tab's top in the list, and the list's full height.
+    let mut tops = Vec::with_capacity(f.tabs.len());
+    let mut content = 0.0;
+    for i in 0..f.tabs.len() {
+        if header(i) {
+            content += GROUP_H;
+        }
+        tops.push(content);
+        content += NAV_ITEM_H + 2.0;
+    }
+    let overflow = scroll::overflows(list.height(), content);
+    let item_w = inner_w - if overflow { scroll::WIDTH } else { 0.0 };
+    let id = Id::unique("settings-rail-scroll");
+    let (mut offset, seen) = ui.data(|d| d.get_temp::<(f32, String)>(id).unwrap_or_default());
+    if seen != f.active {
+        if let Some(i) = f.tabs.iter().position(|tab| tab.id == f.active) {
+            offset = scroll::nearest(offset, list.height(), tops[i], tops[i] + NAV_ITEM_H);
+        }
+    }
+    scroll::scroll(ui, list, id, &mut offset, content, f.vars);
+    ui.data_mut(|d| d.insert_temp(id, (offset, f.active.to_string())));
+
     let mut list_ui = ui.new_child(UiBuilder::new().max_rect(list));
     list_ui.set_clip_rect(list.intersect(ui.clip_rect()));
-    let first_platform = f.tabs.iter().position(|tab| tab.accent.is_some());
     let mut out = Vec::new();
-    let mut y = list.top();
     for (i, tab) in f.tabs.iter().enumerate() {
-        if first_platform == Some(i) && !f.narrow {
+        let y = list.top() + tops[i] - offset;
+        if header(i) {
             // Margin 12 above, 4 below, 9 px bold uppercase tracked 0.08em.
-            y += 12.0;
             let style = TextStyle::new(9.0, 700)
                 .line_height(LineHeight::Number(1.5))
                 .letter_spacing_em(0.08)
@@ -123,17 +150,18 @@ fn tab_list(ui: &mut Ui, list: Rect, inner_w: f32, f: &Frame) -> Vec<SettingsAct
                 .color(f.vars.fg_subtle.to_color32());
             text::paint(
                 list_ui.painter(),
-                Rect::from_min_size(pos2(list.left() + 10.0, y), vec2(inner_w - 20.0, 13.5)),
+                Rect::from_min_size(
+                    pos2(list.left() + 10.0, y - GROUP_H + 12.0),
+                    vec2(item_w - 20.0, 13.5),
+                ),
                 &tr(f.locale, "settings.platforms"),
                 &style,
             );
-            y += 17.5 + 2.0;
         }
-        let rect = Rect::from_min_size(pos2(list.left(), y), vec2(inner_w, NAV_ITEM_H));
+        let rect = Rect::from_min_size(pos2(list.left(), y), vec2(item_w, NAV_ITEM_H));
         if nav_item(&mut list_ui, rect, tab, f) {
             out.push(SettingsAction::SelectTab(tab.id.clone()));
         }
-        y += NAV_ITEM_H + 2.0;
     }
     out
 }
