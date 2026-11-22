@@ -348,6 +348,9 @@ pub struct AppModel {
     /// Whether an overlay takes all the input this frame (PIN lock,
     /// streamer mode): its IME and focus win over the stage's.
     overlay_captures: bool,
+    /// The overlay's nodes in the window's AccessKit tree and the actions
+    /// routed to them.
+    overlay_a11y: crate::overlay_output::OverlayA11y,
 }
 
 impl Drop for AppModel {
@@ -367,6 +370,12 @@ impl AppModel {
     pub fn take_overlay(&mut self) -> Option<(Context, egui::FullOutput)> {
         let out = self.overlay_output.take()?;
         Some((self.overlay_ctx.clone(), out))
+    }
+
+    /// Before the stage's pass: the screen reader's actions on the
+    /// overlay's nodes go to the overlay pass.
+    pub fn route_overlay_actions(&mut self, events: &mut Vec<egui::Event>) {
+        self.overlay_a11y.route(events);
     }
 
     /// Whether an overlay takes the input this frame.

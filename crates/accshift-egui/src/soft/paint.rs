@@ -90,6 +90,7 @@ impl Runner {
                 prims,
                 overlay_out.pixels_per_point,
                 overlay_out.platform_output.ime,
+                overlay_out.platform_output.accesskit_update,
             )
         });
         let overlay_captures = live.shell.overlay_captures();
@@ -102,7 +103,7 @@ impl Runner {
             ime.rect = ime.rect * zoom;
             ime.cursor_rect = ime.cursor_rect * zoom;
         }
-        let overlay_draw = overlay_draw.map(|(prims, overlay_ppp, ime)| {
+        let overlay_draw = overlay_draw.map(|(prims, overlay_ppp, ime, tree)| {
             // Overlay points into stage points, so egui-winit's
             // `pixels_per_point` lands on the overlay's physical pixels.
             let ratio = overlay_ppp / out.pixels_per_point;
@@ -110,6 +111,12 @@ impl Runner {
                 out.platform_output.ime,
                 ime,
                 ratio,
+                overlay_captures,
+            );
+            // One AccessKit tree per window: the overlay's joins the stage's.
+            crate::overlay_output::graft(
+                &mut out.platform_output.accesskit_update,
+                tree,
                 overlay_captures,
             );
             (prims, overlay_ppp)

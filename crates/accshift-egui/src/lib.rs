@@ -241,6 +241,9 @@ impl Shell {
         {
             raw_input.events.insert(0, egui::Event::PointerGone);
         }
+        if let Screen::App(app) = &mut self.screen {
+            app.route_overlay_actions(&mut raw_input.events);
+        }
         zoom::stage_input(raw_input, stage);
         if sequence_input(&mut self.held, &mut raw_input.events) {
             ctx.request_repaint();

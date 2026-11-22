@@ -302,6 +302,7 @@ impl AppModel {
             overlay_output: None,
             overlay_active: false,
             overlay_captures: false,
+            overlay_a11y: Default::default(),
         }
     }
 

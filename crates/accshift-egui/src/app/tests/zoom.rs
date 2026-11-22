@@ -625,3 +625,94 @@ fn overlay_sees_modifiers_pressed_before_it_showed() {
         "Shift held on the window must reach the overlay (Shift+click extends a selection in the PIN)"
     );
 }
+
+#[test]
+fn streamer_overlay_nodes_reach_the_screen_reader() {
+    use crate::overlay_output::{graft, remap};
+    use egui::accesskit::{Action, ActionRequest, Role, TreeId};
+    let ctx = Context::default();
+    ctx.enable_accesskit();
+    let mut shell = demo_shell(
+        &ctx,
+        json!({
+            "animations": "off",
+            "uiScalePercent": 150,
+            "streamerMode": "auto",
+        }),
+        true,
+        false,
+    );
+    let size = [860.0, 440.0];
+    let mut t = 1.0;
+    for _ in 0..5 {
+        t += 0.4;
+        step_shell(&mut shell, &ctx, size, t, Vec::new());
+    }
+    assert!(app_ref(&shell).booted().unwrap().streamer.active());
+    t += 0.05;
+    let mut out = step_shell(&mut shell, &ctx, size, t, Vec::new());
+    let (overlay_ctx, mut overlay_out) = shell
+        .take_overlay()
+        .expect("the streamer overlay runs its pass");
+    overlay_out.textures_delta.clear();
+    let sub = overlay_out
+        .platform_output
+        .accesskit_update
+        .take()
+        .expect("the overlay builds its AccessKit tree while the window's is on");
+    let sub_root = sub.tree.as_ref().unwrap().root;
+    let button = sub
+        .nodes
+        .iter()
+        .find(|(id, n)| n.role() == Role::Button && *id != sub.focus)
+        .map(|(id, _)| *id)
+        .expect("the streamer overlay exposes its buttons");
+    let mut merged = out.platform_output.accesskit_update.take();
+    graft(&mut merged, Some(sub), true);
+    let merged = merged.expect("the stage's tree");
+    let root = merged.tree.as_ref().unwrap().root;
+    let children = merged
+        .nodes
+        .iter()
+        .find(|(id, _)| *id == root)
+        .map(|(_, n)| n.children().to_vec())
+        .unwrap();
+    assert!(
+        children.contains(&sub_root),
+        "the overlay hangs off the window's root"
+    );
+    assert!(merged.nodes.iter().any(|(id, _)| *id == button));
+    let scale = merged
+        .nodes
+        .iter()
+        .find(|(id, _)| *id == sub_root)
+        .and_then(|(_, n)| n.transform().copied())
+        .map(|a| a.as_coeffs()[0]);
+    assert!(
+        scale.is_some_and(|s| (s - 1.0 / 1.5).abs() < 1e-4),
+        "the overlay's points are 1/1.5 of the stage's (got {scale:?})"
+    );
+
+    // The screen reader focuses the overlay's button.
+    for _ in 0..2 {
+        t += 0.05;
+        let events = vec![Event::AccessKitActionRequest(ActionRequest {
+            action: Action::Focus,
+            target_tree: TreeId::ROOT,
+            target_node: button,
+            data: None,
+        })];
+        step_shell(&mut shell, &ctx, size, t, events);
+        if let Some((_, mut o)) = shell.take_overlay() {
+            o.textures_delta.clear();
+        }
+    }
+    let focused = overlay_ctx
+        .memory(|m| m.focused())
+        .map(|id| remap(id.accesskit_id()));
+    assert_eq!(
+        focused,
+        Some(button),
+        "the overlay's button takes the focus"
+    );
+}

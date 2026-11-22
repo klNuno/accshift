@@ -7,6 +7,7 @@ use super::super::onboarding::OnboardingView;
 use super::super::platforms::{PlatformDef, RuntimeOs};
 use super::super::{Action, Booted};
 use super::FrameView;
+use crate::overlay_output::OverlayA11y;
 use crate::ui::components::onboarding::{self, OnboardingProps};
 use crate::ui::components::secure_overlays::{self, AfkProps, PinProps, StreamerProps};
 
@@ -106,6 +107,7 @@ pub(super) fn run_overlay_pass(
     tour: Option<(&OnboardingView, &[String], bool)>,
     secure: SecureView,
     pin_focus: bool,
+    a11y: &mut OverlayA11y,
 ) -> Vec<Action> {
     let ui_zoom = crate::zoom::frame(ctx);
     let window_css = crate::zoom::viewport(ctx);
@@ -130,6 +132,13 @@ pub(super) fn run_overlay_pass(
         overlay_ctx.set_zoom_factor(base);
     }
     onboarding::set_targets(overlay_ctx, onboarding::targets(ctx).scale(ui_zoom));
+    // The overlay's AccessKit tree joins the window's while a screen reader
+    // listens (the stage's pass then has a root node).
+    if ctx.has_accesskit_node(egui::accesskit_root_id()) {
+        overlay_ctx.enable_accesskit();
+    } else {
+        overlay_ctx.disable_accesskit();
+    }
 
     // The events are in the points of the zoom factor in force when they
     // arrived, not yet the one this pass applies.
@@ -141,7 +150,11 @@ pub(super) fn run_overlay_pass(
         let events = std::iter::once(modifiers)
             .chain(crate::zoom::scale_events(&i.events, input_zoom))
             .collect();
-        (i.focused, i.raw.viewports.clone(), events)
+        (
+            i.focused,
+            i.raw.viewports.clone(),
+            a11y.overlay_events(events),
+        )
     });
     let overlay_raw = egui::RawInput {
         screen_rect: Some(overlay_screen),
@@ -187,12 +200,17 @@ pub(super) fn run_overlay_pass(
         }
     }
 
+    let tree = overlay_out.platform_output.accesskit_update.take();
+    let scale = overlay_out.pixels_per_point / ctx.pixels_per_point();
+    overlay_out.platform_output.accesskit_update = a11y.subtree(tree, scale);
+
     *overlay_active = !overlay_out.shapes.is_empty();
     if *overlay_active || !overlay_out.textures_delta.is_empty() {
         *overlay_output = Some(overlay_out);
     } else {
         overlay_out.textures_delta.clear();
         *overlay_output = None;
+        a11y.clear();
     }
     actions
 }

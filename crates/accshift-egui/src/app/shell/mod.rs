@@ -398,8 +398,10 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
             tour,
             secure,
             pin_focus,
+            &mut app.overlay_a11y,
         ));
     } else {
+        app.overlay_a11y.clear();
         crate::ui::components::secure_overlays::seed_hidden(&app.overlay_ctx);
     }
     actions
