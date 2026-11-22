@@ -10,6 +10,13 @@ account, press it and accshift switches to that account.
 - Needs Stream Deck 7.1 or later (Node.js 24 runtime) on Windows 10 or later.
   Windows only for now: see [macOS](#macos).
 
+## Install
+
+Each accshift release attaches `accshift-streamdeck_<version>.streamDeckPlugin`;
+open it with Stream Deck installed. The plugin's version follows the app's
+(`manifest.json` holds it with a fourth `.0`, checked against the release
+tag).
+
 ## How it works
 
 The property inspector asks the plugin for the lists, and the plugin runs the

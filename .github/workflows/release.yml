@@ -557,18 +557,89 @@ jobs:
             target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
             target/release/bundle/accshift-cli_*_macos_*
 
+  # The Stream Deck plugin (Windows only, see integrations/streamdeck). Its
+  # version follows the app's: manifest.json holds the tag plus a fourth
+  # ".0", as the Elgato manifest wants four parts.
+  build-streamdeck:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve release tag
+        id: release_tag
+        run: |
+          tag="$GITHUB_REF_NAME"
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Invalid tag '$tag'. Expected format: vX.Y.Z" >&2
+            exit 1
+          fi
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate the plugin version against the tag
+        working-directory: integrations/streamdeck
+        env:
+          VERSION: ${{ steps.release_tag.outputs.version }}
+        run: |
+          manifest="$(jq -r .Version dev.mtsu.accshift.sdPlugin/manifest.json)"
+          package="$(jq -r .version package.json)"
+          if [ "$manifest" != "$VERSION.0" ] || [ "$package" != "$VERSION" ]; then
+            echo "Version mismatch. tag=$VERSION manifest.json=$manifest package.json=$package" >&2
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version: 22
+          run-install: false
+
+      - name: Install the plugin dependencies
+        run: corepack pnpm --dir integrations/streamdeck install --frozen-lockfile
+
+      - name: Test the plugin
+        working-directory: integrations/streamdeck
+        run: node --test "test/*.test.mjs"
+
+      - name: Validate and pack the plugin
+        working-directory: integrations/streamdeck
+        env:
+          VERSION: ${{ steps.release_tag.outputs.version }}
+        run: |
+          node scripts/package.mjs
+          mkdir -p out
+          cp dist/dev.mtsu.accshift.streamDeckPlugin "out/accshift-streamdeck_${VERSION}.streamDeckPlugin"
+
+      - name: Upload the plugin
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bundle-streamdeck
+          if-no-files-found: error
+          path: integrations/streamdeck/out/*.streamDeckPlugin
+
   release:
-    needs: [build-windows, build-linux, build-macos]
+    needs: [build-windows, build-linux, build-macos, build-streamdeck]
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
+      # bundle-* only: with SignPath on, the build job also uploads the
+      # unsigned binaries and installer, and flattening would let the unsigned
+      # setup.exe overwrite the signed one beside its .sig.
       - name: Download build artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
+          pattern: bundle-*
           merge-multiple: true
+
+      - name: Download release notes
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-notes
+          path: artifacts
 
       - name: Assemble release files
         run: |
@@ -691,6 +762,7 @@ jobs:
 
           - **Windows**: run the `-setup.exe` installer.
           - **Linux**: install the `.deb` / `.rpm`, or `chmod +x` the `.AppImage` and run it.
+          - **Stream Deck** (Windows): open the `.streamDeckPlugin` file with Stream Deck 7.1 or later installed, then turn on Settings > General > Integrations > Allow the accshift CLI in accshift.
           - **macOS** (Apple Silicon): the app is not yet notarized. After copying Accshift.app to Applications, clear the quarantine flag once: `xattr -cr /Applications/Accshift.app`.
           EOF
           if [ "$WINDOWS_SIGNED" = "true" ]; then
