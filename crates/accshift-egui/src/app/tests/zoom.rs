@@ -117,6 +117,37 @@ fn click_at(
     cmds
 }
 
+/// Runs frames until `ready` holds (a real deadline: the mock's jobs run
+/// on their own threads), then lets transitions finish in simulated time.
+fn settle(
+    shell: &mut Shell,
+    ctx: &Context,
+    size: [f32; 2],
+    t: &mut f64,
+    ready: impl Fn(&AppModel) -> bool,
+) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        *t += 0.05;
+        step_shell(shell, ctx, size, *t, Vec::new());
+        if ready(app_ref(shell)) || std::time::Instant::now() > deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    for _ in 0..5 {
+        *t += 0.4;
+        step_shell(shell, ctx, size, *t, Vec::new());
+    }
+}
+
+/// [`settle`] until the mock's streamer job turned streamer mode on.
+fn settle_streamer(shell: &mut Shell, ctx: &Context, size: [f32; 2], t: &mut f64) {
+    settle(shell, ctx, size, t, |app| {
+        app.booted().is_some_and(|b| b.streamer.active())
+    });
+}
+
 fn app_ref(shell: &Shell) -> &AppModel {
     match &shell.screen {
         Screen::App(app) => app,
@@ -184,10 +215,7 @@ fn streamer_overlay_buttons_stay_unscaled_at_150_percent() {
         );
         let size = [860.0, 440.0];
         let mut t = 1.0;
-        for _ in 0..5 {
-            t += 0.4;
-            step_shell(&mut shell, &ctx, size, t, Vec::new());
-        }
+        settle_streamer(&mut shell, &ctx, size, &mut t);
         assert!(
             app_ref(&shell).booted().unwrap().streamer.active(),
             "streamer overlay active ({animations})"
@@ -554,10 +582,7 @@ fn overlay_keeps_the_window_size_on_the_first_frame_of_a_zoom_change() {
         );
         let size = [1000.0, 680.0];
         let mut t = 1.0;
-        for _ in 0..5 {
-            t += 0.4;
-            step_shell(&mut shell, &ctx, size, t, Vec::new());
-        }
+        settle_streamer(&mut shell, &ctx, size, &mut t);
         assert!(
             app_ref(&shell).booted().unwrap().streamer.active(),
             "{case}"
@@ -673,10 +698,7 @@ fn streamer_overlay_nodes_reach_the_screen_reader() {
     );
     let size = [860.0, 440.0];
     let mut t = 1.0;
-    for _ in 0..5 {
-        t += 0.4;
-        step_shell(&mut shell, &ctx, size, t, Vec::new());
-    }
+    settle_streamer(&mut shell, &ctx, size, &mut t);
     assert!(app_ref(&shell).booted().unwrap().streamer.active());
     t += 0.05;
     let mut out = step_shell(&mut shell, &ctx, size, t, Vec::new());
@@ -752,10 +774,9 @@ fn the_stage_gets_no_keyboard_under_the_onboarding() {
     let mut shell = demo_shell(&ctx, json!({ "animations": "off" }), false, true);
     let size = [1000.0, 680.0];
     let mut t = 1.0;
-    for _ in 0..8 {
-        t += 0.3;
-        step_shell(&mut shell, &ctx, size, t, Vec::new());
-    }
+    settle(&mut shell, &ctx, size, &mut t, |app| {
+        app.onboarding.view.is_some()
+    });
     assert!(
         app_ref(&shell).onboarding.view.is_some(),
         "the tour is open"
@@ -811,10 +832,9 @@ fn the_tour_spotlight_follows_a_zoom_change() {
     let mut shell = demo_shell(&ctx, json!({ "animations": "off" }), false, true);
     let size = [1000.0, 680.0];
     let mut t = 1.0;
-    for _ in 0..8 {
-        t += 0.3;
-        step_shell(&mut shell, &ctx, size, t, Vec::new());
-    }
+    settle(&mut shell, &ctx, size, &mut t, |app| {
+        app.onboarding.view.is_some()
+    });
     // Welcome's Next, at its 100% place.
     click_at(&mut shell, &ctx, size, &mut t, pos2(677.0, 472.0));
     for _ in 0..4 {
