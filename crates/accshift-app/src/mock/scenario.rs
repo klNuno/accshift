@@ -61,6 +61,9 @@ impl MockState {
             setup: None,
             setup_step: 0,
             wallpaper: None,
+            locked_themes: Default::default(),
+            crashing: Default::default(),
+            restore_left: None,
             seen: BTreeMap::new(),
         }
     }

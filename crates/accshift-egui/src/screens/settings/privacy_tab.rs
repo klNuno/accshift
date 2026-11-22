@@ -49,6 +49,7 @@ pub(super) fn cards(panel: &SettingsPanel, l: Locale) -> Vec<CardSpec> {
             wide: false,
             items: security(panel, l),
         },
+        backup(panel, l),
     ];
     cards.extend(telemetry(panel, l));
     cards
@@ -99,6 +100,31 @@ fn security(panel: &SettingsPanel, l: Locale) -> Vec<Item> {
         ));
     }
     items
+}
+
+/// The backup card: what the file holds and leaves out, export, restore,
+/// then the last outcome.
+fn backup(panel: &SettingsPanel, l: Locale) -> CardSpec {
+    let t = |k: &str| tr(l, k);
+    let busy = panel.backup.busy;
+    let mut items = vec![
+        Item::Title(t("settings.backup")),
+        Item::Hint(t("settings.backupHint"), false),
+        Item::Button {
+            label: t("settings.backupExport"),
+            enabled: !busy,
+            action: SettingsAction::ExportBackup,
+        },
+        Item::Button {
+            label: t("settings.backupImport"),
+            enabled: !busy,
+            action: SettingsAction::ImportBackup,
+        },
+    ];
+    if !panel.backup.notice.is_empty() {
+        items.push(Item::Hint(panel.backup.notice.clone(), panel.backup.error));
+    }
+    CardSpec { wide: false, items }
 }
 
 /// The telemetry card, two columns wide: its modes once loaded, a retry

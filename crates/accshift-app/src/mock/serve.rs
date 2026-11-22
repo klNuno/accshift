@@ -11,7 +11,8 @@ use std::time::Duration;
 
 /// Command prefixes the mock refuses when it has no answer for them, so a
 /// mock session never reaches a real platform.
-const GUARDED_PREFIXES: [&str; 7] = [
+const GUARDED_PREFIXES: [&str; 8] = [
+    "backup_",
     "platform_",
     "steam_",
     "riot_",
@@ -25,11 +26,18 @@ impl MockBackend {
     /// Runs `command`: a scripted failure wins, then the latency and the
     /// handler of a mocked command; an unmocked guarded command is refused.
     pub(super) fn call<T: DeserializeOwned>(&self, command: &str, args: Value) -> BackendResult<T> {
-        let (failure, latency_ms) = {
+        let (failure, latency_ms, crash) = {
             let mut state = self.lock();
             *state.seen.entry(command.to_string()).or_default() += 1;
-            (state.failures.get(command).cloned(), state.latency_ms)
+            (
+                state.failures.get(command).cloned(),
+                state.latency_ms,
+                state.crashing.contains(command),
+            )
         };
+        if crash {
+            panic!("mock crash: {command}");
+        }
         if let Some(message) = failure {
             return Err(BackendError::new(message));
         }

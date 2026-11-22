@@ -577,6 +577,101 @@ pub fn confirm_dialog(
     events
 }
 
+/// The root id of the notice dialog, `.with(mount)`; its button is
+/// `.with("ok")`.
+pub const NOTICE_ID: &str = "accshift-notice-dialog";
+
+/// What the notice dialog shows.
+pub struct Notice<'a> {
+    pub title: &'a str,
+    pub message: &'a str,
+    /// A line in `--danger` under the message.
+    pub error: Option<&'a str>,
+    pub button_label: &'a str,
+    /// The button's fill, and its label's colour.
+    pub button_bg: Rgba,
+    pub button_fg: Rgba,
+}
+
+/// A notice with a single way out: the confirm dialog's box with the
+/// message, an optional error line, and one filled button. Nothing else
+/// closes it: Escape and a click on the overlay do nothing, and focus
+/// stays on the button. True when the button was pressed (a click, or
+/// Enter).
+pub fn notice_dialog(ui: &mut Ui, props: &DialogProps, notice: &Notice) -> bool {
+    let Notice {
+        title,
+        message,
+        error,
+        button_label,
+        button_bg,
+        button_fg,
+    } = *notice;
+    let ctx = ui.ctx().clone();
+    let ppp = ctx.pixels_per_point();
+    let v = props.vars;
+    let id = Id::unique(NOTICE_ID).with(props.mount);
+    let width = 360f32.min(crate::zoom::viewport(&ctx).x - 24.0);
+    let border = snap::border_width(v.border_px(), ppp);
+    let inner = width - 2.0 * (border + PADDING);
+    let message_style = TextStyle::new(12.0, 400)
+        .line_height(LineHeight::Px(16.2))
+        .color(v.fg_muted.to_color32());
+    let error_style = message_style.clone().color(v.danger.to_color32());
+    let mut children = vec![(text_height(&ctx, message, &message_style, inner), 0.0)];
+    if let Some(error) = error {
+        children.push((text_height(&ctx, error, &error_style, inner), 0.0));
+    }
+    let ok = Button {
+        id: id.with("ok"),
+        label: button_label,
+        font: TextStyle::new(12.0, 600).line_height(LineHeight::Px(18.0)),
+        border: 0.0,
+        enabled: true,
+        eased: true,
+    };
+    children.push((30.0, 0.0));
+    let focused = ctx.memory(|m| m.focused());
+    trap_focus(&ctx, &[ok.id], focused);
+    // Escape closes nothing here; no widget under the modal takes it.
+    ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
+    let (_, pressed) = base(ui, props, id, title, width, &children, |ui, column| {
+        if focused != Some(ok.id) {
+            ctx.memory_mut(|m| m.request_focus(ok.id));
+        }
+        text::paint(ui.painter(), column.children[0], message, &message_style);
+        if let Some(error) = error {
+            text::paint(ui.painter(), column.children[1], error, &error_style);
+        }
+        let row = column.children[column.children.len() - 1];
+        let rects = button_rects(&ctx, row, &[&ok]);
+        button(
+            ui,
+            rects[0],
+            &ok,
+            props,
+            |hovered| ButtonLook {
+                // `:hover { filter: brightness(0.85) }`.
+                background: if hovered {
+                    button_bg.mix(0.85, Rgba::new(0.0, 0.0, 0.0, button_bg.a))
+                } else {
+                    button_bg
+                },
+                color: if hovered {
+                    button_fg.mix(0.85, Rgba::new(0.0, 0.0, 0.0, button_fg.a))
+                } else {
+                    button_fg
+                },
+                border_color: Rgba::TRANSPARENT,
+                opacity: 1.0,
+            },
+            true,
+        )
+    });
+    let enter = ctx.input(|i| i.key_pressed(Key::Enter));
+    pressed.clicked || (enter && pressed.focused)
+}
+
 /// The input dialog: 280 px wide, the `.input` field (focused at
 /// mount), its `n/max` counter in the last 20 characters, Cancel and OK
 /// (disabled while the draft is blank, unless empty is allowed).

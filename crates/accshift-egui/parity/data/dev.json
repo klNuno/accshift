@@ -13,6 +13,78 @@
     "currentRobloxAccount": ""
   },
   "commands": {
+    "backup_export": [
+      {
+        "args": {},
+        "result": {
+          "preview": {
+            "path": "C:\\Users\\player\\Documents\\accshift-backup-2026-11-16.json",
+            "format": 1,
+            "createdAt": 1794768000,
+            "appVersion": "2.0.0",
+            "folders": 4,
+            "notes": 7,
+            "colors": 5,
+            "personas": 2,
+            "themes": 1,
+            "descriptors": 1,
+            "hasSettings": true
+          },
+          "preRestoreDir": ""
+        }
+      }
+    ],
+    "backup_preview": [
+      {
+        "args": {},
+        "result": {
+          "path": "C:\\Users\\player\\Documents\\accshift-backup-2026-11-15.json",
+          "format": 1,
+          "createdAt": 1794768000,
+          "appVersion": "2.0.0",
+          "folders": 4,
+          "notes": 7,
+          "colors": 5,
+          "personas": 2,
+          "themes": 1,
+          "descriptors": 1,
+          "hasSettings": true
+        }
+      }
+    ],
+    "backup_restore": [
+      {
+        "args": {},
+        "result": {
+          "preview": {
+            "path": "C:\\Users\\player\\Documents\\accshift-backup-2026-11-15.json",
+            "format": 1,
+            "createdAt": 1794768000,
+            "appVersion": "2.0.0",
+            "folders": 4,
+            "notes": 7,
+            "colors": 5,
+            "personas": 2,
+            "themes": 1,
+            "descriptors": 1,
+            "hasSettings": true
+          },
+          "preRestoreDir": "C:\\Users\\player\\AppData\\Roaming\\accshift\\user\\backups\\pre-restore-20261116-101500"
+        }
+      }
+    ],
+    "backup_select_export_path": [
+      {
+        "args": {},
+        "result": "C:\\Users\\player\\Documents\\accshift-backup-2026-11-16.json"
+      }
+    ],
+    "backup_select_import_file": [
+      {
+        "args": {},
+        "result": "C:\\Users\\player\\Documents\\accshift-backup-2026-11-15.json"
+      }
+    ],
     "cs2_bridge_get_settings": [
       {
         "args": {},

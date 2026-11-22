@@ -85,6 +85,18 @@ pub fn dispatch(
         "descriptor_install_file" => json(b.descriptor_install_file(&a.str("path"))),
         "descriptor_remove" => json(b.descriptor_remove(&a.str("platformId"))),
         "open_descriptors_folder" => json(b.open_descriptors_folder()),
+        "backup_select_export_path" => {
+            json(b.backup_select_export_path(&a.str("title"), &a.str("allFiles")))
+        }
+        "backup_export" => json(b.backup_export(&a.str("path"))),
+        "backup_select_import_file" => {
+            json(b.backup_select_import_file(&a.str("title"), &a.str("allFiles")))
+        }
+        "backup_preview" => json(b.backup_preview(&a.str("path"))),
+        "backup_restore" => json(
+            b.backup_restore(&a.str("path"), &a.str("digest"))
+                .map_err(BackendError::from),
+        ),
         "open_url" => json(b.open_url(&a.str("url"))),
         "open_logs_folder" => json(b.open_logs_folder()),
         "get_desktop_wallpaper" => json(b.get_desktop_wallpaper()),
@@ -288,6 +300,11 @@ pub const COMMANDS: &[&str] = &[
     "descriptor_install_file",
     "descriptor_remove",
     "open_descriptors_folder",
+    "backup_select_export_path",
+    "backup_export",
+    "backup_select_import_file",
+    "backup_preview",
+    "backup_restore",
     "open_url",
     "open_logs_folder",
     "get_desktop_wallpaper",

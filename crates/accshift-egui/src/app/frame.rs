@@ -31,6 +31,7 @@ impl AppModel {
         self.tick_secure(&ctx);
         self.tick_streamer(&ctx);
         self.tick_settings_panel(&ctx, Instant::now());
+        self.tick_backup(&ctx);
         self.tick_theme_editor(Instant::now());
         self.tick_theme_import(&ctx, Instant::now());
         self.pump_saves(&ctx);
@@ -46,15 +47,22 @@ impl AppModel {
         self.track_drag(&ctx);
         self.update_accounts(&ctx);
         self.tick_personas(&ctx);
-        self.tick_shortcuts(&ctx);
-        self.tick_deep_links(&ctx);
+        // The restart modal takes no shortcut and no link: the stores in
+        // memory are the ones the restore replaced.
+        let restart_needed = self.backup.restart_needed();
+        if !restart_needed {
+            self.tick_shortcuts(&ctx);
+            self.tick_deep_links(&ctx);
+        }
         self.tick_updates(&ctx);
         self.tick_toasts(&ctx);
         // The window-level key handling, before any widget reads keys.
         self.track_card_focus(&ctx);
-        self.capture_shortcut_keys(&ctx);
-        self.dispatch_keys(&ctx);
-        self.dispatch_mouse_back(&ctx);
+        if !restart_needed {
+            self.capture_shortcut_keys(&ctx);
+            self.dispatch_keys(&ctx);
+            self.dispatch_mouse_back(&ctx);
+        }
         self.mount_dialogs();
         self.track_bulk_paint(&ctx);
         let actions = {

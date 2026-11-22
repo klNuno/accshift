@@ -162,14 +162,6 @@ fn decrypted_copy_passes_legacy_plaintext_through() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// Makes the atomic writer's temp file impossible to create next to
-/// `path`, so the write fails before it could touch `path`.
-fn block_temp_file(path: &Path) {
-    let mut name = path.file_name().unwrap().to_os_string();
-    name.push(format!(".{}.tmp", std::process::id()));
-    fs::create_dir_all(path.with_file_name(name)).unwrap();
-}
-
 #[test]
 fn a_failed_restore_write_leaves_the_live_file_whole() {
     // Regression: the restore wrote live launcher files in place, so an
@@ -179,7 +171,9 @@ fn a_failed_restore_write_leaves_the_live_file_whole() {
     let live = dir.join("live.dat");
     fs::write(&source, b"restored session").unwrap();
     fs::write(&live, b"current session").unwrap();
-    block_temp_file(&live);
+    // The temp file cannot be created: the write fails before it could
+    // touch the live file.
+    let _blocked = crate::storage::block_temp_file(&live);
 
     assert!(decrypted_copy_file(&source, &live).is_err());
 
@@ -193,7 +187,7 @@ fn a_failed_snapshot_write_keeps_the_previous_one_and_frees_its_secret() {
     let dest = dir.join("token.dat");
     write_encrypted_bytes(&dest, b"first session").unwrap();
     let entries = crate::secrets::backend::entry_count();
-    block_temp_file(&dest);
+    let _blocked = crate::storage::block_temp_file(&dest);
 
     assert!(write_encrypted_bytes(&dest, b"second session").is_err());
 

@@ -37,8 +37,12 @@ pub(super) fn boot_payload(c: &dyn AppContext) -> BackendResult<BootPayload> {
     let migration = migrate_legacy_config(c);
     let (storage_snapshot, recovered_stores) =
         storage::load_client_storage_snapshot_reporting(c).map_err(PlatformError::from)?;
-    // A missing themes dir is normal on a first run.
-    let custom_themes = themes::list_custom_themes(c).unwrap_or_default();
+    // A missing themes dir is normal on a first run, and reads whole. A
+    // theme left out because it could not be read is read again later.
+    let (custom_themes, custom_themes_incomplete) = match themes::read_custom_themes(c) {
+        Ok(list) => (list.themes, !list.complete),
+        Err(_) => (Vec::new(), true),
+    };
     // A rejected descriptor is reported, never fatal.
     let user_platforms = platforms::reload_user_platforms(c);
     Ok(BootPayload {
@@ -47,6 +51,7 @@ pub(super) fn boot_payload(c: &dyn AppContext) -> BackendResult<BootPayload> {
         storage_snapshot,
         recovered_stores,
         custom_themes,
+        custom_themes_incomplete,
         user_platforms,
     })
 }

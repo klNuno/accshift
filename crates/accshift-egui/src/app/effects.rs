@@ -64,6 +64,7 @@ impl AppModel {
                 AppEffect::CardColorsChanged | AppEffect::CardNotesChanged => {}
                 AppEffect::ConfirmSettled { ticket, allowed } => {
                     self.settle_descriptor_removal(ticket, allowed);
+                    self.settle_backup_restore(ticket, allowed);
                     self.settle_persona_confirm(ticket, allowed);
                     self.settle_deep_link_confirm(ctx, ticket, allowed);
                 }

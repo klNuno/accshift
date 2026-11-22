@@ -412,13 +412,35 @@ fn an_empty_account_load_keeps_the_folder_organisation() {
         [ItemRef::folder("smurfs"), ItemRef::account("at-root")]
     );
 
-    // A load that found accounts still drops the ones that are gone.
+    // A load that misses some accounts keeps them in their folder too.
     stores.sync_loaded_accounts(&["at-root".to_string()], "steam");
-    assert!(stores.items_in_folder(Some("old"), "steam").is_empty());
+    assert_eq!(
+        stores.items_in_folder(Some("old"), "steam"),
+        [ItemRef::account("in-old")]
+    );
     assert_eq!(
         stores.items_in_folder(None, "steam"),
         [ItemRef::folder("smurfs"), ItemRef::account("at-root")]
     );
+}
+
+#[test]
+fn only_forgetting_an_account_takes_it_out_of_its_folder() {
+    let mut stores = move_store();
+    stores.forget_account("in-old", "steam");
+    assert!(stores.items_in_folder(Some("old"), "steam").is_empty());
+    assert_eq!(
+        saved(&mut stores, CLIENT_STORE_FOLDERS)["itemOrder"]["old"],
+        json!([])
+    );
+    // An account of another platform, or one nowhere, changes nothing.
+    stores.forget_account("in-smurfs", "riot");
+    stores.forget_account("nobody", "steam");
+    assert_eq!(
+        stores.items_in_folder(Some("smurfs"), "steam"),
+        [ItemRef::folder("old"), ItemRef::account("in-smurfs")]
+    );
+    assert!(stores.take_all_saves().is_empty());
 }
 
 // ------------------------------------------------------------ persona assignments on save

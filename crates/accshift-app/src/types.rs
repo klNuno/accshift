@@ -21,8 +21,10 @@ pub use accshift_core::platforms::steam::profile::ProfileInfo;
 pub use accshift_core::platforms::{
     RejectedDescriptor, SetupStatus, SkippedPlatform, UserPlatformReport,
 };
-pub use accshift_core::storage::{ClientStorageSnapshot, StorageManifest};
-pub use accshift_core::themes::CustomTheme;
+pub use accshift_core::storage::{
+    BackupPreview, BackupReport, ClientStorageSnapshot, RestoreError, StorageManifest,
+};
+pub use accshift_core::themes::{CustomTheme, CustomThemeList};
 
 /// `get_boot_payload`: everything the UI needs before the window shows.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +39,12 @@ pub struct BootPayload {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recovered_stores: Vec<String>,
     pub custom_themes: Vec<CustomTheme>,
+    /// A theme file that is there, or the folder, could not be read and
+    /// `custom_themes` may lack a theme for that alone: the app reads the
+    /// folder again on the next focus rather than take this list for the
+    /// whole.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub custom_themes_incomplete: bool,
     pub user_platforms: UserPlatformReport,
 }
 

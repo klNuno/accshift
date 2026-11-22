@@ -189,6 +189,7 @@ impl AppModel {
             booted: None,
             saves: Vec::new(),
             external_refresh: Default::default(),
+            backup: super::backup_flow::BackupFlow::waking(ctx),
             ui_scale: Default::default(),
             ui_scale_live: None,
             stage_raster: ui_scale::StageRaster::Unknown,
@@ -262,8 +263,14 @@ impl AppModel {
             migration_toast(&payload.migration),
             stores_reset_toast(&payload.recovered_stores),
         ];
+        // A theme the boot could not read is read again on the next focus,
+        // even when the themes folder did not change meanwhile.
+        let themes_unread = payload.custom_themes_incomplete;
         let hydrated = self.hydrate(payload, &detected);
         self.booted = Some(self.boot_state(ctx, hydrated));
+        if themes_unread {
+            self.unsee_themes();
+        }
         for toast in boot_toasts.into_iter().flatten() {
             self.toasts.push(toast, Instant::now());
         }
@@ -301,7 +308,13 @@ impl AppModel {
         let mut registry = ThemeRegistry::new();
         registry.apply_custom_theme_payloads(&custom);
         let mut store_ctx = StoreContext::shipped();
-        store_ctx.platform_ids = platforms.iter().map(|p| p.id.clone()).collect();
+        // A descriptor still locked (the restart a restore asked for) keeps
+        // the platform the stored settings name until it reads.
+        store_ctx.platform_ids = platforms::store_ids(
+            &platforms,
+            payload.user_platforms.incomplete,
+            storage.get(accshift_app::storage::CLIENT_STORE_SETTINGS),
+        );
         store_ctx.theme_ids = registry.all_themes().into_iter().map(|t| t.id).collect();
         store_ctx.preferred_languages = preferred_languages();
         let mut stores = ClientStores::new(storage, store_ctx);

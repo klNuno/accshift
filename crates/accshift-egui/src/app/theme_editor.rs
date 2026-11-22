@@ -21,6 +21,7 @@ use accshift_theme::{
     ThemeRegistry, TokenKey, TokenKind,
 };
 
+use super::backup_flow::WriteGate;
 use super::settings_panel::toast;
 
 /// `BLOCKING_CODES`: problems that cannot be saved, each one would be
@@ -83,6 +84,7 @@ fn start_import(
     text: &str,
     registry: &ThemeRegistry,
     jobs: &Jobs,
+    gate: &WriteGate,
     toasts: &mut ToastQueue,
     now: Instant,
 ) -> Option<ThemeImport> {
@@ -108,12 +110,16 @@ fn start_import(
         return None;
     };
     let payload = pending.payload.clone();
-    let job = jobs.run(move |backend| {
+    let Some(call) = gate.admit_write(move |backend| {
         let theme: accshift_app::types::CustomTheme = serde_json::to_value(&payload)
             .and_then(serde_json::from_value)
             .map_err(|e| e.to_string())?;
         backend.save_custom_theme(&theme).map_err(|e| e.message)
-    });
+    }) else {
+        toast(toasts, "settings.backupHoldsWrites", ToastType::Error, now);
+        return None;
+    };
+    let job = jobs.run(call);
     Some(ThemeImport::Saving {
         job,
         pending: Box::new(pending),
@@ -307,7 +313,7 @@ impl ThemeEditor {
 
     /// `save`: writes the draft through the backend. Refused while blocked
     /// or already writing.
-    pub fn save(&mut self, registry: &ThemeRegistry, jobs: &Jobs) {
+    pub(super) fn save(&mut self, registry: &ThemeRegistry, jobs: &Jobs, gate: &WriteGate) {
         if self.save_job.is_some() {
             return;
         }
@@ -325,13 +331,17 @@ impl ThemeEditor {
             }
         };
         let payload = pending.payload.clone();
-        let job = jobs.run(move |backend| {
+        // A backup under way holds the theme folder: the save fails.
+        let Some(call) = gate.admit_write(move |backend| {
             let theme: accshift_app::types::CustomTheme = serde_json::to_value(&payload)
                 .and_then(serde_json::from_value)
                 .map_err(|e| e.to_string())?;
             backend.save_custom_theme(&theme).map_err(|e| e.message)
-        });
-        self.save_job = Some((job, pending));
+        }) else {
+            self.save_error = true;
+            return;
+        };
+        self.save_job = Some((jobs.run(call), pending));
     }
 
     /// The save's end, once: the registry takes the document on success.
@@ -363,6 +373,7 @@ impl super::AppModel {
     /// string.
     pub(super) fn tick_theme_import(&mut self, ctx: &egui::Context, now: Instant) {
         let jobs = &self.jobs;
+        let gate = &self.backup.gate;
         let toasts = &mut self.toasts;
         let (Some(panel), Some(b)) = (self.settings_panel.as_mut(), self.booted.as_mut()) else {
             return;
@@ -379,7 +390,7 @@ impl super::AppModel {
                     }
                     None => String::new(),
                 };
-                panel.theme_import = start_import(&text, &b.registry, jobs, toasts, now);
+                panel.theme_import = start_import(&text, &b.registry, jobs, gate, toasts, now);
             }
             Some(ThemeImport::Saving {
                 mut job,

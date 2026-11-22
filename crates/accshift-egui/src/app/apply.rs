@@ -9,10 +9,33 @@ use crate::ui::components::command_palette::PaletteEvent;
 use crate::ui::components::secure_overlays::{PinEvent, StreamerEvent};
 use crate::ui::components::toast::ToastEvent;
 
+/// While the restart modal shows, the app holds stores the restored files
+/// replaced: only the window, the overlays over the modal, the toasts and
+/// the restart itself act. Any edit would be lost, or written over the
+/// restored files.
+fn allowed_until_restart(action: &Action) -> bool {
+    match action {
+        Action::Minimize
+        | Action::ToggleMaximize
+        | Action::Close
+        | Action::StartDrag
+        | Action::SetMaximizeButtonRect(_)
+        | Action::Pin(_)
+        | Action::Toast(_)
+        | Action::RestartAfterRestore => true,
+        Action::Streamer(event) => !matches!(event, StreamerEvent::DisablePermanently),
+        _ => false,
+    }
+}
+
 impl AppModel {
     /// Applies what the frame's components asked for.
     pub fn apply(&mut self, ctx: &Context, actions: Vec<Action>) {
+        let restart_needed = self.backup.restart_needed();
         for action in actions {
+            if restart_needed && !allowed_until_restart(&action) {
+                continue;
+            }
             self.apply_one(ctx, action);
         }
         self.mount_dialogs();
@@ -73,6 +96,7 @@ impl AppModel {
                     b.accounts.pipeline.toggle_section_collapsed(&key);
                 }
             }
+            Action::RestartAfterRestore => self.restart_after_restore(ctx),
             Action::Pin(event) => self.apply_pin(ctx, event),
             Action::Streamer(event) => self.apply_streamer(ctx, event),
             Action::Toast(event) => self.apply_toast(event),

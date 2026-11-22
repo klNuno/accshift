@@ -10,13 +10,14 @@ use accshift_app::actions::dialogs::{ConfirmConfig, ConfirmTicket};
 use accshift_app::actions::toasts::ToastType;
 use accshift_app::backend::Backend;
 use accshift_app::error::BackendResult;
-use accshift_app::i18n::{Locale, TranslationValue};
+use accshift_app::i18n::{translate, Locale, TranslationValue};
 use accshift_app::jobs::Jobs;
 use accshift_app::secure::pin::{unlock_pin_session, PinCheck};
 use accshift_app::text::Text;
 use egui::Context;
 use serde_json::Value;
 
+use super::super::backup_flow::WriteGate;
 use super::super::platforms::{self, PlatformDef, RuntimeOs};
 use super::super::theme_editor::{ThemeEditor, ThemeEditorEvent, ThemeImport};
 use super::super::{AppModel, Booted};
@@ -64,6 +65,7 @@ impl AppModel {
             _ => {}
         }
         let jobs = &self.jobs;
+        let gate = &self.backup.gate;
         let Some(panel) = self.settings_panel.as_mut() else {
             return;
         };
@@ -118,12 +120,14 @@ impl AppModel {
                 }
             }
             SettingsAction::ThemeEditor(event) => {
-                panel.theme_editor_event(event, self.booted.as_ref(), jobs);
+                panel.theme_editor_event(event, self.booted.as_ref(), jobs, gate);
             }
             SettingsAction::ToggleTelemetryA => panel.toggle_telemetry_a(jobs),
             SettingsAction::ToggleTelemetryB => panel.toggle_telemetry_b(jobs),
             SettingsAction::RetryTelemetryDeletion => panel.retry_telemetry_deletion(jobs),
             SettingsAction::ExportTelemetry => panel.export_telemetry(jobs),
+            SettingsAction::ExportBackup => self.export_backup(),
+            SettingsAction::ImportBackup => self.import_backup(),
             SettingsAction::RetryTelemetryLoad => panel.refresh_telemetry(jobs),
             SettingsAction::PlatformSearch(text) => panel.platform_search = text,
             SettingsAction::TogglePlatform(id) => {
@@ -133,15 +137,15 @@ impl AppModel {
             }
             SettingsAction::DefaultPlatform(id) => panel.draft.default_platform_id = id,
             SettingsAction::ReloadDescriptors => {
-                panel.run_descriptor_task(jobs, DescriptorTask::Reload, |b| {
+                panel.run_descriptor_task(jobs, gate, DescriptorTask::Reload, |b| {
                     b.reload_user_platforms().map(DescriptorDone::Report)
                 });
             }
-            SettingsAction::PickDescriptor => panel.pick_descriptor(jobs),
-            SettingsAction::InstallDescriptor => panel.install_descriptor(jobs),
+            SettingsAction::PickDescriptor => panel.pick_descriptor(jobs, gate),
+            SettingsAction::InstallDescriptor => panel.install_descriptor(jobs, gate),
             SettingsAction::CancelDescriptorPreview => panel.descriptor_preview = None,
             SettingsAction::OpenDescriptorsFolder => {
-                panel.run_descriptor_task(jobs, DescriptorTask::OpenFolder, |b| {
+                panel.run_descriptor_task(jobs, gate, DescriptorTask::OpenFolder, |b| {
                     b.open_descriptors_folder().map(|()| DescriptorDone::Opened)
                 });
             }
@@ -211,6 +215,7 @@ impl AppModel {
         allowed: bool,
     ) {
         let jobs = &self.jobs;
+        let gate = &self.backup.gate;
         let Some(panel) = self.settings_panel.as_mut() else {
             return;
         };
@@ -222,7 +227,7 @@ impl AppModel {
         };
         if allowed {
             let remove = id.clone();
-            panel.run_descriptor_task(jobs, DescriptorTask::Remove { id, name }, move |b| {
+            panel.run_descriptor_task(jobs, gate, DescriptorTask::Remove { id, name }, move |b| {
                 b.descriptor_remove(&remove).map(DescriptorDone::Report)
             });
         }
@@ -346,13 +351,14 @@ impl SettingsPanel {
         event: ThemeEditorEvent,
         booted: Option<&Booted>,
         jobs: &Jobs,
+        gate: &WriteGate,
     ) {
         match event {
             // The tick puts the settings' theme back.
             ThemeEditorEvent::Cancel => self.theme_editor = None,
             ThemeEditorEvent::Save => {
                 if let (Some(editor), Some(b)) = (self.theme_editor.as_mut(), booted) {
-                    editor.save(&b.registry, jobs);
+                    editor.save(&b.registry, jobs, gate);
                 }
             }
             // A copy to the clipboard, without a toast.
@@ -485,20 +491,37 @@ impl SettingsPanel {
     pub(super) fn run_descriptor_task(
         &mut self,
         jobs: &Jobs,
+        gate: &WriteGate,
         task: DescriptorTask,
         call: impl FnOnce(&dyn Backend) -> BackendResult<DescriptorDone> + Send + 'static,
     ) {
         if self.descriptor_job.is_some() {
             return;
         }
+        // A backup under way holds the descriptor folder; an install or a
+        // removal that fails while it drains cancels it.
+        let writes = matches!(
+            task,
+            DescriptorTask::Install { .. } | DescriptorTask::Remove { .. }
+        );
+        let job = if writes {
+            gate.admit_write(call).map(|call| jobs.run(call))
+        } else {
+            gate.admit(call).map(|call| jobs.run(call))
+        };
+        let Some(job) = job else {
+            self.descriptor_notice.clear();
+            self.descriptor_error = translate(self.draft.language, "settings.backupHoldsWrites");
+            return;
+        };
         self.descriptor_busy = true;
         self.descriptor_error.clear();
-        self.descriptor_job = Some((jobs.run(call), task));
+        self.descriptor_job = Some((job, task));
     }
 
     /// "Add from a file": picks a descriptor and reads its preview.
-    fn pick_descriptor(&mut self, jobs: &Jobs) {
-        self.run_descriptor_task(jobs, DescriptorTask::Pick, |b| {
+    fn pick_descriptor(&mut self, jobs: &Jobs, gate: &WriteGate) {
+        self.run_descriptor_task(jobs, gate, DescriptorTask::Pick, |b| {
             // A cancelled or failed picker leaves everything alone.
             let Ok(path) = b.descriptor_select_file() else {
                 return Ok(DescriptorDone::Picked(None));
@@ -512,13 +535,13 @@ impl SettingsPanel {
     }
 
     /// Installs the previewed descriptor.
-    fn install_descriptor(&mut self, jobs: &Jobs) {
+    fn install_descriptor(&mut self, jobs: &Jobs, gate: &WriteGate) {
         let Some(preview) = self.descriptor_preview.as_ref() else {
             return;
         };
         let name = preview.descriptor.name.clone();
         let path = self.preview_path.clone();
-        self.run_descriptor_task(jobs, DescriptorTask::Install { name }, move |b| {
+        self.run_descriptor_task(jobs, gate, DescriptorTask::Install { name }, move |b| {
             b.descriptor_install_file(&path).map(DescriptorDone::Report)
         });
     }

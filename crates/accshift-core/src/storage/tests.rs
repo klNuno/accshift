@@ -354,9 +354,8 @@ fn a_pin_lock_that_cannot_be_written_back_fails_the_boot() {
     let hash = format!("{}:{}", "ab".repeat(16), "cd".repeat(32));
     let damaged = format!(r#"{{"pinEnabled":true,"pinHash":"{hash}","themeId":"da"#);
     fs::write(&settings, &damaged).unwrap();
-    // A directory where the write stages its temp file makes the write fail.
-    let blocker = unique_tmp_path(&settings);
-    fs::create_dir(&blocker).unwrap();
+    // The write cannot stage its temp file, so it fails.
+    let blocker = block_temp_file(&settings);
 
     let error = load_client_storage_snapshot_reporting(&ctx).unwrap_err();
 
@@ -366,7 +365,7 @@ fn a_pin_lock_that_cannot_be_written_back_fails_the_boot() {
     assert!(PinSession::new().ensure_unlocked(&ctx).is_err());
 
     // Once the write goes through, the boot resets the file and stays locked.
-    fs::remove_dir(&blocker).unwrap();
+    drop(blocker);
     let (_, recovered) = load_client_storage_snapshot_reporting(&ctx).unwrap();
     assert_eq!(recovered, [STORE_SETTINGS]);
     assert_eq!(read_pin_lock(&ctx), PinLock::On(hash));

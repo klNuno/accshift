@@ -334,8 +334,10 @@ impl FolderStore {
         false
     }
 
-    /// New accounts join the root, gone ones leave every
-    /// bucket of the platform. Returns whether anything changed.
+    /// New accounts join the root. An account missing from `account_ids`
+    /// keeps its place: a launcher list can lack it for a while (signed out,
+    /// a restored setup from another PC), and only [`Self::forget_account`]
+    /// takes it out. Returns whether anything changed.
     pub fn sync_accounts(&mut self, account_ids: &[String], platform: &str) -> bool {
         let root = root_key(platform);
         let mut changed = false;
@@ -343,14 +345,8 @@ impl FolderStore {
             self.item_order.insert(root.clone(), Vec::new());
             changed = true;
         }
-        let mut keys = vec![root.clone()];
-        keys.extend(
-            self.folders
-                .iter()
-                .filter(|folder| folder.platform == platform)
-                .map(|folder| folder.id.clone()),
-        );
-        let placed: BTreeSet<String> = keys
+        let placed: BTreeSet<String> = self
+            .platform_bucket_keys(platform)
             .iter()
             .filter_map(|key| self.item_order.get(key))
             .flatten()
@@ -365,19 +361,33 @@ impl FolderStore {
                 changed = true;
             }
         }
-        let valid: BTreeSet<&str> = account_ids.iter().map(String::as_str).collect();
-        for key in &keys {
-            if let Some(items) = self.item_order.get_mut(key) {
+        changed
+    }
+
+    /// Takes the account out of every bucket of the platform, for an account
+    /// the user forgot. Returns whether anything changed.
+    pub fn forget_account(&mut self, account_id: &str, platform: &str) -> bool {
+        let mut changed = false;
+        for key in self.platform_bucket_keys(platform) {
+            if let Some(items) = self.item_order.get_mut(&key) {
                 let before = items.len();
-                items.retain(|item| {
-                    item.kind == ItemKind::Folder || valid.contains(item.id.as_str())
-                });
-                if items.len() != before {
-                    changed = true;
-                }
+                items.retain(|item| item.kind == ItemKind::Folder || item.id != account_id);
+                changed |= items.len() != before;
             }
         }
         changed
+    }
+
+    /// The root key and the folder ids of `platform`.
+    fn platform_bucket_keys(&self, platform: &str) -> Vec<String> {
+        let mut keys = vec![root_key(platform)];
+        keys.extend(
+            self.folders
+                .iter()
+                .filter(|folder| folder.platform == platform)
+                .map(|folder| folder.id.clone()),
+        );
+        keys
     }
 
     /// Moves an item into a folder or a root. A folder never moves into its

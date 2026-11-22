@@ -403,6 +403,12 @@ impl ClientStorage {
         }
     }
 
+    /// Drops the debounced writes not handed out yet, for a restore whose
+    /// files replace them. Writes in flight are the caller's to wait for.
+    pub fn discard_pending_saves(&mut self) {
+        self.pending.clear();
+    }
+
     /// Writes every pending store now and waits for each, for the window
     /// close. Writes handed to the job pool earlier are not awaited here.
     pub fn flush_blocking(&mut self, backend: &dyn Backend) -> Vec<(StoreId, BackendError)> {

@@ -53,8 +53,9 @@ fn detect_installed_only_returns_enableable_ids_in_display_order() {
 /// overwrite each other's folder mid-assertion.
 #[test]
 fn a_descriptor_dropped_in_the_user_folder_becomes_a_platform() {
-    use descriptor::test_support::{drop_in, fixture, scratch};
+    use descriptor::test_support::{drop_in, fixture, registry_lock, scratch};
 
+    let _registry = registry_lock();
     let root = scratch("registry");
     let ctx = TempCtx { root: root.clone() };
 
