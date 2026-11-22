@@ -1,6 +1,8 @@
 //! The legacy single-file config and its one-time migration.
 
-use super::store::{read_config_file, set_config_unreadable};
+use super::store::{
+    read_config_file, save_config_unlocked, set_config_unreadable, with_config_write_locks,
+};
 #[allow(unused_imports)]
 use super::*;
 
@@ -18,6 +20,25 @@ pub fn migrate_legacy_config(app_handle: &dyn AppContext) -> Option<Result<(), S
         }
     }
 
+    // Read, merge and save under the config write locks: a write landing
+    // between the read of the split files and the save (the telemetry id
+    // the app sets at launch) would otherwise be saved over.
+    match with_config_write_locks(app_handle, || Ok(migrate_locked(app_handle, &legacy_path))) {
+        Ok(outcome) => outcome,
+        Err(e) => Some(Err(format!("Could not lock the config to migrate it: {e}"))),
+    }
+}
+
+/// [`migrate_legacy_config`] once the config write locks are held.
+fn migrate_locked(
+    app_handle: &dyn AppContext,
+    legacy_path: &std::path::Path,
+) -> Option<Result<(), String>> {
+    // Another writer may have migrated it while this one waited.
+    if !legacy_path.exists() {
+        return None;
+    }
+    let legacy_path = legacy_path.to_path_buf();
     let portable_path = match crate::storage::portable_config_path(app_handle) {
         Ok(p) => p,
         Err(e) => return Some(Err(e)),
@@ -94,7 +115,7 @@ pub fn migrate_legacy_config(app_handle: &dyn AppContext) -> Option<Result<(), S
         portable.unwrap_or_else(|| legacy.clone()),
         local.unwrap_or(legacy),
     );
-    if let Err(e) = save_config(app_handle, &migrated) {
+    if let Err(e) = save_config_unlocked(app_handle, &migrated) {
         return Some(Err(format!("Failed to write migrated config: {e}")));
     }
 
@@ -174,3 +195,6 @@ pub(super) fn load_legacy_config(app_handle: &dyn AppContext) -> AppConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod race_tests;
