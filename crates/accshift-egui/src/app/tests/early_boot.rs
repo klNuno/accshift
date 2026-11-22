@@ -158,7 +158,7 @@ fn a_release_folder_keeps_its_window_geometry_through_the_session_thread() {
     let ctx = Context::default();
     let dir = release_folder("geometry");
     let backend = Arc::new(RealBackend::with_context(dir.clone()));
-    let session = super::super::session::start(&backend, |_| None);
+    let session = super::super::session::start(&backend, |_| None, |_| {});
     // The pre-1.0 file's size, not the default one.
     assert_eq!(session.saved.size, Some((1180.0, 760.0)));
     assert_eq!(session.legacy.recv().unwrap().map(|read| read.notes), None);
@@ -171,4 +171,50 @@ fn a_release_folder_keeps_its_window_geometry_through_the_session_thread() {
     assert!(!legacy.exists());
     let after = accshift_core::config::load_window(dir.as_ref());
     assert_eq!(after, session.saved);
+}
+
+#[test]
+fn the_telemetry_consent_is_read_once_the_release_folder_is_migrated() {
+    let ctx = Context::default();
+    let dir = release_folder("telemetry");
+    // A pre-1.0 file that consented: the queue sets an anonymous id.
+    let legacy = accshift_core::storage::legacy_config_path(dir.as_ref()).unwrap();
+    let mut config: serde_json::Value = serde_json::from_str(LEGACY_CONFIG).unwrap();
+    config["telemetry"] = serde_json::json!({
+        "onboarding_completed": true,
+        "mode_a_enabled": true,
+    });
+    std::fs::write(&legacy, config.to_string()).unwrap();
+    // A closed port: the queue starts, nothing is ever sent.
+    let backend = Arc::new(RealBackend::with_telemetry_endpoint(
+        dir.clone(),
+        "http://127.0.0.1:9",
+    ));
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let session = {
+        let seen = Arc::clone(&seen);
+        super::super::session::start(
+            &backend,
+            |_| None,
+            move |backend| {
+                // What the telemetry start reads: the migrated pair.
+                *seen.lock().unwrap() = Some(legacy.exists());
+                backend.start_telemetry();
+            },
+        )
+    };
+    session.thread.join().unwrap();
+    assert_eq!(
+        *seen.lock().unwrap(),
+        Some(false),
+        "read before the migration"
+    );
+    assert!(backend.telemetry_running());
+    let mut app = AppModel::from_backend(&ctx, backend.clone(), Clock::wall(), Some(session.early));
+    app.wait_boot(&ctx).expect("early boot");
+    let config = accshift_core::config::load_config(dir.as_ref());
+    assert!(config.telemetry.onboarding_completed);
+    assert!(accshift_core::telemetry::install_id::is_valid(
+        &config.telemetry.anonymous_id
+    ));
 }

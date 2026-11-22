@@ -9,7 +9,7 @@
 //! a test passes to [`RealBackend::with_telemetry_endpoint`].
 //!
 //! The queue starts when the shell calls [`RealBackend::start_telemetry`],
-//! after the window. Before that, and for ever on a backend without an
+//! once the boot payload (and its config migration) is read. Before that, and for ever on a backend without an
 //! endpoint, every event is dropped.
 
 use super::RealBackend;

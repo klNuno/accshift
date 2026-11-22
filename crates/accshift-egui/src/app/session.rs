@@ -23,15 +23,19 @@ pub struct Session {
 }
 
 /// Reads the saved window geometry, then starts the session thread:
-/// `before_boot` (the legacy web storage read, the log session), then the
-/// boot payload.
+/// `before_boot` (the legacy web storage read, the log session), the boot
+/// payload, then `after_boot` (the telemetry queue) before the model sees
+/// the payload.
 ///
-/// The geometry is read before the thread starts: the boot migrates a
-/// pre-1.0 config into two files, and a read between their writes would
-/// open the window at the default size.
+/// The boot migrates a pre-1.0 config into two files. Nothing may read the
+/// config while it does: a read between the writes, or between the split
+/// files' absence and the legacy file's, gets the defaults. The geometry is
+/// therefore read before the thread starts, and the telemetry consent after
+/// the payload, still before the model reports the first boot.
 pub fn start(
     backend: &Arc<RealBackend>,
     before_boot: impl FnOnce(&RealBackend) -> Option<LegacyRead> + Send + 'static,
+    after_boot: impl FnOnce(&RealBackend) + Send + 'static,
 ) -> Session {
     let saved = config::load_window(backend.context().as_ref());
     let (early, task) = early_boot();
@@ -39,7 +43,7 @@ pub fn start(
     let backend = Arc::clone(backend);
     let thread = std::thread::spawn(move || {
         let _ = tx.send(before_boot(&backend));
-        task.run(backend.as_ref());
+        task.run_then(backend.as_ref(), || after_boot(&backend));
     });
     Session {
         saved,
