@@ -4,11 +4,13 @@
 //! Steam keeps every remembered login itself, so accshift holds no session to
 //! read. `RememberPassword` "0" means Steam asks for the password at every
 //! sign-in. After a switch, Steam running with the target's `Timestamp` not
-//! advanced means it never signed in. Anything missing or unreadable marks
-//! nothing.
+//! advanced means it never signed in. Current Steam writes no `MostRecent`
+//! key at all, so the timestamp alone decides; a `MostRecent` "0" still
+//! vetoes. Anything missing or unreadable marks nothing.
 
 use super::vdf::parse_vdf;
 use crate::platforms::session_marks::WatchStep;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// The target's `loginusers.vdf` entry as the post-switch check reads it.
@@ -16,7 +18,8 @@ use std::path::Path;
 pub struct LoginEntry {
     pub steam_id: String,
     pub timestamp: Option<u64>,
-    pub most_recent: bool,
+    /// `None` when the key is absent, as in every entry current Steam writes.
+    pub most_recent: Option<bool>,
     /// `None` when the key is absent.
     pub remember_password: Option<bool>,
 }
@@ -28,7 +31,7 @@ fn entries(content: &str) -> Vec<(String, LoginEntry)> {
             let account = data.get("accountname").cloned().unwrap_or_default();
             let entry = LoginEntry {
                 timestamp: data.get("timestamp").and_then(|ts| ts.trim().parse().ok()),
-                most_recent: data.get("mostrecent").is_some_and(|v| v.trim() == "1"),
+                most_recent: data.get("mostrecent").map(|v| v.trim() == "1"),
                 remember_password: data.get("rememberpassword").and_then(|v| match v.trim() {
                     "0" => Some(false),
                     "1" => Some(true),
@@ -90,10 +93,10 @@ pub fn watch_step(before: &LoginEntry, now: Option<&LoginEntry>, steam_running: 
     };
     let advanced = match (before.timestamp, now.timestamp) {
         (Some(before), Some(now)) => now > before,
-        (None, Some(_)) if now.most_recent => true,
+        (None, Some(_)) if now.most_recent == Some(true) => true,
         _ => return WatchStep::Pending,
     };
-    if advanced && now.most_recent {
+    if advanced && now.most_recent != Some(false) {
         WatchStep::SignedIn
     } else if steam_running {
         WatchStep::NotSignedIn
@@ -106,6 +109,30 @@ pub fn watch_step(before: &LoginEntry, now: Option<&LoginEntry>, steam_running: 
 /// not remember already shows "password needed", a prompt is expected.
 pub fn worth_watching(before: &LoginEntry) -> bool {
     before.remember_password != Some(false)
+}
+
+/// Steam id to last sign-in time (Unix s), from each entry's `Timestamp`.
+pub fn sign_in_times_in(content: &str) -> BTreeMap<String, u64> {
+    entries(content)
+        .into_iter()
+        .filter_map(|(_, entry)| Some((entry.steam_id, entry.timestamp?)))
+        .collect()
+}
+
+/// [`sign_in_times_in`] on this Steam install; an unreadable file reads as
+/// no times, which keeps every stored mark.
+pub fn sign_in_times(steam_path: &Path) -> BTreeMap<String, u64> {
+    read_loginusers(steam_path)
+        .map(|content| sign_in_times_in(&content))
+        .unwrap_or_default()
+}
+
+/// Whether a stored "expired" mark predates the account's last sign-in:
+/// Steam signed it in since, from accshift or by hand, so the mark is stale.
+pub fn mark_is_stale(stamps: &BTreeMap<String, u64>, steam_id: &str, detected_at_ms: u64) -> bool {
+    stamps
+        .get(steam_id)
+        .is_some_and(|&signed_in_s| signed_in_s.saturating_mul(1000) > detected_at_ms)
 }
 
 #[cfg(test)]

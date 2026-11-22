@@ -455,3 +455,58 @@ fn a_setup_that_signs_an_account_in_lifts_its_stored_mark() {
     assert!(marks["steam"].contains_key("76561198000000010"));
     assert!(take_test_job(&setup_id).is_none());
 }
+
+#[test]
+fn an_expired_mark_from_before_the_last_steam_sign_in_is_not_shown() {
+    let tmp = TempRoot::new("stale-mark");
+    let steam_dir = tmp.0.join("steam");
+    std::fs::create_dir_all(steam_dir.join("config")).unwrap();
+    // Current Steam format: no MostRecent key. Signed in at 1700000200 s.
+    std::fs::write(
+        steam_dir.join("config").join("loginusers.vdf"),
+        "\"users\"\n{\n\t\"76561198000000011\"\n\t{\n\t\t\"AccountName\"\t\t\"fresh\"\n\t\t\"RememberPassword\"\t\t\"1\"\n\t\t\"AutoLogin\"\t\t\"1\"\n\t\t\"Timestamp\"\t\t\"1700000200\"\n\t}\n\t\"76561198000000012\"\n\t{\n\t\t\"AccountName\"\t\t\"stale\"\n\t\t\"RememberPassword\"\t\t\"1\"\n\t\t\"Timestamp\"\t\t\"1700000000\"\n\t}\n}\n",
+    )
+    .unwrap();
+    let app_dir = tmp.0.join("app");
+    std::fs::create_dir_all(&app_dir).unwrap();
+    let app: AppCtx = std::sync::Arc::new(LockCtx(app_dir));
+    let mark = |detected_at| crate::platforms::session_marks::SessionMark {
+        source: crate::platforms::session_marks::SessionSource::AfterSwitch,
+        detected_at,
+        watch_rules: crate::platforms::session_marks::WATCH_RULES,
+        ..Default::default()
+    };
+    config::update_config(app.as_ref(), |cfg| {
+        cfg.steam.path_override = steam_dir.to_string_lossy().into_owned();
+        // Marked before its last sign-in: the session works again.
+        crate::platforms::session_marks::set_mark_in(
+            cfg,
+            "steam",
+            "76561198000000011",
+            mark(1_700_000_100_000),
+        );
+        // Marked after its last sign-in: still expired.
+        crate::platforms::session_marks::set_mark_in(
+            cfg,
+            "steam",
+            "76561198000000012",
+            mark(1_700_000_100_000),
+        );
+        // Marked after its last sign-in by the 2.0.0 watch, which never saw a
+        // Steam sign-in: not trusted.
+        crate::platforms::session_marks::set_mark_in(
+            cfg,
+            "steam",
+            "76561198000000012-old",
+            crate::platforms::session_marks::SessionMark {
+                watch_rules: 0,
+                ..mark(1_700_000_100_000)
+            },
+        );
+    })
+    .unwrap();
+
+    let marks = crate::platforms::session_marks::platform_marks(app, "steam").unwrap();
+    let ids: Vec<&str> = marks.iter().map(|m| m.account_id.as_str()).collect();
+    assert_eq!(ids, vec!["76561198000000012"]);
+}
