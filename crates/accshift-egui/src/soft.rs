@@ -886,6 +886,7 @@ fn context_menu_key(live: &mut Live, event: &WindowEvent) -> bool {
         WindowEvent::ModifiersChanged(held) => {
             // As egui-winit reads them.
             let held = held.state();
+            crate::window::hotkeys::set_super_held(held.super_key());
             let mac = cfg!(target_os = "macos");
             live.modifiers = egui::Modifiers {
                 alt: held.alt_key(),

@@ -6,7 +6,7 @@ use accshift_app::shortcuts::{Combo, ShortcutTarget};
 use egui::{pos2, vec2, Event, Modifiers, RawInput, Rect, ViewportId};
 use serde_json::json;
 
-use crate::app::shortcuts::{Shortcuts, WindowOp, MOCK_COMMAND};
+use crate::app::shortcuts::{read_press, Press, Shortcuts, WindowOp, MOCK_COMMAND};
 
 const PIN_HASH: &str =
     "000102030405060708090a0b0c0d0e0f:e19d9507e40b77fbb7503faedce7cb4ebf8c6820a8b746d9dfa9fcab899ec65d";
@@ -251,8 +251,11 @@ fn a_persona_shortcut_takes_the_persona_click_path() {
     );
 }
 
+/// A persona the store lacks is dropped. A bound account its loaded list
+/// lacks is set aside, neither registered nor shown, but stays saved: a
+/// launcher file read short must not erase it for good.
 #[test]
-fn stale_bindings_are_dropped_once_their_lists_load() {
+fn stale_bindings_are_set_aside_once_their_lists_load() {
     let ctx = Context::default();
     let (mut app, _) = app_with(
         &ctx,
@@ -270,10 +273,115 @@ fn stale_bindings_are_dropped_once_their_lists_load() {
     );
     settle(&mut app, &ctx);
     let saved = &app.booted().unwrap().stores.settings().global_shortcuts;
-    assert_eq!(saved.accounts.len(), 1);
-    assert_eq!(saved.accounts[0].account_id, STEAM_OTHER);
+    assert_eq!(saved.accounts.len(), 2, "a loaded list never unsaves one");
     assert_eq!(saved.personas.len(), 1);
     assert_eq!(saved.personas[0].persona_id, "persona-main");
+    let registered: Vec<Combo> = app
+        .fake_registrar()
+        .unwrap()
+        .registered()
+        .into_iter()
+        .map(|(_, combo)| combo)
+        .collect();
+    assert!(registered.contains(&Combo::parse("Ctrl+Alt+1").unwrap()));
+    assert!(!registered.contains(&Combo::parse("Ctrl+Alt+3").unwrap()));
+    let view = app.shortcuts_view();
+    assert!(!view.rows.iter().any(|row| matches!(
+        &row.target,
+        ShortcutTarget::Account { account_id, .. } if account_id == "gone"
+    )));
+}
+
+/// From the moment a row listens, a delivered shortcut is the combination
+/// being typed: refused, and one delivered just before is dropped.
+#[test]
+fn a_listening_row_refuses_delivered_shortcuts() {
+    let ctx = Context::default();
+    let (mut app, _) = app_with(&ctx, bound(json!({ "openPalette": "Ctrl+Alt+K" })), "");
+    settle(&mut app, &ctx);
+    let id = id_of(&app, "Ctrl+Alt+K");
+    assert_eq!(app.hotkey(&ctx, id), WindowOp::Reveal);
+    app.open_shortcut_capture(ShortcutTarget::ToggleWindow);
+    assert_eq!(app.hotkey(&ctx, id), WindowOp::None);
+    frame(&mut app, &ctx);
+    frame(&mut app, &ctx);
+    assert!(app.palette.is_none());
+    assert!(app.shortcuts.capture.is_some());
+}
+
+/// The PIN lock engaging while a row listens ends the capture before the
+/// row reads a key: the digits go to the PIN field.
+#[test]
+fn a_pin_lock_ends_the_capture_before_it_reads_a_key() {
+    let ctx = Context::default();
+    let (mut app, _) = app_with(&ctx, json!({}), "");
+    settle(&mut app, &ctx);
+    app.open_shortcut_capture(ShortcutTarget::OpenPalette);
+    frame(&mut app, &ctx);
+    assert!(app.shortcuts.capture.is_some());
+    app.booted.as_mut().unwrap().secure.handle_backend_locked();
+    frame_with(
+        &mut app,
+        &ctx,
+        vec![
+            key(egui::Key::Num1, Modifiers::NONE),
+            Event::Text("1".into()),
+        ],
+    );
+    assert!(app.shortcuts.capture.is_none());
+    assert!(app.booted().unwrap().secure.is_pin_locked());
+}
+
+/// Windows, X11 and the portal bind the symbol the layout types, so the
+/// capture keeps it: on AZERTY the key at the US Q position is A. macOS
+/// binds positions and keeps the physical key.
+#[test]
+fn the_capture_keeps_the_typed_key_where_the_os_binds_symbols() {
+    let ctrl_alt = Modifiers {
+        ctrl: true,
+        alt: true,
+        command: true,
+        ..Modifiers::NONE
+    };
+    let events = [Event::Key {
+        key: egui::Key::A,
+        physical_key: Some(egui::Key::Q),
+        pressed: true,
+        repeat: false,
+        modifiers: ctrl_alt,
+    }];
+    let expected = if cfg!(target_os = "macos") {
+        "Ctrl+Alt+Q"
+    } else {
+        "Ctrl+Alt+A"
+    };
+    assert_eq!(
+        read_press(&events, false),
+        Some(Press::Set(Combo::parse(expected).unwrap()))
+    );
+}
+
+/// Super comes from the window's modifiers, which egui drops outside
+/// macOS: Super+K is usable and Ctrl+Super+K keeps its Super.
+#[test]
+fn the_capture_takes_super_from_the_window_modifiers() {
+    let ctrl = Modifiers {
+        ctrl: true,
+        command: true,
+        ..Modifiers::NONE
+    };
+    assert_eq!(
+        read_press(&[key(egui::Key::K, ctrl)], true),
+        Some(Press::Set(Combo::parse("Ctrl+Super+K").unwrap()))
+    );
+    assert_eq!(
+        read_press(&[key(egui::Key::K, Modifiers::NONE)], true),
+        Some(Press::Set(Combo::parse("Super+K").unwrap()))
+    );
+    assert_eq!(
+        read_press(&[key(egui::Key::K, Modifiers::NONE)], false),
+        Some(Press::Unusable)
+    );
 }
 
 #[test]

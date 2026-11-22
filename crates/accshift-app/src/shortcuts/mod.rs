@@ -247,17 +247,20 @@ impl GlobalShortcuts {
         self.personas.len() != before
     }
 
-    /// Drops the bindings of `platform_id` whose account is not in `loaded`,
-    /// the platform's freshly loaded list. An empty list drops nothing: a
-    /// launcher that failed to read reports no accounts, not their removal.
-    pub fn prune_accounts(&mut self, platform_id: &str, loaded: &[&str]) -> bool {
+    /// The bound accounts of `platform_id` missing from `loaded`, the
+    /// platform's freshly loaded list. They stay saved: a launcher file
+    /// read short (a truncated `loginusers.vdf`) lists fewer accounts than
+    /// exist, so a missing account is only set aside until it comes back.
+    /// An empty list sets nothing aside: a failed read reports no accounts.
+    pub fn absent_accounts(&self, platform_id: &str, loaded: &[&str]) -> Vec<String> {
         if loaded.is_empty() {
-            return false;
+            return Vec::new();
         }
-        let before = self.accounts.len();
         self.accounts
-            .retain(|a| a.platform_id != platform_id || loaded.contains(&a.account_id.as_str()));
-        self.accounts.len() != before
+            .iter()
+            .filter(|a| a.platform_id == platform_id && !loaded.contains(&a.account_id.as_str()))
+            .map(|a| a.account_id.clone())
+            .collect()
     }
 
     /// Drops the binding of one removed account. True when it had one.

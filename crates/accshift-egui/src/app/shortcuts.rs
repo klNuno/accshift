@@ -13,6 +13,11 @@
 //!   through its card's switch and confirm. A PIN lock refuses all three.
 //! - Capture: while a row listens, the frame's keys go to it, not the app,
 //!   and the registrations pause so our own combinations reach the window.
+//!   A delivered shortcut is refused from the moment a row listens, and a
+//!   PIN lock ends the capture before it reads a key.
+//! - A bound account its platform's loaded list lacks is set aside (not
+//!   registered, not shown) but stays saved: a launcher file read short
+//!   must not erase it. Forgetting the account in the app removes it.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -76,6 +81,8 @@ pub(super) struct Shortcuts {
     /// The accounts of each enabled platform, read while the tab is open:
     /// the add picker's choices and the names of bound rows.
     lists: HashMap<String, Vec<PlatformAccount>>,
+    /// Per platform, the bound accounts its last loaded list lacked.
+    absent: HashMap<String, Vec<String>>,
     loads: Vec<(String, Pending<BackendResult<Vec<PlatformAccount>>>)>,
     lists_started: bool,
 }
@@ -102,6 +109,42 @@ impl Shortcuts {
             ..Self::default()
         }
     }
+
+    /// A platform's freshly loaded list: the bound accounts it lacks are set
+    /// aside until a later list has them. An empty list proves nothing.
+    fn set_aside(&mut self, saved: &GlobalShortcuts, platform_id: &str, loaded: &[String]) {
+        if loaded.is_empty() {
+            return;
+        }
+        let loaded: Vec<&str> = loaded.iter().map(String::as_str).collect();
+        self.absent.insert(
+            platform_id.to_string(),
+            saved.absent_accounts(platform_id, &loaded),
+        );
+    }
+
+    fn is_aside(&self, target: &ShortcutTarget) -> bool {
+        match target {
+            ShortcutTarget::Account {
+                platform_id,
+                account_id,
+            } => self
+                .absent
+                .get(platform_id)
+                .is_some_and(|ids| ids.contains(account_id)),
+            _ => false,
+        }
+    }
+
+    /// A row starts listening: what was delivered and not yet run is
+    /// dropped, the combination being typed may be one of ours.
+    fn listen(&mut self, target: ShortcutTarget) {
+        self.fired.clear();
+        self.capture = Some(Capture {
+            target,
+            unusable: false,
+        });
+    }
 }
 
 /// `account.displayName || account.username || account.id`.
@@ -124,22 +167,8 @@ pub(super) fn edit_shortcuts(
     }
 }
 
-/// Drops the bindings of `platform_id` whose account is not in `accounts`,
-/// the platform's freshly loaded list.
-pub(super) fn prune_accounts(
-    stores: &mut ClientStores,
-    platform_id: &str,
-    accounts: &[PlatformAccount],
-) {
-    if stores.settings().global_shortcuts.accounts.is_empty() {
-        return;
-    }
-    let ids: Vec<&str> = accounts.iter().map(|a| a.id.as_str()).collect();
-    edit_shortcuts(stores, |s| s.prune_accounts(platform_id, &ids));
-}
-
-/// The combination key of an egui key, by its US position; `None` for
-/// Escape and the keys a shortcut cannot use.
+/// The combination key of an egui key; `None` for Escape and the keys a
+/// shortcut cannot use.
 fn combo_key(key: Key) -> Option<ComboKey> {
     use ComboKey as C;
     let name = key.name();
@@ -194,13 +223,17 @@ fn combo_key(key: Key) -> Option<ComboKey> {
 }
 
 /// What one frame's presses do to a capture.
-enum Press {
+#[derive(Debug, PartialEq)]
+pub(super) enum Press {
     Cancel,
     Unusable,
     Set(Combo),
 }
 
-fn read_press(events: &[Event]) -> Option<Press> {
+/// The first press of `events` that means something to a capture.
+/// `super_held`: the Super (Windows) key is down, which egui reports on
+/// macOS only.
+pub(super) fn read_press(events: &[Event], super_held: bool) -> Option<Press> {
     for event in events {
         let Event::Key {
             key,
@@ -215,10 +248,19 @@ fn read_press(events: &[Event]) -> Option<Press> {
         if *key == Key::Escape {
             return Some(Press::Cancel);
         }
-        let Some(combo_key) = combo_key(physical_key.unwrap_or(*key)) else {
+        // Windows (virtual keys), X11 (keysyms) and the portal bind a key
+        // by the symbol the active layout gives it, so the capture keeps
+        // the key as typed: Ctrl+A on AZERTY stays Ctrl+A. macOS binds a
+        // position, so there it keeps the physical key.
+        let typed = if cfg!(target_os = "macos") {
+            physical_key.unwrap_or(*key)
+        } else {
+            *key
+        };
+        let Some(combo_key) = combo_key(typed) else {
             continue;
         };
-        let super_key = modifiers.mac_cmd || crate::window::hotkeys::super_held();
+        let super_key = modifiers.mac_cmd || super_held;
         return Some(
             match Combo::new(
                 modifiers.ctrl,
@@ -252,6 +294,10 @@ impl AppModel {
     /// A delivered shortcut: what the window does now; the action runs on
     /// the next frame.
     pub fn hotkey(&mut self, ctx: &Context, id: u32) -> WindowOp {
+        // A listening row: the press is a combination being typed.
+        if self.shortcuts.capture.is_some() {
+            return WindowOp::None;
+        }
         let Some(target) = self
             .shortcuts
             .service
@@ -298,11 +344,18 @@ impl AppModel {
             let known: Vec<&str> = known.iter().map(String::as_str).collect();
             edit_shortcuts(&mut b.stores, |s| s.prune_personas(&known));
         }
+        if let Some((platform, ids)) = b.accounts.landed.take() {
+            let saved = &b.stores.settings().global_shortcuts;
+            self.shortcuts.set_aside(saved, &platform, &ids);
+        }
         self.tick_shortcut_lists(tab_open);
         let Some(b) = self.booted.as_ref() else {
             return;
         };
-        let table = shortcuts::bindings(&b.stores.settings().global_shortcuts);
+        let table: Vec<_> = shortcuts::bindings(&b.stores.settings().global_shortcuts)
+            .into_iter()
+            .filter(|(target, _)| !self.shortcuts.is_aside(target))
+            .collect();
         let s = &mut self.shortcuts;
         if s.service.is_none() {
             // After the first frame, and only when something needs it.
@@ -325,8 +378,11 @@ impl AppModel {
             s.synced = Some(state);
             ctx.request_repaint();
         }
-        for target in std::mem::take(&mut self.shortcuts.fired) {
-            self.run_shortcut(ctx, target);
+        let fired = std::mem::take(&mut self.shortcuts.fired);
+        if self.shortcuts.capture.is_none() {
+            for target in fired {
+                self.run_shortcut(ctx, target);
+            }
         }
     }
 
@@ -370,7 +426,8 @@ impl AppModel {
             Poll::Ready(Err(_)) | Poll::Gone => false,
         });
         for (platform, accounts) in landed {
-            prune_accounts(&mut b.stores, &platform, &accounts);
+            let ids: Vec<String> = accounts.iter().map(|a| a.id.clone()).collect();
+            s.set_aside(&b.stores.settings().global_shortcuts, &platform, &ids);
             s.lists.insert(platform, accounts);
         }
     }
@@ -413,12 +470,21 @@ impl AppModel {
         if self.shortcuts.capture.is_none() {
             return;
         }
+        // The PIN lock took over: its field reads the keys, not the row.
+        if self
+            .booted
+            .as_ref()
+            .is_some_and(|b| b.secure.is_pin_locked())
+        {
+            self.shortcuts.capture = None;
+            return;
+        }
         let events = ctx.input(|i| i.events.clone());
         ctx.input_mut(|i| {
             i.events
                 .retain(|e| !matches!(e, Event::Key { .. } | Event::Text(_) | Event::Paste(_)))
         });
-        let Some(press) = read_press(&events) else {
+        let Some(press) = read_press(&events, crate::window::hotkeys::super_held()) else {
             return;
         };
         let Some(capture) = self.shortcuts.capture.as_mut() else {
@@ -448,10 +514,11 @@ impl AppModel {
             .capture
             .as_ref()
             .is_some_and(|c| c.target == target);
-        self.shortcuts.capture = (!again).then_some(Capture {
-            target,
-            unusable: false,
-        });
+        if again {
+            self.shortcuts.capture = None;
+        } else {
+            self.shortcuts.listen(target);
+        }
     }
 
     pub(super) fn clear_shortcut(&mut self, target: &ShortcutTarget) {
@@ -482,10 +549,7 @@ impl AppModel {
         if let Some(panel) = self.settings_panel.as_mut() {
             panel.show_tab(jobs, TAB);
         }
-        self.shortcuts.capture = Some(Capture {
-            target,
-            unusable: false,
-        });
+        self.shortcuts.listen(target);
     }
 
     /// What the Shortcuts tab reads.
@@ -505,7 +569,7 @@ impl AppModel {
                     !matches!(
                         t,
                         ShortcutTarget::OpenPalette | ShortcutTarget::ToggleWindow
-                    )
+                    ) && !s.is_aside(t)
                 }),
         );
         // A row being added listens before it has a binding.

@@ -53,16 +53,26 @@ pub fn registrar(deliver: Deliver) -> Box<dyn Registrar> {
     }
 }
 
-/// Whether the Windows key is held now: egui reports it on macOS only (as
-/// Command), so a capture asks the OS on Windows. Always false elsewhere.
+/// The Super (Windows) key as winit last reported it.
+static SUPER_HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The runner's winit modifiers: egui keeps Super on macOS only (as
+/// Command), so the capture reads it from here.
+pub fn set_super_held(held: bool) {
+    SUPER_HELD.store(held, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether Super (Windows) is held now: winit's last modifiers, and on
+/// Windows the key state itself, which the shell may keep from winit.
 pub fn super_held() -> bool {
+    let winit = SUPER_HELD.load(std::sync::atomic::Ordering::Relaxed);
     #[cfg(windows)]
     {
-        windows::super_held()
+        winit || windows::super_held()
     }
     #[cfg(not(windows))]
     {
-        false
+        winit
     }
 }
 

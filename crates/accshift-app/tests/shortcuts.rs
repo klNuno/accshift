@@ -221,21 +221,17 @@ fn stale_persona_bindings_are_dropped() {
 }
 
 #[test]
-fn stale_account_bindings_are_dropped_from_a_non_empty_list_only() {
+fn missing_accounts_are_set_aside_from_a_non_empty_list_only() {
     let mut shortcuts = GlobalShortcuts::default();
     shortcuts.set(&account("steam", "1"), Some(combo("Ctrl+Alt+1")));
     shortcuts.set(&account("steam", "2"), Some(combo("Ctrl+Alt+2")));
     shortcuts.set(&account("riot", "2"), Some(combo("Ctrl+Alt+3")));
     // An empty read is not proof the accounts are gone.
-    assert!(!shortcuts.prune_accounts("steam", &[]));
+    assert!(shortcuts.absent_accounts("steam", &[]).is_empty());
+    // A short list sets the missing account aside without unsaving it.
+    assert_eq!(shortcuts.absent_accounts("steam", &["1", "9"]), ["2"]);
+    assert!(shortcuts.absent_accounts("riot", &["2"]).is_empty());
     assert_eq!(shortcuts.accounts.len(), 3);
-    assert!(shortcuts.prune_accounts("steam", &["1", "9"]));
-    let left: Vec<_> = shortcuts
-        .accounts
-        .iter()
-        .map(|a| (a.platform_id.as_str(), a.account_id.as_str()))
-        .collect();
-    assert_eq!(left, [("steam", "1"), ("riot", "2")]);
     assert!(shortcuts.remove_account("riot", "2"));
     assert!(!shortcuts.remove_account("riot", "2"));
 }
