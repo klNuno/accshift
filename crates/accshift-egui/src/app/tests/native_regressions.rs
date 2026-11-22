@@ -734,6 +734,43 @@ fn the_mouse_back_button_leaves_settings_then_the_folder() {
     assert_eq!(current(&app), None, "back leaves the folder");
 }
 
+#[test]
+fn backspace_after_escape_in_one_frame_leaves_the_folder() {
+    let ctx = Context::default();
+    let (mut app, _mock) = external_app(&ctx);
+    frame(&mut app, &ctx, true, false);
+    {
+        let b = app.booted.as_mut().unwrap();
+        let tab = b.nav.active_tab.clone();
+        let folder = b.stores.create_folder("Smurfs", None, &tab);
+        b.accounts.navigate_to(&b.stores, &tab, Some(folder.id));
+    }
+    let search = Id::unique(crate::app::keys::SEARCH_ID);
+    ctx.memory_mut(|m| m.request_focus(search));
+    frame(&mut app, &ctx, true, false);
+    frame(&mut app, &ctx, true, false);
+    assert!(
+        crate::ui::components::focus::text_field_focused(&ctx),
+        "the search has focus"
+    );
+    // Escape leaves the search; the Backspace after it, in the same
+    // frame, is the window's again: back out of the folder.
+    let mut raw = input(true, false);
+    for key in [egui::Key::Escape, egui::Key::Backspace] {
+        raw.events.push(egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        });
+    }
+    let mut output = ctx.run_ui(raw, |ui| app.frame(ui));
+    output.textures_delta.clear();
+    let b = app.booted.as_ref().unwrap();
+    assert_eq!(b.accounts.navigation.current_folder_id(), None);
+}
+
 fn press(app: &mut AppModel, ctx: &Context, key: egui::Key) {
     let mut raw = input(true, false);
     raw.events.push(egui::Event::Key {

@@ -374,9 +374,10 @@ impl AppModel {
         let is_mac = os == RuntimeOs::Macos;
         let events = ctx.input(|i| i.events.clone());
         let mut taken = vec![false; events.len()];
-        let editable = focus::text_field_focused(ctx)
-            || (self.overlay_active && focus::text_field_focused(&self.overlay_ctx));
         for (index, event) in events.iter().enumerate() {
+            // Per key: the one before may have moved focus (Escape).
+            let editable = focus::text_field_focused(ctx)
+                || (self.overlay_active && focus::text_field_focused(&self.overlay_ctx));
             let Some(key) = key_event(event, editable) else {
                 continue;
             };
