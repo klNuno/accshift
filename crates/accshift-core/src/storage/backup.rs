@@ -423,9 +423,16 @@ pub fn build_backup(app: &dyn AppContext, created_at: u64) -> Result<BackupFile,
     let mut stores = BTreeMap::new();
     for id in BACKUP_STORES {
         let path = client_store_path(app, id)?;
-        if let Ok(meta) = fs::metadata(&path) {
-            budget.spend(meta.len(), &path)?;
-        }
+        // A missing or corrupt store is read from its recovery copy: charge
+        // the larger of the two, so neither read passes the budget.
+        let size = |path: &Path| fs::metadata(path).map_or(0, |meta| meta.len());
+        let bak = backup_path(&path);
+        let (bytes, at) = if size(&bak) > size(&path) {
+            (size(&bak), &bak)
+        } else {
+            (size(&path), &path)
+        };
+        budget.spend(bytes, at)?;
         let value = read_json_if_exists::<Value>(&path)?;
         let value = if id == STORE_SETTINGS {
             // Never written yet: the defaults, which a restore can apply.
@@ -514,7 +521,16 @@ fn managed_file_at(app: &dyn AppContext, target: &Path) -> Result<Option<&'stati
     if let Some((_, what)) = files.iter().find(|(path, _)| same_file_key(path) == key) {
         return Ok(Some(what));
     }
-    let folder = target.parent().map(same_file_key);
+    // The folder the path was picked in, and the one a link there leads to:
+    // a failed rename copies through the link, over the file it names.
+    let mut folders: Vec<String> = target.parent().map(same_file_key).into_iter().collect();
+    folders.extend(resolved(target).parent().map(same_file_key));
+    if let Ok(link) = fs::read_link(target) {
+        let link = target
+            .parent()
+            .map_or(link.clone(), |parent| parent.join(&link));
+        folders.extend(link.parent().map(same_file_key));
+    }
     for (dir, what) in [
         (themes_dir(app)?, "theme folder"),
         (
@@ -522,7 +538,7 @@ fn managed_file_at(app: &dyn AppContext, target: &Path) -> Result<Option<&'stati
             "descriptor folder",
         ),
     ] {
-        if folder.as_ref() == Some(&same_file_key(&dir)) {
+        if folders.contains(&same_file_key(&dir)) {
             return Ok(Some(what));
         }
     }
@@ -2405,6 +2421,64 @@ mod tests {
         export_backup(&app, &file).unwrap();
         let _ = fs::remove_dir_all(&app.0);
         assert_eq!(after, before, "a managed file changed");
+    }
+
+    #[test]
+    fn an_export_through_a_link_never_writes_over_a_theme() {
+        // Regression (EXPORT_LINK): only the folder the link sat in was
+        // checked, so a link to a theme passed and a failed rename copied
+        // the backup through it, over the theme.
+        let app = ctx("export-link");
+        let themes = themes_dir(&app).unwrap();
+        fs::create_dir_all(&themes).unwrap();
+        let theme = themes.join("mine.json");
+        fs::write(&theme, THEME).unwrap();
+        let link = app.0.join("backup.json");
+        let dangling = app.0.join("later.json");
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&theme, &link)
+            .and_then(|()| std::os::unix::fs::symlink(themes.join("new.json"), &dangling));
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(&theme, &link)
+            .and_then(|()| std::os::windows::fs::symlink_file(themes.join("new.json"), &dangling));
+        if made.is_err() {
+            // Windows without Developer Mode or admin rights makes no links.
+            let _ = fs::remove_dir_all(&app.0);
+            return;
+        }
+        let through = export_backup(&app, &link);
+        let into = export_backup(&app, &dangling);
+        let kept = fs::read_to_string(&theme).unwrap();
+        let created = themes.join("new.json").exists();
+        let _ = fs::remove_dir_all(&app.0);
+        assert!(through.is_err(), "EXPORT_LINK: exported through the link");
+        assert!(into.is_err(), "EXPORT_LINK: exported into the theme folder");
+        assert_eq!(kept, THEME, "EXPORT_LINK: the theme changed");
+        assert!(!created, "EXPORT_LINK: a file appeared in the theme folder");
+    }
+
+    #[test]
+    fn a_recovery_copy_past_the_size_limit_fails_the_export_before_it_is_read() {
+        // Regression (BAK_BUDGET): only the store was charged, so a corrupt
+        // store sent the read to a recovery copy of any size.
+        let app = ctx("bak-budget");
+        seed(&app);
+        let notes = client_store_path(&app, STORE_ACCOUNT_CARD_NOTES).unwrap();
+        fs::write(&notes, b"{not json").unwrap();
+        let pad = "x".repeat(MAX_JSON_STORE_BYTES as usize);
+        fs::write(backup_path(&notes), format!(r#"{{"1":"{pad}"}}"#)).unwrap();
+        let result = export_backup(&app, &app.0.join("out.json"));
+        let _ = fs::remove_dir_all(&app.0);
+        let error = result.unwrap_err();
+        let bak = backup_path(&notes)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            error.contains(&bak),
+            "BAK_BUDGET: the recovery copy was read before the size check: {error}"
+        );
     }
 
     #[test]
