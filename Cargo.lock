@@ -203,6 +203,7 @@ dependencies = [
  "global-hotkey",
  "image",
  "image-webp",
+ "libc",
  "memmap2",
  "png 0.18.1",
  "raw-window-handle",

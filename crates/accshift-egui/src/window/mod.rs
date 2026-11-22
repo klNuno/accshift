@@ -17,6 +17,7 @@ pub mod keystroke;
 pub mod placement;
 #[cfg(all(debug_assertions, windows))]
 pub mod probe;
+pub mod signal;
 pub mod tray;
 #[cfg(all(feature = "software", target_os = "linux"))]
 pub mod wayland;
@@ -143,12 +144,14 @@ pub fn restore_position(window: &egui_winit::winit::window::Window, saved: &conf
     }
 }
 
-/// Windows is ending the session: a close request quits instead of hiding
-/// to the tray ([`frame`] turns `WM_ENDSESSION` into one).
+/// The OS is ending the session (Windows `WM_ENDSESSION`, or Unix
+/// `SIGTERM`/`SIGINT`): a close request quits instead of hiding to the tray.
 pub fn session_ending() -> bool {
     #[cfg(windows)]
     return frame::session_ending();
-    #[cfg(not(windows))]
+    #[cfg(unix)]
+    return signal::received();
+    #[cfg(not(any(windows, unix)))]
     false
 }
 

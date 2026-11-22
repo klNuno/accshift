@@ -71,6 +71,11 @@ image-webp = "0.2"
 [target.'cfg(not(windows))'.dependencies]
 egui = { version = "0.37", features = ["default_fonts"] }
 
+# Unix termination signals (window/signal.rs): SIGTERM and SIGINT run the same
+# orderly shutdown as a normal quit. `libc` is already in the workspace graph.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # Linux: the X11 and Wayland backends `default-features = false` drops above,
 # with libxcb and the Wayland client opened at run time, as by default.
 [target.'cfg(target_os = "linux")'.dependencies]

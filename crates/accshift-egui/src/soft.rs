@@ -39,6 +39,9 @@ pub enum UserEvent {
     /// A global shortcut fired, or its registrar changed
     /// ([`crate::window::hotkeys`]).
     Hotkey(crate::window::hotkeys::Signal),
+    /// A Unix termination signal (`SIGTERM` / `SIGINT`) asked the app to quit
+    /// cleanly ([`crate::window::signal`]).
+    Quit,
 }
 
 impl From<accesskit_winit::Event> for UserEvent {
@@ -57,6 +60,12 @@ pub fn run(
     bench::mark("run");
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     bench::mark("event_loop");
+    let _signals = crate::window::signal::install({
+        let proxy = event_loop.create_proxy();
+        move || {
+            let _ = proxy.send_event(UserEvent::Quit);
+        }
+    });
     let mut runner = Runner {
         ctx: egui::Context::default(),
         proxy: event_loop.create_proxy(),
@@ -1135,6 +1144,7 @@ impl ApplicationHandler<UserEvent> for Runner {
                 }
                 self.repaint_at(Instant::now());
             }
+            UserEvent::Quit => self.close(event_loop),
         }
     }
 
