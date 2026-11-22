@@ -151,6 +151,19 @@ pub enum UpdateOutput<P> {
     Run(UpdateCommand<P>),
 }
 
+/// What the last check ended on, for the settings' update row. A new
+/// check clears it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckOutcome {
+    /// The check found no newer version.
+    UpToDate,
+    /// The check or the download failed, with the error text.
+    Failed(String),
+    /// The update is installed but the relaunch failed: only a restart by
+    /// hand finishes it.
+    RestartNeeded,
+}
+
 /// The update flow state.
 #[derive(Debug, Clone)]
 pub struct AppUpdater<P> {
@@ -161,6 +174,7 @@ pub struct AppUpdater<P> {
     check_started: bool,
     /// `import.meta.env.DEV`: the flow never runs in a dev build.
     dev: bool,
+    outcome: Option<CheckOutcome>,
 }
 
 impl<P: PendingUpdate> AppUpdater<P> {
@@ -174,7 +188,41 @@ impl<P: PendingUpdate> AppUpdater<P> {
             bytes: None,
             check_started: false,
             dev,
+            outcome: None,
         }
+    }
+
+    /// False in a dev build, and in the mock and scene runs: no check ever
+    /// runs.
+    pub fn enabled(&self) -> bool {
+        !self.dev
+    }
+
+    /// What the last finished check ended on; `None` before the first one
+    /// and while one runs.
+    pub fn outcome(&self) -> Option<&CheckOutcome> {
+        self.outcome.as_ref()
+    }
+
+    /// True when [`Self::check_now`] would start a check: an enabled flow
+    /// at rest, without an installed update waiting for a restart.
+    pub fn can_check(&self) -> bool {
+        self.enabled()
+            && self.state == UpdateState::Idle
+            && self.outcome != Some(CheckOutcome::RestartNeeded)
+    }
+
+    /// The settings' "Check for updates": a check now, even after the
+    /// background one ran. Nothing while a check, a download or an install
+    /// runs, once an update is ready, or in a dev build.
+    pub fn check_now(&mut self) -> Vec<UpdateOutput<P>> {
+        if !self.can_check() {
+            return Vec::new();
+        }
+        self.check_started = true;
+        self.state = UpdateState::Checking;
+        self.outcome = None;
+        vec![UpdateOutput::Run(UpdateCommand::Check)]
     }
 
     pub fn state(&self) -> UpdateState {
@@ -219,6 +267,7 @@ impl<P: PendingUpdate> AppUpdater<P> {
         }
         self.check_started = true;
         self.state = UpdateState::Checking;
+        self.outcome = None;
         vec![UpdateOutput::Run(UpdateCommand::Check)]
     }
 
@@ -227,6 +276,7 @@ impl<P: PendingUpdate> AppUpdater<P> {
         match result {
             Ok(None) => {
                 self.state = UpdateState::Idle;
+                self.outcome = Some(CheckOutcome::UpToDate);
                 Vec::new()
             }
             Ok(Some(update)) => {
@@ -295,6 +345,7 @@ impl<P: PendingUpdate> AppUpdater<P> {
             error_code: Some(code),
         };
         self.reset();
+        self.outcome = Some(CheckOutcome::Failed(error));
         vec![log, track]
     }
 
@@ -357,6 +408,7 @@ impl<P: PendingUpdate> AppUpdater<P> {
         ];
         self.reset();
         self.check_started = true;
+        self.outcome = Some(CheckOutcome::RestartNeeded);
         outputs
     }
 

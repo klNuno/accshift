@@ -1,0 +1,54 @@
+{
+  "id": "settings-about-idle-light-100",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 1100,
+    "scale": 1
+  },
+  "theme": "light",
+  "locale": "en",
+  "update": "idle",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [
+        87,
+        18
+      ]
+    },
+    {
+      "move": [
+        430,
+        5
+      ]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "shot": "idle"
+    },
+    {
+      "click": [
+        279,
+        1003
+      ]
+    },
+    {
+      "move": [
+        430,
+        5
+      ]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "clicked"
+    }
+  ]
+}

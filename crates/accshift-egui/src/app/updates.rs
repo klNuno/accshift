@@ -5,7 +5,9 @@
 //!
 //! Each blocking half (check, download, install, relaunch) runs on a thread
 //! of its own: a download must not hold one of the two job workers. Mock and
-//! scene runs never start the flow; neither does a debug build.
+//! scene runs never start the flow; neither does a debug build. The
+//! settings' about card checks by hand ([`AppModel::check_updates`]) and
+//! reads [`Updates::status`] each frame.
 
 use std::ffi::OsStr;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -15,7 +17,8 @@ use std::time::Instant;
 use accshift_app::accounts::{Toast, ToastKind};
 use accshift_app::lifecycle::boot::{track_update, truncate_log};
 use accshift_app::lifecycle::update_flow::{
-    self, AppUpdater, ApplyHost, CommandResult, LogLevel, UpdateCommand, UpdateOutput,
+    self, AppUpdater, ApplyHost, CheckOutcome, CommandResult, LogLevel, UpdateCommand,
+    UpdateOutput, UpdateState,
 };
 use accshift_app::lifecycle::updater::{
     InstallerHost, SystemInstaller, Update, Updater, UpdaterConfig,
@@ -24,6 +27,7 @@ use accshift_app::lifecycle::{process, UPDATE_CHECK_DELAY};
 use accshift_app::text::Text;
 use egui::Context;
 
+use super::settings_panel::UpdateStatus;
 use super::AppModel;
 
 /// A task the install thread needs run on the UI thread.
@@ -105,6 +109,58 @@ impl Updates {
         .map_err(|error| error.to_string())
     }
 
+    /// A scene run with the flow put in `state` (`idle`, `checking`,
+    /// `up-to-date`, `failed`, `ready`) to show the about card. The updater
+    /// stays off: a click on the card fails its check, nothing is fetched
+    /// or installed.
+    pub(super) fn scene(state: &str) -> Result<Self, String> {
+        let mut updates = Self::off();
+        updates.flow = AppUpdater::new(false);
+        updates.updater = Err("this scene has no updater".into());
+        let flow = &mut updates.flow;
+        match state {
+            "idle" => {}
+            "checking" => {
+                flow.check_now();
+            }
+            "up-to-date" => {
+                flow.check_now();
+                flow.on_check_result(Ok(None));
+            }
+            "failed" => {
+                flow.check_now();
+                flow.on_check_result(Err("error sending request for url".into()));
+            }
+            "ready" => {
+                flow.check_now();
+                flow.on_check_result(Ok(Some(stand_in_update())));
+                flow.on_download_result(Ok(Vec::new()));
+            }
+            other => return Err(format!("unknown update state {other:?}")),
+        }
+        Ok(updates)
+    }
+
+    /// Where the flow stands, for the settings' about card.
+    pub(super) fn status(&self) -> UpdateStatus {
+        if !self.flow.enabled() {
+            return UpdateStatus::Unavailable;
+        }
+        let version = || self.flow.version().to_string();
+        match self.flow.state() {
+            UpdateState::Checking => UpdateStatus::Checking,
+            UpdateState::Downloading => UpdateStatus::Downloading(version()),
+            UpdateState::Ready => UpdateStatus::Ready(version()),
+            UpdateState::Applying => UpdateStatus::Installing,
+            UpdateState::Idle => match self.flow.outcome() {
+                None => UpdateStatus::Idle,
+                Some(CheckOutcome::UpToDate) => UpdateStatus::UpToDate,
+                Some(CheckOutcome::Failed(error)) => UpdateStatus::Failed(error.clone()),
+                Some(CheckOutcome::RestartNeeded) => UpdateStatus::RestartNeeded,
+            },
+        }
+    }
+
     /// The relaunches a run that does not relaunch was asked for.
     #[cfg(test)]
     pub(super) fn relaunch_requests(&self) -> usize {
@@ -117,6 +173,32 @@ impl Updates {
         self.flow
             .cta_label()
             .map(|label| (label, self.flow.cta_title(), self.flow.cta_disabled()))
+    }
+}
+
+/// The update a scene or a test puts in place: 2.0.0 over 1.0.5, nothing
+/// to download from.
+fn stand_in_update() -> Update {
+    use accshift_app::lifecycle::updater::InstallContext;
+    Update {
+        body: None,
+        current_version: "1.0.5".into(),
+        version: "2.0.0".into(),
+        date: None,
+        target: "windows-x86_64".into(),
+        download_url: "https://example.invalid/update"
+            .parse()
+            .expect("a valid URL"),
+        signature: String::new(),
+        raw_json: serde_json::Value::Null,
+        install: InstallContext {
+            app_name: "accshift".into(),
+            relaunch_args: Vec::new(),
+            bundle_type: None,
+            executable_path: None,
+            pubkey: String::new(),
+            timeout: None,
+        },
     }
 }
 
@@ -245,6 +327,25 @@ impl AppModel {
                 ctx.request_repaint_after(due - now);
             }
         }
+        if let Some(panel) = self.settings_panel.as_mut() {
+            panel.update = self.updates.status();
+        }
+    }
+
+    /// The about card's "Check for updates": a check now, unless the
+    /// updater is off, a check, download or install runs, or an update is
+    /// ready (its restart is the title bar's).
+    pub(super) fn check_updates(&mut self, ctx: &Context) {
+        if self.updates.running.is_some() {
+            return;
+        }
+        // The background check would only repeat this one.
+        self.updates.due = None;
+        let outputs = self.updates.flow.check_now();
+        self.apply_update_outputs(ctx, outputs);
+        if let Some(panel) = self.settings_panel.as_mut() {
+            panel.update = self.updates.status();
+        }
     }
 
     /// Installs the update: never while an account or persona switch runs,
@@ -343,26 +444,31 @@ impl Updates {
     /// Puts a downloaded update in place, as if the check and the download
     /// had run. The mock run has no updater, so nothing is ever installed.
     pub(super) fn ready_for_test(&mut self) {
-        use accshift_app::lifecycle::updater::InstallContext;
-        let update = Update {
-            body: None,
-            current_version: "1.0.5".into(),
-            version: "2.0.0".into(),
-            date: None,
-            target: "windows-x86_64".into(),
-            download_url: "https://example.invalid/update".parse().unwrap(),
-            signature: String::new(),
-            raw_json: serde_json::Value::Null,
-            install: InstallContext {
-                app_name: "accshift".into(),
-                relaunch_args: Vec::new(),
-                bundle_type: None,
-                executable_path: None,
-                pubkey: String::new(),
-            },
-        };
-        let _ = self.flow.on_check_result(Ok(Some(update)));
+        let _ = self.flow.on_check_result(Ok(Some(stand_in_update())));
         let _ = self.flow.on_download_result(Ok(Vec::new()));
+    }
+
+    /// A release run's flow over an updater that cannot be built: a check
+    /// fails at once with `error`, nothing is fetched.
+    pub(super) fn on_for_test(error: &str) -> Self {
+        let mut updates = Self::off();
+        updates.flow = AppUpdater::new(false);
+        updates.updater = Err(error.into());
+        updates
+    }
+
+    /// A check started by hand and still running: its result is what the
+    /// returned sender hands over.
+    pub(super) fn hold_check_for_test(&mut self) -> Sender<Option<CommandResult>> {
+        let _ = self.flow.check_now();
+        let (tx, rx) = mpsc::channel();
+        self.running = Some(rx);
+        tx
+    }
+
+    /// The command in flight, if any.
+    pub(super) fn running_for_test(&self) -> bool {
+        self.running.is_some()
     }
 
     /// The flow holds a downloaded update, not yet applied.

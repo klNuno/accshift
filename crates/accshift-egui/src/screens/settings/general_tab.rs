@@ -1,12 +1,15 @@
 //! The cards of the General tab: appearance, theme, account display,
-//! performance, integrations and (on Windows) system.
+//! performance, integrations, (on Windows) system, then about.
 
 use accshift_app::i18n::{Locale, LANGUAGE_OPTIONS};
+use accshift_app::lifecycle::updater::APP_VERSION;
 use accshift_app::settings::AnimationsMode;
 
 use super::{tr, CardSpec, Control, Item, View};
 use crate::app::platforms::RuntimeOs;
-use crate::app::settings_panel::{NumericField, SettingFlag, SettingsAction, SettingsPanel};
+use crate::app::settings_panel::{
+    update_row, version_line, NumericField, SettingFlag, SettingsAction, SettingsPanel,
+};
 
 /// The animation modes in the order of their select, with their labels.
 const ANIMATIONS: [(AnimationsMode, &str); 3] = [
@@ -183,10 +186,30 @@ pub(super) fn cards(panel: &SettingsPanel, view: &View, l: Locale) -> Vec<CardSp
             ),
         ]);
     }
+    cards.push(about(panel, l));
     cards
         .into_iter()
         .map(|items| CardSpec { items, wide: false })
         .collect()
+}
+
+/// The about card: the running version, the update check, then where the
+/// update flow stands.
+fn about(panel: &SettingsPanel, l: Locale) -> Vec<Item> {
+    let row = update_row(&panel.update, l);
+    let mut items = vec![
+        Item::Title(tr(l, "settings.about")),
+        Item::Hint(version_line(APP_VERSION, l), false),
+        Item::Button {
+            label: row.label,
+            enabled: row.enabled,
+            action: row.action,
+        },
+    ];
+    if !row.notice.is_empty() {
+        items.push(Item::Hint(row.notice, row.error));
+    }
+    items
 }
 
 #[cfg(test)]

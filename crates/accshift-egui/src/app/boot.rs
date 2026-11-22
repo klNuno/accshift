@@ -137,6 +137,9 @@ impl AppModel {
             model.liquid.pin_window(*window, *scale);
         }
         model.shortcuts = shortcuts::Shortcuts::mock(&setup.failures);
+        if let Some(state) = &setup.update {
+            model.updates = updates::Updates::scene(state)?;
+        }
         model.setup = Some(setup);
         model.desktop = Some(ctx.load_texture(
             "desktop",

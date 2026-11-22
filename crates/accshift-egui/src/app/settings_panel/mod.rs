@@ -23,6 +23,7 @@
 //! - [`cs2`]: the Steam tab's CS2 bridge card.
 //! - [`actions`]: what each [`SettingsAction`] does.
 //! - [`persist`]: the save, and the merge with external changes.
+//! - [`update`]: the about card's version and update check.
 //!
 //! [`AppSettings`]: accshift_app::settings::AppSettings
 //! [`merge_settings_draft`]: accshift_app::settings::merge_settings_draft
@@ -35,6 +36,7 @@ mod draft;
 mod jobs;
 mod persist;
 mod state;
+mod update;
 
 use std::time::Instant;
 
@@ -52,6 +54,7 @@ pub use cs2::{Cs2Form, Cs2Status};
 pub use draft::{clamp_int, js_number, normalize, NumericField, NumericInput};
 pub(in crate::app) use jobs::apply_report;
 pub use state::{visible_tabs, SettingsPanel, TabDef};
+pub use update::{update_row, version_line, UpdateRow, UpdateStatus};
 
 /// Digits in a PIN code.
 pub const PIN_CODE_LENGTH: usize = 4;
@@ -194,6 +197,11 @@ pub enum SettingsAction {
     Cs2ClearToken,
     /// The CS2 card's "?" button.
     OpenCs2Wiki,
+    /// The about card's "Check for updates".
+    CheckUpdates,
+    /// The about card's restart button, once an update is ready: the title
+    /// bar's install.
+    ApplyUpdate,
 }
 
 pub(super) fn toast(toasts: &mut ToastQueue, key: &str, kind: ToastType, now: Instant) {

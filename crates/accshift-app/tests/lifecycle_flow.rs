@@ -19,7 +19,7 @@ use accshift_app::lifecycle::ui_scale::{
     PERSIST_DELAY,
 };
 use accshift_app::lifecycle::update_flow::{
-    classify_update_check_error, AppUpdater, LogLevel, PendingUpdate, UpdateCommand,
+    classify_update_check_error, AppUpdater, CheckOutcome, LogLevel, PendingUpdate, UpdateCommand,
     UpdateErrorCode, UpdateOutput, UpdateStage, UpdateState,
 };
 use accshift_app::lifecycle::{GEOMETRY_SAVE_WAIT, UPDATE_CHECK_DELAY};
@@ -314,6 +314,77 @@ fn a_dev_build_never_checks() {
     let mut updater = AppUpdater::<FakeUpdate>::new(true);
     assert!(updater.start().is_empty());
     assert_eq!(updater.state(), UpdateState::Idle);
+    // Nor by hand, from the settings.
+    assert!(!updater.enabled());
+    assert!(!updater.can_check());
+    assert!(updater.check_now().is_empty());
+    assert_eq!(updater.state(), UpdateState::Idle);
+}
+
+/// The settings' "Check for updates" checks again after the background
+/// check, keeps what the last one found, and never runs beside another.
+#[test]
+fn a_manual_check_runs_only_at_rest_and_keeps_its_outcome() {
+    let mut updater = AppUpdater::<FakeUpdate>::new(false);
+    assert!(updater.enabled());
+    assert_eq!(updater.outcome(), None);
+    // Before the background check is due.
+    assert_eq!(
+        updater.check_now(),
+        [UpdateOutput::Run(UpdateCommand::Check)]
+    );
+    assert_eq!(updater.state(), UpdateState::Checking);
+    // A second one while it runs, and the background one when it falls
+    // due, do nothing.
+    assert!(updater.check_now().is_empty());
+    assert!(updater.start().is_empty());
+    assert!(updater.on_check_result(Ok(None)).is_empty());
+    assert_eq!(updater.outcome(), Some(&CheckOutcome::UpToDate));
+
+    // Again once the first one said "up to date".
+    assert_eq!(
+        updater.check_now(),
+        [UpdateOutput::Run(UpdateCommand::Check)]
+    );
+    assert_eq!(updater.outcome(), None);
+    updater.on_check_result(Err("operation timed out".into()));
+    assert_eq!(updater.state(), UpdateState::Idle);
+    assert_eq!(
+        updater.outcome(),
+        Some(&CheckOutcome::Failed("operation timed out".into()))
+    );
+
+    // A found update downloads: no check until it fails or installs.
+    updater.check_now();
+    updater.on_check_result(Ok(Some(FakeUpdate("1.2.0"))));
+    assert_eq!(updater.state(), UpdateState::Downloading);
+    assert!(updater.check_now().is_empty());
+    updater.on_download_result(Ok(Vec::new()));
+    assert_eq!(updater.state(), UpdateState::Ready);
+    assert!(!updater.can_check());
+    assert!(updater.check_now().is_empty());
+    updater.apply();
+    assert!(updater.check_now().is_empty());
+
+    // Installed, the relaunch failed: a check would download it again.
+    updater.on_install_result(Ok(()));
+    updater.on_relaunch_failed("spawn failed".into());
+    assert_eq!(updater.state(), UpdateState::Idle);
+    assert_eq!(updater.outcome(), Some(&CheckOutcome::RestartNeeded));
+    assert!(updater.check_now().is_empty());
+}
+
+#[test]
+fn a_failed_download_is_the_outcome_too() {
+    let mut updater = AppUpdater::<FakeUpdate>::new(false);
+    updater.start();
+    updater.on_check_result(Ok(Some(FakeUpdate("1.2.0"))));
+    updater.on_download_result(Err("connection reset".into()));
+    assert_eq!(
+        updater.outcome(),
+        Some(&CheckOutcome::Failed("connection reset".into()))
+    );
+    assert!(updater.can_check());
 }
 
 #[test]
