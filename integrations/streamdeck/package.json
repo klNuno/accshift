@@ -1,6 +1,6 @@
 {
   "name": "accshift-streamdeck",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "description": "Stream Deck plugin for accshift: one key per account.",

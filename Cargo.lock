@@ -112,7 +112,7 @@ dependencies = [
 
 [[package]]
 name = "accshift-app"
-version = "1.0.5"
+version = "2.0.0"
 dependencies = [
  "accshift-core",
  "accshift-theme",
@@ -149,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "accshift-cli"
-version = "1.0.5"
+version = "2.0.0"
 dependencies = [
  "accshift-app",
  "accshift-core",
@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "accshift-core"
-version = "1.0.5"
+version = "2.0.0"
 dependencies = [
  "dirs",
  "fs4",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "accshift-egui"
-version = "1.0.5"
+version = "2.0.0"
 dependencies = [
  "accshift-app",
  "accshift-core",
@@ -223,7 +223,7 @@ dependencies = [
 
 [[package]]
 name = "accshift-theme"
-version = "1.0.5"
+version = "2.0.0"
 dependencies = [
  "serde",
  "serde_json",
