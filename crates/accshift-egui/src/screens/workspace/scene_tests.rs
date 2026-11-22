@@ -23,10 +23,15 @@ pub(super) struct Run {
 
 impl Run {
     pub fn new(scene: &str, scale: f32) -> Run {
+        Self::with_scene(scene, scale, |_| {})
+    }
+
+    fn with_scene(scene: &str, scale: f32, configure: impl FnOnce(&mut harness::Scene)) -> Run {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("parity/scenes")
             .join(format!("{scene}.json"));
-        let scene = harness::load(&path).unwrap();
+        let mut scene = harness::load(&path).unwrap();
+        configure(&mut scene);
         let size = vec2(scene.viewport.width, scene.viewport.height);
         let ctx = Context::default();
         let screen = Screen::for_scene(&ctx, &scene).unwrap();
@@ -1242,4 +1247,65 @@ fn a_setup_panel_past_the_last_row_scrolls_into_view() {
         on_screen <= 300.0 - super::PAD_BOTTOM,
         "the panel ends at {on_screen}, past the 300 px window"
     );
+}
+
+#[test]
+fn a_long_setup_error_stays_visible_after_its_card_scrolls_offscreen() {
+    let mut run = Run::with_scene("add-riot-bottom-pt-500", 1.0, |scene| {
+        let path = "Riot Games redirected profile data\\".repeat(19);
+        *scene.setup.as_mut().unwrap().last_mut().unwrap() = serde_json::json!({
+            "setupId": "riot-setup-1",
+            "state": "failed",
+            "accountId": "",
+            "accountDisplayName": "",
+            "errorMessage": format!("Could not open C:\\{path}RiotClientSettings.yaml. The system cannot find the path specified. (os error 3)"),
+        });
+    });
+    run.settle();
+    run.click(pos2(284.0, 18.0));
+    run.click(pos2(55.0, 18.0));
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let bottom = loop {
+        let ws = run.workspace();
+        if let Some(bottom) = ws.extension_bottom.filter(|bottom| {
+            ws.layout
+                .last()
+                .is_some_and(|(_, card)| bottom - card.bottom() > run.size.y)
+        }) {
+            break bottom;
+        }
+        assert!(Instant::now() < deadline, "the setup error never opened");
+        run.frame();
+        std::thread::sleep(Duration::from_millis(20));
+    };
+
+    run.send(Event::PointerMoved(pos2(410.0, 230.0)));
+    run.send(Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, -2000.0),
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+        modifiers: Modifiers::NONE,
+    });
+    run.frame();
+    run.settle();
+    let out = run.frame();
+    let ws = run.workspace();
+    let card = ws.layout.last().unwrap().1;
+    let view_top = ws.scroll() - super::PAD_TOP;
+    assert!(
+        card.bottom() + 32.0 < view_top && view_top < bottom,
+        "the view starts at {view_top} with the card ending at {} and the panel at {bottom}",
+        card.bottom()
+    );
+    assert_eq!(ws.extension_bottom, Some(bottom));
+    let close = accshift_app::i18n::translate(accshift_app::i18n::Locale::Pt, "common.close");
+    assert!(out.shapes.iter().any(|entry| {
+        matches!(&entry.shape, egui::Shape::Text(text) if text.galley.text() == close)
+            && entry
+                .shape
+                .visual_bounding_rect()
+                .intersects(entry.clip_rect)
+    }));
 }

@@ -2,6 +2,7 @@
 
 #[allow(unused_imports)]
 use super::*;
+use crate::platforms::RIOT_SETUP_NOT_PERSISTED;
 
 /// Where the detached setup launch of a profile stands. Kept in memory: a
 /// setup does not survive an app restart anyway.
@@ -133,11 +134,6 @@ pub(super) fn relaunch_after_quit(
     let launched = launch();
     work.and(launched)
 }
-
-/// The setup poll's message while the client is signed in without keeping
-/// the login. The app shows its own translation for it.
-pub const SETUP_NOT_PERSISTED: &str =
-    "Check 'Stay signed in' in the Riot Client, then sign out and sign back in.";
 
 /// Whether the login is kept ("Stay signed in"): the API says so, or the
 /// settings file holds a PSL refresh token. The token wins over an API
@@ -446,7 +442,7 @@ pub(super) fn get_profile_setup_status_internal(
         let (state, error_msg) = if !has_lockfile {
             ("waiting_for_client", "")
         } else if login_state.logged_in && !persisted {
-            ("waiting_for_login", SETUP_NOT_PERSISTED)
+            ("waiting_for_login", RIOT_SETUP_NOT_PERSISTED)
         } else {
             ("waiting_for_login", "")
         };

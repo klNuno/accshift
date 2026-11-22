@@ -580,7 +580,7 @@ fn roblox_offers_the_quick_login_code() {
 fn riot_translates_the_stay_signed_in_message() {
     let mut rig = Rig::new("riot");
     let mut started = status("riot-1", "waiting_for_login");
-    started.error_message = Some(accshift_core::platforms::riot::SETUP_NOT_PERSISTED.into());
+    started.error_message = Some(accshift_core::platforms::RIOT_SETUP_NOT_PERSISTED.into());
     rig.with_ctx(0, |flow, ctx, _| flow.start(ctx, "riot", started));
     let content = rig
         .flow

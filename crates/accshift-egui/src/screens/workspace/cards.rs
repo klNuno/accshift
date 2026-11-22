@@ -354,7 +354,13 @@ impl CardPass<'_> {
         if let Some(avatar) = &avatar {
             self.keep_for_ghosts(ws.ghost.as_ref(), p, avatar);
         }
-        if !visible {
+        // The forced setup panel can still fill the viewport below its card.
+        let forced_setup = self
+            .input
+            .add_flow
+            .forced_id
+            .is_some_and(|id| matches!(&p.node, Node::Account(a) if a.account.id == id));
+        if !visible && !forced_setup {
             self.sense_hidden(ui, p, screen, id, avatar.as_ref());
             return;
         }

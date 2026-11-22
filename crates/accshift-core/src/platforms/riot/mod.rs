@@ -58,7 +58,6 @@ pub use self::rollback::{sweep_rollback_dirs, RollbackSweepStats};
 pub use self::session::{expired_profile_ids, session_health, SessionHealth};
 pub use self::setup::{
     begin_profile_setup, cancel_profile_setup, capture_profile, get_profile_setup_status,
-    SETUP_NOT_PERSISTED,
 };
 pub use self::switch::switch_profile;
 
