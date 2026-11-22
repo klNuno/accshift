@@ -92,6 +92,7 @@ impl Runner {
                 overlay_out.platform_output.ime,
             )
         });
+        let overlay_captures = live.shell.overlay_captures();
         #[cfg(target_os = "linux")]
         if let Some(edge) = resize_edge(live) {
             out.platform_output.cursor_icon = edge.cursor();
@@ -101,14 +102,20 @@ impl Runner {
             ime.rect = ime.rect * zoom;
             ime.cursor_rect = ime.cursor_rect * zoom;
         }
-        if let Some((_, overlay_ppp, Some(ime))) = &overlay_draw {
-            // Convert from overlay points into stage ctx points so egui-winit's
-            // `pixels_per_point` multiplier lands on the overlay's physical pixels.
-            let ratio = *overlay_ppp / out.pixels_per_point;
-            let mut ime = *ime;
-            ime.rect = ime.rect * ratio;
-            ime.cursor_rect = ime.cursor_rect * ratio;
-            out.platform_output.ime = Some(ime);
+        let overlay_draw = overlay_draw.map(|(prims, overlay_ppp, ime)| {
+            // Overlay points into stage points, so egui-winit's
+            // `pixels_per_point` lands on the overlay's physical pixels.
+            let ratio = overlay_ppp / out.pixels_per_point;
+            out.platform_output.ime = crate::overlay_output::merge_ime(
+                out.platform_output.ime,
+                ime,
+                ratio,
+                overlay_captures,
+            );
+            (prims, overlay_ppp)
+        });
+        if overlay_draw.is_none() && overlay_captures {
+            out.platform_output.ime = None;
         }
         live.state.handle_platform_output_with_event_loop(
             &live.window,
@@ -128,7 +135,7 @@ impl Runner {
                 .is_some_and(|v| v.repaint_delay.is_zero());
         let commands = viewport_output.map(|v| v.commands).unwrap_or_default();
         let prims = ctx.tessellate(out.shapes, out.pixels_per_point);
-        let overlay_active = overlay_draw.as_ref().is_some_and(|(p, _, _)| !p.is_empty());
+        let overlay_active = overlay_draw.as_ref().is_some_and(|(p, _)| !p.is_empty());
         let tessellated = Instant::now();
         let rasterized;
         let mut damaged_px = 0usize;
@@ -211,7 +218,7 @@ impl Runner {
             } else {
                 tiles
             };
-            if let Some((overlay_prims, overlay_ppp, _)) = &overlay_draw {
+            if let Some((overlay_prims, overlay_ppp)) = &overlay_draw {
                 let mut overlay_textures = std::mem::take(&mut live.overlay_textures);
                 let has_backdrop = overlay_prims
                     .iter()

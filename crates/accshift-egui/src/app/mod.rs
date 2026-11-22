@@ -345,6 +345,9 @@ pub struct AppModel {
     overlay_output: Option<egui::FullOutput>,
     /// Whether the overlay pass painted shapes last frame (keeps fade-outs running).
     overlay_active: bool,
+    /// Whether an overlay takes all the input this frame (PIN lock,
+    /// streamer mode): its IME and focus win over the stage's.
+    overlay_captures: bool,
 }
 
 impl Drop for AppModel {
@@ -364,6 +367,11 @@ impl AppModel {
     pub fn take_overlay(&mut self) -> Option<(Context, egui::FullOutput)> {
         let out = self.overlay_output.take()?;
         Some((self.overlay_ctx.clone(), out))
+    }
+
+    /// Whether an overlay takes the input this frame.
+    pub fn overlay_captures(&self) -> bool {
+        self.overlay_captures
     }
 
     pub fn booted(&self) -> Option<&Booted> {

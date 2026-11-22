@@ -301,6 +301,7 @@ impl AppModel {
             overlay_fonts_cjk: None,
             overlay_output: None,
             overlay_active: false,
+            overlay_captures: false,
         }
     }
 

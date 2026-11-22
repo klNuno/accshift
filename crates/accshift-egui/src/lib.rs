@@ -7,6 +7,7 @@ pub mod bench;
 pub mod clipboard;
 pub mod harness;
 pub mod icons;
+pub mod overlay_output;
 pub mod screens;
 #[cfg(feature = "software")]
 pub mod soft;
@@ -251,6 +252,15 @@ impl Shell {
         match &mut self.screen {
             Screen::App(app) => app.take_overlay(),
             _ => None,
+        }
+    }
+
+    /// Whether an overlay takes the input this frame: its IME and its
+    /// AccessKit focus win over the stage's.
+    pub fn overlay_captures(&self) -> bool {
+        match &self.screen {
+            Screen::App(app) => app.overlay_captures(),
+            _ => false,
         }
     }
 

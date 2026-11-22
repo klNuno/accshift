@@ -368,6 +368,8 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                 ui.allocate_rect(shield, egui::Sense::click_and_drag());
             });
     }
+    // Under the lock and streamer mode the stage gets no input at all.
+    app.overlay_captures = secure.pin.is_some() || streaming;
     paint_obscured(ui, &ctx, window, secure.obscured || streaming);
     let want_overlay = tour_open
         || secure.pin.is_some()
