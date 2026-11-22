@@ -461,7 +461,7 @@ fn afk_overlay_fades_in_after_idle_frames() {
             .expect("AFK overlay transition state present");
     assert!(
         afk_opacity < 0.5,
-        "AFK overlay must fade in from 0 instead of snapping to 1 (got {afk_opacity})"
+        "AFK overlay must fade in from below half opacity"
     );
 }
 
