@@ -171,6 +171,16 @@ pub fn platform_marks(
     platform: &str,
 ) -> Result<Vec<SessionMarkInfo>, String> {
     let cfg = config::load_config(app.as_ref());
+    let mut stored = cfg.session_marks.get(platform).cloned().unwrap_or_default();
+    if platform == "steam" {
+        // Steam signed the account in after the mark: from accshift or by
+        // hand, the saved session works again.
+        let stamps = super::steam::steam_sign_in_times(app.clone());
+        stored.retain(|id, mark| {
+            mark.state != SessionState::Expired
+                || !super::steam::session::mark_is_stale(&stamps, id, mark.detected_at)
+        });
+    }
     let offline: Vec<(String, SessionState)> = match platform {
         "steam" => super::steam::password_needed_steam_ids(app.clone())
             .into_iter()
@@ -181,7 +191,7 @@ pub fn platform_marks(
             .map(|id| (id, SessionState::PasswordNeeded))
             .collect(),
     };
-    Ok(merge_marks(cfg.session_marks.get(platform), offline))
+    Ok(merge_marks(Some(&stored), offline))
 }
 
 /// One read of the launcher's state after a switch.

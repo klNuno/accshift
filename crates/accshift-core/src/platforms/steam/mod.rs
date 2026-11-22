@@ -133,6 +133,14 @@ fn log_switch_requested(
     current
 }
 
+/// Last sign-in time (Unix s) of each Steam id in `loginusers.vdf`. No Steam
+/// install or an unreadable file reads as none.
+pub fn steam_sign_in_times(app_handle: AppCtx) -> std::collections::BTreeMap<String, u64> {
+    resolve_steam_path(&app_handle)
+        .map(|path| session::sign_in_times(&path))
+        .unwrap_or_default()
+}
+
 /// Steam ids whose login Steam does not remember (`RememberPassword` "0").
 /// No Steam install or an unreadable file reads as none.
 pub fn password_needed_steam_ids(app_handle: AppCtx) -> Vec<String> {

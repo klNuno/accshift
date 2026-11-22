@@ -59,7 +59,7 @@ fn entries_are_found_by_account_name() {
     let entry = entry_for_account(LOGINUSERS, "Remembered").unwrap();
     assert_eq!(entry.steam_id, "76561198000000001");
     assert_eq!(entry.timestamp, Some(1_700_000_000));
-    assert!(entry.most_recent);
+    assert_eq!(entry.most_recent, Some(true));
     assert_eq!(entry.remember_password, Some(true));
     assert!(worth_watching(&entry));
     let forgetful = entry_for_account(LOGINUSERS, "forgetful").unwrap();
@@ -74,7 +74,7 @@ fn entry(timestamp: Option<u64>, most_recent: bool) -> LoginEntry {
     LoginEntry {
         steam_id: "76561198000000003".into(),
         timestamp,
-        most_recent,
+        most_recent: Some(most_recent),
         remember_password: None,
     }
 }
@@ -138,4 +138,49 @@ fn a_missing_timestamp_reads_pending_and_never_counts_toward_a_mark() {
     // The `odd` fixture entry has no Timestamp at all.
     let odd = entry_for_account(LOGINUSERS, "odd").unwrap();
     assert_eq!(watch_step(&odd, Some(&odd), true), WatchStep::Pending);
+}
+
+/// Steam as of 2026 writes no `MostRecent` key at all in `loginusers.vdf`
+/// (AccountName, PersonaName, RememberPassword, WantsOfflineMode,
+/// SkipOfflineModeWarning, AutoLogin, Timestamp only).
+const LOGINUSERS_NO_MOST_RECENT: &str = r#""users"
+{
+	"76561198000000001"
+	{
+		"AccountName"		"current"
+		"PersonaName"		"Current"
+		"RememberPassword"		"1"
+		"WantsOfflineMode"		"0"
+		"SkipOfflineModeWarning"		"0"
+		"AutoLogin"		"1"
+		"Timestamp"		"1700000200"
+	}
+}
+"#;
+
+#[test]
+fn a_sign_in_without_any_most_recent_key_reads_signed_in() {
+    let mut before = entry_for_account(LOGINUSERS_NO_MOST_RECENT, "current").unwrap();
+    before.timestamp = Some(1_700_000_100);
+    let now = entry_for_account(LOGINUSERS_NO_MOST_RECENT, "current").unwrap();
+    assert_eq!(watch_step(&before, Some(&now), true), WatchStep::SignedIn);
+    // Not moved and no flag: still not signed in.
+    assert_eq!(watch_step(&now, Some(&now), true), WatchStep::NotSignedIn);
+}
+
+#[test]
+fn an_expired_mark_older_than_the_last_sign_in_is_stale() {
+    let stamps = sign_in_times_in(LOGINUSERS_NO_MOST_RECENT);
+    // Timestamp 1700000200 s: a mark from before that sign-in is stale.
+    assert!(mark_is_stale(
+        &stamps,
+        "76561198000000001",
+        1_700_000_100_000
+    ));
+    assert!(!mark_is_stale(
+        &stamps,
+        "76561198000000001",
+        1_700_000_300_000
+    ));
+    assert!(!mark_is_stale(&stamps, "76561198000000009", 0));
 }
