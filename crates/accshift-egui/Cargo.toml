@@ -14,7 +14,7 @@ startup-bench = []
 # (src/harness/) that drives the app on the mock backend, and
 # `ACCSHIFT_EGUI_MARKS`. The crate's own tests get the runner through
 # `cfg(test)`, without the flag.
-harness = []
+harness = ["accshift-app/mock"]
 # The renderer: egui meshes rasterized on the CPU and blitted with softbuffer
 # (GDI on Windows), no GPU driver loaded.
 software = ["dep:egui-winit", "dep:softbuffer", "dep:egui_software_backend", "dep:winit"]
@@ -138,3 +138,6 @@ windows = { version = "0.62", default-features = false, features = [
 [build-dependencies]
 serde_json = "1"
 tauri-winres = "0.3"
+
+[dev-dependencies]
+accshift-app = { path = "../accshift-app", features = ["mock"] }

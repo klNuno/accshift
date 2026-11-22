@@ -113,6 +113,7 @@ impl Updates {
     /// `up-to-date`, `failed`, `ready`) to show the about card. The updater
     /// stays off: a click on the card fails its check, nothing is fetched
     /// or installed.
+    #[cfg(any(test, feature = "harness"))]
     pub(super) fn scene(state: &str) -> Result<Self, String> {
         let mut updates = Self::off();
         updates.flow = AppUpdater::new(false);
@@ -178,6 +179,7 @@ impl Updates {
 
 /// The update a scene or a test puts in place: 2.0.0 over 1.0.5, nothing
 /// to download from.
+#[cfg(any(test, feature = "harness"))]
 fn stand_in_update() -> Update {
     use accshift_app::lifecycle::updater::InstallContext;
     Update {

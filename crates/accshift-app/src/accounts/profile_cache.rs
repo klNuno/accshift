@@ -30,13 +30,18 @@ pub enum UrlPolicy {
 }
 
 impl UrlPolicy {
-    /// An absolute path, a `file://` URL, or a repo-relative mock avatar.
+    /// An absolute path, a `file://` URL, or (in tests / `mock` builds) a
+    /// repo-relative mock avatar.
     pub fn is_local_file(url: &str) -> bool {
         let path = url.strip_prefix("file://").unwrap_or(url);
-        !path.is_empty()
-            && (std::path::Path::new(path).is_absolute()
-                || path.starts_with('/')
-                || path.starts_with(crate::mock::AVATAR_DIR))
+        if path.is_empty() {
+            return false;
+        }
+        #[cfg(any(test, feature = "mock"))]
+        if path.starts_with(crate::mock::AVATAR_DIR) {
+            return true;
+        }
+        std::path::Path::new(path).is_absolute() || path.starts_with('/')
     }
 
     pub fn accepts(self, url: &str) -> bool {

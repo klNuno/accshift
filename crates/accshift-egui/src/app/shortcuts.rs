@@ -35,8 +35,10 @@ use accshift_app::error::BackendResult;
 use accshift_app::jobs::{Pending, Poll};
 use accshift_app::lifecycle::deep_link::DeepLinkSwitchRequest;
 use accshift_app::platforms::PlatformAccount;
+#[cfg(any(test, feature = "harness"))]
+use accshift_app::shortcuts::Outcome;
 use accshift_app::shortcuts::{
-    self, Combo, FakeRegistrar, GlobalShortcuts, Key as ComboKey, Outcome, Registrar, RowStatus,
+    self, Combo, FakeRegistrar, GlobalShortcuts, Key as ComboKey, Registrar, RowStatus,
     ShortcutService, ShortcutTarget,
 };
 use accshift_app::stores::ClientStores;
@@ -143,6 +145,7 @@ pub(super) struct Shortcuts {
 
 impl Shortcuts {
     /// The mock's fake registrar, refusing what `setup` lists.
+    #[cfg(any(test, feature = "harness"))]
     pub(super) fn mock(failures: &[(String, String)]) -> Self {
         let message = failures
             .iter()
