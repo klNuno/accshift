@@ -153,3 +153,22 @@ fn a_release_folder_migrates_and_boots_the_same_on_the_session_thread() {
     assert_eq!(files, contents(&job_dir.root));
 }
 
+#[test]
+fn a_release_folder_keeps_its_window_geometry_through_the_session_thread() {
+    let ctx = Context::default();
+    let dir = release_folder("geometry");
+    let backend = Arc::new(RealBackend::with_context(dir.clone()));
+    let session = super::super::session::start(&backend, |_| None);
+    // The pre-1.0 file's size, not the default one.
+    assert_eq!(session.saved.size, Some((1180.0, 760.0)));
+    assert_eq!(session.legacy.recv().unwrap().map(|read| read.notes), None);
+    session.thread.join().unwrap();
+
+    let mut app = AppModel::from_backend(&ctx, backend, Clock::wall(), Some(session.early));
+    app.wait_boot(&ctx).expect("early boot");
+    // Migrated into the split files, which hold the same geometry.
+    let legacy = accshift_core::storage::legacy_config_path(dir.as_ref()).unwrap();
+    assert!(!legacy.exists());
+    let after = accshift_core::config::load_window(dir.as_ref());
+    assert_eq!(after, session.saved);
+}

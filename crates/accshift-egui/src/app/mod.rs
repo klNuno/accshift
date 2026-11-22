@@ -45,6 +45,7 @@ pub mod personas;
 pub mod platforms;
 mod saves;
 mod secure;
+pub mod session;
 pub mod settings_panel;
 mod shell;
 pub mod shortcuts;

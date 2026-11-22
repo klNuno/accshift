@@ -130,18 +130,11 @@ fn main() {
     // corrupt LevelDB panics inside the reader, which catches it, and the
     // hook would report it. The boot job follows on the same thread, after
     // the hook: the window shows once boot is done, and no longer waits for
-    // its own creation before boot starts (about 11 ms in the bench).
-    let (early, boot_task) = match real {
-        Some(_) => {
-            let (early, task) = accshift_egui::app::early_boot();
-            (Some(early), Some(task))
-        }
-        None => (None, None),
-    };
+    // its own creation before boot starts (about 11 ms in the bench). The
+    // saved geometry is read before the thread starts (app/session.rs).
+    bench::mark("backend");
     let session = real.as_ref().map(|backend| {
-        let backend = Arc::clone(backend);
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
+        accshift_egui::app::session::start(backend, move |backend| {
             let ctx = backend.context().as_ref();
             let legacy = match legacy_root {
                 Some(root) => legacy_web_storage::read_for_boot_with(ctx, || {
@@ -150,18 +143,19 @@ fn main() {
                 None => legacy_web_storage::read_for_boot(ctx, BUNDLE_IDENTIFIER),
             };
             backend.begin_session();
-            let _ = tx.send(legacy);
-            if let Some(task) = boot_task {
-                task.run(backend.as_ref());
-            }
-        });
-        rx
+            legacy
+        })
     });
-    bench::mark("backend");
-    let saved = real
-        .as_ref()
-        .map(|backend| config::load_window(backend.context().as_ref()));
     bench::mark("saved_window");
+    let saved = session.as_ref().map(|session| session.saved);
+    let (early, legacy_rx, session_thread) = match session {
+        Some(session) => (
+            Some(session.early),
+            Some(session.legacy),
+            Some(session.thread),
+        ),
+        None => (None, None, None),
+    };
 
     let mut viewport = window::chrome(
         egui::ViewportBuilder::default()
@@ -233,7 +227,7 @@ fn main() {
             // The real app folders, through accshift-core.
             Some(backend) => {
                 // A panic on the thread drops the sender: no legacy storage.
-                let legacy = session.and_then(|rx| rx.recv().ok()).flatten();
+                let legacy = legacy_rx.and_then(|rx| rx.recv().ok()).flatten();
                 if let Some(read) = &legacy {
                     // Places and key names, never a value.
                     let _ = accshift_core::logging::append_app_log(
@@ -304,6 +298,11 @@ fn main() {
     )
     .map_err(|err| err.to_string());
 
+    // The model's jobs were joined with it; the boot ran on its own thread
+    // and may still be migrating the config.
+    if let Some(thread) = session_thread {
+        let _ = thread.join();
+    }
     if let Err(err) = result {
         eprintln!("{err}");
         std::process::exit(1);
