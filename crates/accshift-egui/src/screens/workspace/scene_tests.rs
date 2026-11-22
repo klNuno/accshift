@@ -1124,3 +1124,40 @@ fn remounts_drop_the_state_of_the_old_mounts() {
         );
     }
 }
+
+/// The rail of a short window with four platforms and the Shortcuts tab:
+/// Epic sits under Help and Logs until the wheel scrolls the list, then a
+/// click opens it (unscrolled, the same point is Roblox).
+#[test]
+fn the_settings_rail_scrolls_to_its_last_platform() {
+    fn wait(run: &mut Run, ms: u64) {
+        let until = Instant::now() + Duration::from_millis(ms);
+        while Instant::now() < until {
+            run.frame();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    let active = |run: &Run| match &run.screen {
+        Screen::App(app) => app
+            .settings_panel()
+            .map(|p| p.tab_bar.active_tab().to_string()),
+        _ => panic!("not the app"),
+    };
+    let mut run = Run::new("settings-epic-fr-light-100", 1.0);
+    run.settle();
+    wait(&mut run, 600);
+    run.click(pos2(87.0, 18.0));
+    wait(&mut run, 700);
+    run.send(Event::PointerMoved(pos2(93.0, 300.0)));
+    run.send(Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, -300.0),
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+        modifiers: Modifiers::NONE,
+    });
+    wait(&mut run, 400);
+    run.click(pos2(93.0, 365.0));
+    wait(&mut run, 300);
+    assert_eq!(active(&run).as_deref(), Some("platform:epic"));
+}
