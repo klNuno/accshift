@@ -583,3 +583,45 @@ fn overlay_keeps_the_window_size_on_the_first_frame_of_a_zoom_change() {
         ctx.zoom_factor()
     );
 }
+
+#[test]
+fn overlay_sees_modifiers_pressed_before_it_showed() {
+    let ctx = Context::default();
+    let mut shell = demo_shell(
+        &ctx,
+        json!({
+            "animations": "off",
+            "uiScalePercent": 150,
+            "inactivityBlurSeconds": 1,
+        }),
+        false,
+        false,
+    );
+    let size = [860.0, 440.0];
+    let mut t = 1.0;
+    for _ in 0..3 {
+        t += 0.05;
+        step_shell(&mut shell, &ctx, size, t, Vec::new());
+    }
+    // Shift goes down while no overlay runs.
+    t += 0.05;
+    step_shell(
+        &mut shell,
+        &ctx,
+        size,
+        t,
+        vec![Event::ModifiersChanged(Modifiers::SHIFT)],
+    );
+    assert!(shell.take_overlay().is_none(), "no overlay pass yet");
+    assert!(ctx.input(|i| i.modifiers.shift));
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    t += 0.05;
+    step_shell(&mut shell, &ctx, size, t, Vec::new());
+    let (overlay_ctx, mut overlay_out) =
+        shell.take_overlay().expect("the AFK overlay runs its pass");
+    overlay_out.textures_delta.clear();
+    assert!(
+        overlay_ctx.input(|i| i.modifiers.shift),
+        "Shift held on the window must reach the overlay (Shift+click extends a selection in the PIN)"
+    );
+}

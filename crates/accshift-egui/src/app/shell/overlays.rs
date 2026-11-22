@@ -135,11 +135,13 @@ pub(super) fn run_overlay_pass(
     // arrived, not yet the one this pass applies.
     let input_zoom = crate::zoom::input_frame(ctx);
     let (focused, viewports, events) = ctx.input(|i| {
-        (
-            i.focused,
-            i.raw.viewports.clone(),
-            crate::zoom::scale_events(&i.events, input_zoom),
-        )
+        // The window's modifiers first: the overlay only sees the events of
+        // the frames it runs, and they may have changed in between.
+        let modifiers = egui::Event::ModifiersChanged(i.modifiers);
+        let events = std::iter::once(modifiers)
+            .chain(crate::zoom::scale_events(&i.events, input_zoom))
+            .collect();
+        (i.focused, i.raw.viewports.clone(), events)
     });
     let overlay_raw = egui::RawInput {
         screen_rect: Some(overlay_screen),
