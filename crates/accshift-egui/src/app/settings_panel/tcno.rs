@@ -2,7 +2,7 @@
 //! folder asks and the report once imported. The import itself runs in the
 //! app (`app::tcno_flow`), behind the backup's boundary.
 
-use accshift_app::actions::dialogs::ConfirmConfig;
+use accshift_app::actions::dialogs::{ConfirmConfig, CONFIRM_ACCENT};
 use accshift_app::i18n::{Locale, TranslationValue};
 use accshift_app::text::Text;
 use accshift_app::types::{TcNoImportReport, TcNoPreview};
@@ -45,7 +45,8 @@ pub fn tcno_confirm(preview: &TcNoPreview) -> ConfirmConfig {
             ],
         ),
         confirm_label: Some(Text::key("settings.tcnoConfirm")),
-        confirm_color: None,
+        // An import only adds: not the destructive red.
+        confirm_color: Some(CONFIRM_ACCENT.to_string()),
     }
 }
 
@@ -118,6 +119,16 @@ mod tests {
                 assert_ne!(text, key, "{locale:?}: {key} is missing");
             }
         }
+    }
+
+    #[test]
+    fn the_tcno_confirm_is_not_styled_as_destructive() {
+        // An import only adds: its button is the accent one, not the red.
+        let config = tcno_confirm(&preview());
+        assert_eq!(
+            config.confirm_color.as_deref(),
+            Some(accshift_app::actions::dialogs::CONFIRM_ACCENT)
+        );
     }
 
     #[test]
