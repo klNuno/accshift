@@ -14,7 +14,8 @@
 //! another kind, one that does not parse or one whose settings are not an
 //! object is refused before anything is written. It then copies the current
 //! files and their `.bak` recovery copies to
-//! `user/backups/pre-restore-<timestamp>/`, writes each file through a temp
+//! `user/backups/pre-restore-<timestamp>/` (on Unix, the owner's alone),
+//! writes each file through a temp
 //! file renamed over it, never copied over, and puts the files it already
 //! replaced back when a write fails, or says which of them it could not put
 //! back. Stores
@@ -28,9 +29,10 @@
 //! two files that declare one id: after a restore the loader makes the same
 //! choice on each OS as before, and a restore on the same PC overwrites the
 //! file it was taken from. The export leaves out no file a loader reads: one
-//! it cannot list, stat, read or name fails it, as does a backup too big for
-//! a restore to read. Before any write, the restore refuses the whole backup
-//! when a file name could leave its folder, cannot be written on this OS (a
+//! it cannot list, stat, read or name fails it, as do a link there, never
+//! followed, and a backup too big for a restore to read. Before any write,
+//! the restore refuses the whole backup when a file name could leave its
+//! folder, cannot be written on this OS (a
 //! Linux name holding `:` restored on Windows, a name too long), or
 //! may name the same file as another one in its folder (`A.json` and
 //! `a.json`, refused on every OS since a Linux folder can sit on a
@@ -340,18 +342,78 @@ fn read_in_budget(
     path: &Path,
     budget: &mut ReadBudget,
 ) -> std::io::Result<Result<Vec<u8>, String>> {
+    read_file_in_budget(fs::File::open(path)?, path, budget)
+}
+
+/// The bytes of `file`, opened at `path`, read no further than `budget`
+/// allows.
+fn read_file_in_budget(
+    file: fs::File,
+    path: &Path,
+    budget: &mut ReadBudget,
+) -> std::io::Result<Result<Vec<u8>, String>> {
     use std::io::Read;
     let mut body = Vec::new();
-    fs::File::open(path)?
-        .take(budget.0.saturating_add(1))
+    file.take(budget.0.saturating_add(1))
         .read_to_end(&mut body)?;
     Ok(budget.spend(body.len() as u64, path).map(|()| body))
+}
+
+/// `path` opened as the file its folder holds under that name; `None` when
+/// the name is a link. The check is made on the handle read from, so a link
+/// put in place after an earlier check is caught too.
+#[cfg(unix)]
+fn open_unlinked(path: &Path) -> std::io::Result<Option<fs::File>> {
+    use std::os::unix::fs::MetadataExt;
+    let file = fs::File::open(path)?;
+    let opened = file.metadata()?;
+    // Checked after the open: the name still holds the very file opened.
+    let entry = fs::symlink_metadata(path)?;
+    let same = !entry.file_type().is_symlink()
+        && entry.dev() == opened.dev()
+        && entry.ino() == opened.ino();
+    Ok(same.then_some(file))
+}
+
+/// `path` opened as the file its folder holds under that name; `None` when
+/// the name is a link. The handle is the link itself when it is one, never
+/// the file it names.
+#[cfg(windows)]
+fn open_unlinked(path: &Path) -> std::io::Result<Option<fs::File>> {
+    use std::os::windows::fs::OpenOptionsExt;
+    /// `FILE_FLAG_OPEN_REPARSE_POINT`.
+    const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(OPEN_REPARSE_POINT)
+        .open(path)?;
+    let linked = file.metadata()?.file_type().is_symlink();
+    Ok((!linked).then_some(file))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_unlinked(path: &Path) -> std::io::Result<Option<fs::File>> {
+    if fs::symlink_metadata(path)?.file_type().is_symlink() {
+        return Ok(None);
+    }
+    fs::File::open(path).map(Some)
+}
+
+/// The export's refusal of a theme or descriptor file that is a link: its
+/// text may be any file, the settings with their PIN hash too.
+fn linked_entry(path: &Path, loader: Loader) -> String {
+    format!(
+        "the {} file {} is a link, which a backup does not follow: replace it with the file itself",
+        loader.kind(),
+        path.display()
+    )
 }
 
 /// The store at `path` as [`read_json_if_exists`] reads it, its recovery
 /// copy served when it is missing or corrupt, with both reads bounded by
 /// `budget`: a file that grows after any check still stops at the limit. A
-/// corrupt store's bytes are given back once its copy is read instead.
+/// corrupt store's bytes are given back once its copy is read instead. Only
+/// a copy that is not there counts as none: one that cannot be read fails.
 fn read_store_in_budget(path: &Path, budget: &mut ReadBudget) -> Result<Option<Value>, String> {
     let primary = match read_in_budget(path, budget) {
         Ok(Ok(body)) => match serde_json::from_slice::<Value>(&body) {
@@ -374,7 +436,10 @@ fn read_store_in_budget(path: &Path, budget: &mut ReadBudget) -> Result<Option<V
                 Err(_) => budget.0 += body.len() as u64,
             },
             Ok(Err(too_big)) => return Err(too_big),
-            Err(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            // A copy the OS refuses may hold the only store: read as none,
+            // a restore would remove it.
+            Err(e) => return Err(format!("Could not read file {}: {e}", bak.display())),
         }
     }
     primary
@@ -385,7 +450,8 @@ fn read_store_in_budget(path: &Path, budget: &mut ReadBudget) -> Result<Option<V
 /// it. A file that is not JSON text loads nothing and is left out, and so
 /// are a folder and a file gone since `dir` was listed. A file whose metadata or bytes cannot
 /// be read, or whose name a backup cannot carry, fails the export rather
-/// than be left out, and so does one past the `budget`.
+/// than be left out, and so do one past the `budget` and a link, which is
+/// never followed.
 fn read_loaded_dir(
     dir: &Path,
     loader: Loader,
@@ -398,7 +464,8 @@ fn read_loaded_dir(
         if !loader.reads(&path) {
             continue;
         }
-        match fs::metadata(&path) {
+        match fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_symlink() => return Err(linked_entry(&path, loader)),
             // Past the budget: refused before it is read.
             Ok(meta) if meta.is_file() && meta.len() > budget.0 => {
                 return Err(too_big_at(&path));
@@ -420,8 +487,13 @@ fn read_loaded_dir(
                 path.display()
             ));
         };
-        let body = match read_in_budget(&path, budget) {
-            Ok(body) => body?,
+        let read = open_unlinked(&path).and_then(|file| match file {
+            Some(file) => read_file_in_budget(file, &path, budget).map(Some),
+            None => Ok(None),
+        });
+        let body = match read {
+            Ok(Some(body)) => body?,
+            Ok(None) => return Err(linked_entry(&path, loader)),
             Err(e) if gone(&e) => continue,
             Err(e) => return Err(format!("Could not read {}: {e}", path.display())),
         };
@@ -571,19 +643,20 @@ fn managed_file_at(app: &dyn AppContext, target: &Path) -> Result<Option<&'stati
 /// checks [`read_backup`] makes run first, so settings that are not an
 /// object, or two files only a case-sensitive folder keeps apart (`A.json`,
 /// `a.json`), fail the export rather than make a backup no restore reads,
-/// even on this PC. Answers the digest of the bytes written.
+/// even on this PC. Answers the digest of the bytes written. The file is
+/// renamed over `target` and nothing else: a `.bak` beside it is the
+/// user's, not a recovery copy.
 fn write_backup(backup: &BackupFile, target: &Path) -> Result<String, String> {
     check_contents(backup).map_err(|e| format!("{e}; a restore would refuse it"))?;
-    let body = serde_json::to_vec_pretty(backup)
-        .map_err(|e| format!("Could not encode the backup: {e}"))?;
     // read_backup refuses a bigger file: it would export but never restore.
-    if body.len() as u64 > MAX_JSON_STORE_BYTES {
-        return Err(format!(
-            "The backup would be {} bytes, too big for a restore to read (limit {MAX_JSON_STORE_BYTES})",
-            body.len()
-        ));
-    }
-    write_bytes_atomic(target, &body)?;
+    let body = encode_within(backup, MAX_JSON_STORE_BYTES)
+        .map_err(|e| format!("Could not encode the backup: {e}"))?
+        .ok_or_else(|| {
+            format!(
+                "The backup would pass {MAX_JSON_STORE_BYTES} bytes, too big for a restore to read"
+            )
+        })?;
+    write_bytes_replacing(target, &body)?;
     Ok(digest_of(&body))
 }
 
@@ -594,6 +667,59 @@ fn digest_of(bytes: &[u8]) -> String {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
+}
+
+#[cfg(test)]
+thread_local! {
+    static BEFORE_READ: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Test seam: runs what a test set to happen between a backup's size check
+/// and its read.
+fn before_read() {
+    #[cfg(test)]
+    if let Some(hook) = BEFORE_READ.with(|hook| hook.borrow_mut().take()) {
+        hook();
+    }
+}
+
+/// A buffer that refuses to grow past `limit` bytes.
+struct Bounded {
+    body: Vec<u8>,
+    limit: u64,
+    passed: bool,
+}
+
+impl std::io::Write for Bounded {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if (self.body.len() + bytes.len()) as u64 > self.limit {
+            self.passed = true;
+            return Err(std::io::Error::other("past the size limit"));
+        }
+        self.body.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// `value` encoded pretty, as `serde_json::to_vec_pretty` encodes it, or
+/// `None` when it passes `limit` bytes: the encoding stops there, so a
+/// store that pretty printing makes huge is never held whole.
+fn encode_within(value: &impl Serialize, limit: u64) -> Result<Option<Vec<u8>>, String> {
+    let mut out = Bounded {
+        body: Vec::new(),
+        limit,
+        passed: false,
+    };
+    match serde_json::to_writer_pretty(&mut out, value) {
+        Ok(()) => Ok(Some(out.body)),
+        Err(_) if out.passed => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 /// Reads and checks a backup file: refused when it is too big, does not
@@ -608,7 +734,20 @@ fn read_backup_digest(path: &Path) -> Result<(BackupFile, String), String> {
     if meta.len() > MAX_JSON_STORE_BYTES {
         return Err(format!("{} is too big to be a backup", path.display()));
     }
-    let raw = fs::read(path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
+    before_read();
+    // A file replaced since the check still stops at the limit: what is
+    // parsed and hashed is this one bounded read.
+    let raw = {
+        use std::io::Read;
+        let mut raw = Vec::new();
+        fs::File::open(path)
+            .and_then(|file| file.take(MAX_JSON_STORE_BYTES + 1).read_to_end(&mut raw))
+            .map_err(|e| format!("Could not read {}: {e}", path.display()))?;
+        raw
+    };
+    if raw.len() as u64 > MAX_JSON_STORE_BYTES {
+        return Err(format!("{} is too big to be a backup", path.display()));
+    }
     let head: Value = serde_json::from_slice(&raw)
         .map_err(|e| format!("{} is not a readable backup: {e}", path.display()))?;
     if head.get("kind").and_then(Value::as_str) != Some(BACKUP_KIND) {
@@ -810,8 +949,17 @@ impl PlannedWrite {
     }
 }
 
-fn encode(value: &Value) -> Result<Vec<u8>, String> {
-    serde_json::to_vec_pretty(value).map_err(|e| format!("Could not encode a store: {e}"))
+/// The bytes the restore writes for the store `id`. Written pretty, a store
+/// can pass the size its read refuses, and then never load again: such a
+/// store refuses the restore, its encoding stopped at the limit.
+fn encode_store(id: &str, value: &Value) -> Result<Vec<u8>, String> {
+    encode_within(value, MAX_JSON_STORE_BYTES)
+        .map_err(|e| format!("Could not encode a store: {e}"))?
+        .ok_or_else(|| {
+            format!(
+                "the {id} store would pass {MAX_JSON_STORE_BYTES} bytes once written, more than accshift reads"
+            )
+        })
 }
 
 fn read_previous(path: &Path) -> Result<Option<Vec<u8>>, String> {
@@ -850,23 +998,15 @@ fn plan_restore(app: &dyn AppContext, backup: &BackupFile) -> Result<Vec<Planned
             // cannot be read refuses the restore rather than drop the lock.
             let restored = settings_object(value)?;
             let current = read_json_if_exists::<Value>(&path)?;
-            Some(encode(&merged_settings(restored, current.as_ref()))?)
+            Some(encode_store(
+                id,
+                &merged_settings(restored, current.as_ref()),
+            )?)
         } else if value.is_null() {
             None
         } else {
-            Some(encode(value)?)
+            Some(encode_store(id, value)?)
         };
-        // Written pretty, a store can pass the size its read refuses, and
-        // then never load again.
-        if let Some(bytes) = next
-            .as_ref()
-            .filter(|b| b.len() as u64 > MAX_JSON_STORE_BYTES)
-        {
-            return Err(format!(
-                "the {id} store would be {} bytes once written, more than accshift reads (limit {MAX_JSON_STORE_BYTES})",
-                bytes.len()
-            ));
-        }
         let name = path.file_name().map(PathBuf::from).unwrap_or_default();
         plan.push(PlannedWrite::new(
             path,
@@ -913,6 +1053,39 @@ pub fn pre_restore_dir(app: &dyn AppContext, now_s: u64) -> Result<PathBuf, Stri
         dir = base.join(format!("{name}-{n}"));
     }
     Ok(dir)
+}
+
+/// Creates `dir` and the folders above it that are missing; on Unix, the
+/// owner's alone (`0700`): the pre-restore copies can hold settings a user
+/// kept from other users, PIN hash included.
+fn create_private_dir(dir: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    let created = {
+        use std::os::unix::fs::DirBuilderExt;
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+    };
+    #[cfg(not(unix))]
+    let created = fs::create_dir_all(dir);
+    created.map_err(|e| format!("Could not create {}: {e}", dir.display()))
+}
+
+/// Writes a pre-restore copy: in a folder of the owner's alone, and on Unix
+/// a file of the owner's alone (`0600`), never more open than its source.
+fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        create_private_dir(parent)?;
+    }
+    write_bytes_atomic(path, bytes)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("Could not restrict {}: {e}", path.display()))?;
+    }
+    Ok(())
 }
 
 /// A restore step a test can make fail.
@@ -1040,15 +1213,14 @@ fn restore_checked(
     let plan = plan_restore(app, &backup)?;
 
     let copy_dir = pre_restore_dir(app, now_s)?;
-    fs::create_dir_all(&copy_dir)
-        .map_err(|e| format!("Could not create {}: {e}", copy_dir.display()))?;
+    create_private_dir(&copy_dir)?;
     for write in &plan {
         if let Some(bytes) = &write.previous {
-            write_bytes_atomic(&copy_dir.join(&write.copy_as), bytes)?;
+            write_private(&copy_dir.join(&write.copy_as), bytes)?;
         }
         if let Some(bytes) = &write.previous_bak {
             let copy = copy_dir.join(&write.copy_as).with_extension("bak");
-            write_bytes_atomic(&copy, bytes)?;
+            write_private(&copy, bytes)?;
         }
     }
 
@@ -2649,6 +2821,189 @@ mod tests {
         let error = result.expect_err("STORE_SIZE: restored a store no read loads");
         assert!(error.message.contains(STORE_ACCOUNT_CARD_NOTES), "{error}");
         assert!(after == before, "a file was written");
+    }
+
+    #[test]
+    fn an_unreadable_recovery_copy_of_a_missing_store_fails_the_export() {
+        // Regression (BAK_LOCKED): any error on the `.bak` of a missing
+        // store read as no store, so the export said `null` and a restore
+        // removed the notes the copy held.
+        let app = ctx("bak-locked");
+        seed(&app);
+        let notes = client_store_path(&app, STORE_ACCOUNT_CARD_NOTES).unwrap();
+        let body = fs::read(&notes).unwrap();
+        fs::remove_file(&notes).unwrap();
+        let held = crate::test_fs::Unreadable::new(&backup_path(&notes), &body);
+        let target = app.0.join("out.json");
+        let result = export_backup(&app, &target);
+        let exists = target.exists();
+        drop(held);
+        // Once it reads, the copy stands in for the missing store.
+        let again = build_backup(&app, 1);
+        let _ = fs::remove_dir_all(&app.0);
+        let error = result.expect_err("BAK_LOCKED: exported the notes as empty");
+        assert!(error.contains("account-card-notes.bak"), "{error}");
+        assert!(!exists, "a backup was written");
+        assert_eq!(
+            again.unwrap().stores[STORE_ACCOUNT_CARD_NOTES],
+            json!({"765": "main account"})
+        );
+    }
+
+    #[test]
+    fn a_linked_theme_or_descriptor_fails_the_export_and_names_it() {
+        // Regression (LINKED): the folder read followed links, so `x.json`
+        // linked to the settings put their text, PIN hash included, in the
+        // backup.
+        for which in ["themes", "descriptors"] {
+            let app = ctx(&format!("linked-{which}"));
+            seed(&app);
+            let dir = if which == "themes" {
+                themes_dir(&app).unwrap()
+            } else {
+                crate::platforms::descriptor::user_dir(&app).unwrap()
+            };
+            let settings = client_store_path(&app, STORE_SETTINGS).unwrap();
+            let link = dir.join("x.json");
+            #[cfg(unix)]
+            let made = std::os::unix::fs::symlink(&settings, &link);
+            #[cfg(windows)]
+            let made = std::os::windows::fs::symlink_file(&settings, &link);
+            if made.is_err() {
+                // Windows without Developer Mode or admin rights makes no links.
+                let _ = fs::remove_dir_all(&app.0);
+                return;
+            }
+            let target = app.0.join("out.json");
+            let result = export_backup(&app, &target);
+            let text = fs::read_to_string(&target).unwrap_or_default();
+            let _ = fs::remove_dir_all(&app.0);
+            assert!(
+                !text.contains("pinHash"),
+                "LINKED: {which}: the settings went out through x.json"
+            );
+            let error = result.expect_err(&format!("LINKED: {which}: exported through the link"));
+            assert!(error.contains("x.json"), "{which}: {error}");
+        }
+    }
+
+    #[test]
+    fn an_export_leaves_the_file_beside_its_target_alone() {
+        // Regression (SIBLING): the export wrote through the store writer,
+        // which takes `setup.bak` for its own recovery copy of `setup.json`
+        // and removes it.
+        let app = ctx("export-sibling");
+        seed(&app);
+        let target = app.0.join("setup.json");
+        let sibling = app.0.join("setup.bak");
+        fs::write(&sibling, b"the user's own file").unwrap();
+        let result = export_backup(&app, &target);
+        let kept = fs::read(&sibling).ok();
+        let _ = fs::remove_dir_all(&app.0);
+        result.unwrap();
+        assert_eq!(
+            kept.as_deref(),
+            Some(&b"the user's own file"[..]),
+            "SIBLING: the export removed setup.bak"
+        );
+    }
+
+    /// `n` zeros as a JSON array, counting each one encoded.
+    struct Counted<'a>(&'a std::cell::Cell<usize>, usize);
+
+    impl serde::Serialize for Counted<'_> {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            use serde::ser::SerializeSeq;
+            let mut seq = s.serialize_seq(Some(self.1))?;
+            for _ in 0..self.1 {
+                self.0.set(self.0.get() + 1);
+                seq.serialize_element(&0u8)?;
+            }
+            seq.end()
+        }
+    }
+
+    #[test]
+    fn an_encoding_stops_once_it_passes_the_limit() {
+        // Regression (ENCODE_BOUND): the store was encoded whole, then
+        // measured, so a deep store could take gigabytes before the size
+        // error.
+        let count = std::cell::Cell::new(0);
+        let encoded = encode_within(&Counted(&count, 100_000), 1024).unwrap();
+        assert!(encoded.is_none());
+        assert!(
+            count.get() < 1_000,
+            "ENCODE_BOUND: encoded {} elements past a limit of 1024 bytes",
+            count.get()
+        );
+        // Within the limit, the bytes are the ones of `to_vec_pretty`.
+        let value = json!({"a": [1, {"b": "c\u{e9}"}], "d": null, "e": {}});
+        let pretty = serde_json::to_vec_pretty(&value).unwrap();
+        let limit = pretty.len() as u64;
+        assert_eq!(
+            encode_within(&value, MAX_JSON_STORE_BYTES).unwrap(),
+            Some(pretty.clone())
+        );
+        assert_eq!(encode_within(&value, limit).unwrap(), Some(pretty));
+        assert_eq!(encode_within(&value, limit - 1).unwrap(), None);
+    }
+
+    #[test]
+    fn a_backup_that_grows_after_its_size_check_is_refused() {
+        // Regression (IMPORT_GROWS): the size was checked, then the file
+        // read whole, so one a sync client replaced in between was read at
+        // any size.
+        let from = ctx("import-grows");
+        seed(&from);
+        let file = from.0.join("b.json");
+        export_backup(&from, &file).unwrap();
+        let mut grown = fs::read(&file).unwrap();
+        grown.resize(MAX_JSON_STORE_BYTES as usize + 10, b' ');
+        let path = file.clone();
+        BEFORE_READ.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || fs::write(&path, &grown).unwrap()));
+        });
+        let result = preview_backup(&file);
+        BEFORE_READ.with(|hook| hook.borrow_mut().take());
+        let _ = fs::remove_dir_all(&from.0);
+        let error = result.expect_err("IMPORT_GROWS: read a backup past the limit");
+        assert!(error.contains("too big"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_pre_restore_copies_are_the_owners_alone() {
+        // Regression (PRIVATE_COPY): the copies took the umask's mode, so
+        // settings kept owner-only were copied readable by every user.
+        use std::os::unix::fs::PermissionsExt;
+        let from = ctx("private-from");
+        seed(&from);
+        let file = from.0.join("b.json");
+        export_backup(&from, &file).unwrap();
+        let to = ctx("private-to");
+        seed(&to);
+        let notes = client_store_path(&to, STORE_ACCOUNT_CARD_NOTES).unwrap();
+        fs::write(backup_path(&notes), br#"{"1":"older"}"#).unwrap();
+        let report = restore_backup(&to, &file).unwrap();
+        let dir = PathBuf::from(&report.pre_restore_dir);
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let dir_mode = mode(&dir);
+        let files: Vec<(PathBuf, u32)> = tree(&dir)
+            .into_keys()
+            .map(|p| {
+                let bits = mode(&p);
+                (p, bits)
+            })
+            .collect();
+        let _ = fs::remove_dir_all(&from.0);
+        let _ = fs::remove_dir_all(&to.0);
+        assert_eq!(dir_mode, 0o700, "PRIVATE_COPY: the folder is {dir_mode:o}");
+        assert!(files
+            .iter()
+            .any(|(p, _)| p.ends_with("user/account-card-notes.bak")));
+        for (path, mode) in files {
+            assert_eq!(mode, 0o600, "PRIVATE_COPY: {} is {mode:o}", path.display());
+        }
     }
 
     #[test]
