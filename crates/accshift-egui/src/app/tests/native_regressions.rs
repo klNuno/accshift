@@ -736,3 +736,89 @@ fn a_path_picker_that_cannot_open_says_why() {
         )]
     );
 }
+
+/// The app on the Riot tab with a Riot setup waiting for the sign-in. The
+/// next focus reads the poll's config writes as external changes.
+fn riot_setup_app(ctx: &Context) -> (AppModel, Arc<MockBackend>) {
+    let (mut app, mock) = external_app_with(ctx, |fixture| {
+        let boot = &mut fixture["commands"]["get_boot_payload"][0]["result"];
+        let settings = &mut boot["storageSnapshot"]["stores"]["client.settings"];
+        settings["enabledPlatforms"] = json!(["riot"]);
+        settings["defaultPlatformId"] = json!("riot");
+        boot["storageSnapshot"]["manifest"]["stores"] = json!({
+            "app.config.portable": "portable-1",
+            "platform.riot.snapshots": "snapshots-1"
+        });
+        let mut snapshot = boot["storageSnapshot"].clone();
+        snapshot["manifest"]["stores"] = json!({
+            "app.config.portable": "portable-2",
+            "platform.riot.snapshots": "snapshots-2"
+        });
+        fixture["commands"]["get_storage_manifest"][0]["result"] = snapshot["manifest"].clone();
+        fixture["commands"]["load_client_storage_snapshot"][0]["result"] = snapshot;
+    });
+    mock.set_setup(Some(vec![json!({
+        "setupId": "riot-profile-new",
+        "state": "waiting_for_login",
+        "accountId": "",
+        "accountDisplayName": "",
+        "errorMessage": ""
+    })]));
+    frame(&mut app, ctx, true, false);
+    pump_until(&mut app, ctx, |a| a.booted().unwrap().accounts.settled());
+    assert_eq!(app.booted().unwrap().nav.active_tab, "riot");
+    app.apply_one(ctx, Action::AddAccount);
+    pump_until(&mut app, ctx, |a| {
+        a.booted().unwrap().accounts.add_flow.is_active()
+    });
+    (app, mock)
+}
+
+/// A Riot setup waits for the sign-in in the Riot Client, so the user comes
+/// back to accshift with a click: the poll's own config writes and the new
+/// profile's snapshot folder then read as external changes on that focus.
+/// They must not end the setup.
+#[test]
+fn native_focus_refresh_after_a_riot_setup_write_keeps_the_setup() {
+    let ctx = Context::default();
+    let (mut app, mock) = riot_setup_app(&ctx);
+    frame(&mut app, &ctx, false, false);
+    frame(&mut app, &ctx, true, false);
+    wait_refresh_over(&mut app, &ctx);
+    pump_until(&mut app, &ctx, |a| a.booted().unwrap().accounts.settled());
+
+    assert_eq!(mock.seen("get_storage_manifest"), 1);
+    assert_eq!(mock.seen("platform_cancel_setup"), 0);
+    assert!(app.booted().unwrap().accounts.add_flow.is_active());
+}
+
+/// The tab's title ("Riot Games") is the breadcrumb's current crumb: a click
+/// on it went to the folder already open and dropped the setup.
+#[test]
+fn native_opening_the_current_folder_keeps_the_setup() {
+    let ctx = Context::default();
+    let (mut app, mock) = riot_setup_app(&ctx);
+    app.apply_one(&ctx, Action::NavigateToFolder(None));
+    pump_until(&mut app, &ctx, |a| a.booted().unwrap().accounts.settled());
+
+    assert_eq!(mock.seen("platform_cancel_setup"), 0);
+    assert!(app.booted().unwrap().accounts.add_flow.is_active());
+}
+
+/// A right click in the empty grid dropped the Riot setup the user was
+/// signing in to (Dev Build `ae609bf`): the background and folder menus hold
+/// nothing that conflicts with it (refresh, new folder, rename, colour).
+#[test]
+fn native_a_background_or_folder_menu_keeps_the_setup() {
+    let ctx = Context::default();
+    let (mut app, mock) = riot_setup_app(&ctx);
+    app.apply_one(
+        &ctx,
+        Action::ContextMenu(MenuTarget::Background, pos2(600.0, 360.0)),
+    );
+    pump_until(&mut app, &ctx, |a| a.booted().unwrap().accounts.settled());
+
+    assert!(app.dialogs.context_menu().is_some(), "the menu opened");
+    assert_eq!(mock.seen("platform_cancel_setup"), 0);
+    assert!(app.booted().unwrap().accounts.add_flow.is_active());
+}

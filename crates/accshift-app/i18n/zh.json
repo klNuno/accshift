@@ -432,6 +432,7 @@
   "riot.setupFailed": "Riot 设置失败",
   "riot.setupFailedMessage": "Accshift 无法完成该 Riot 账号的添加。",
   "riot.setupStaySignedIn": "请保持「保持登录」为开启状态。",
+  "riot.setupNotPersisted": "在 Riot 客户端勾选「保持登录」，然后退出并重新登录。",
   "riot.setupDetected": "已检测到账号",
   "riot.setupConnected": "已连接",
   "riot.forget": "移除账号",

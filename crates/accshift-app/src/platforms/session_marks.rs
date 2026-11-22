@@ -37,11 +37,12 @@ pub fn presentation(state: SessionState) -> WarningPresentation {
     };
     WarningPresentation {
         tooltip: Text::key(tooltip),
-        card_outline_tone: Some(WarningTone::Orange),
+        card_outline_tone: Some(WarningTone::Blue),
         list_has_red: false,
-        list_has_orange: true,
+        list_has_orange: false,
+        list_has_blue: true,
         chips: vec![WarningChip {
-            tone: WarningTone::Orange,
+            tone: WarningTone::Blue,
             text: Text::key(chip),
         }],
     }
@@ -61,9 +62,9 @@ pub fn overlay(
                 *existing = session;
             }
             Some(existing) => {
-                existing.list_has_orange = true;
+                existing.list_has_blue = true;
                 if existing.card_outline_tone.is_none() {
-                    existing.card_outline_tone = Some(WarningTone::Orange);
+                    existing.card_outline_tone = Some(WarningTone::Blue);
                 }
                 for chip in session.chips {
                     if !existing.chips.contains(&chip) {

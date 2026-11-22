@@ -177,6 +177,11 @@ pub struct SetupStatus {
     pub error_message: String,
 }
 
+/// Riot's setup status when the signed-in session is not kept. The app
+/// translates this message on every host, including mock setups.
+pub const RIOT_SETUP_NOT_PERSISTED: &str =
+    "Check 'Stay signed in' in the Riot Client, then sign out and sign back in.";
+
 /// Core trait that all platforms implement.
 ///
 /// Methods take `AppCtx` by value because several impls move the context

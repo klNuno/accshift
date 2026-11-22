@@ -1,0 +1,108 @@
+{
+  "id": "add-riot-bottom-pt-500",
+  "scenario": "dev",
+  "os": "windows",
+  "viewport": {
+    "width": 500,
+    "height": 300,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "pt",
+  "setup": [
+    {
+      "setupId": "riot-setup-1",
+      "state": "waiting_for_client",
+      "accountId": "",
+      "accountDisplayName": "",
+      "errorMessage": ""
+    },
+    {
+      "setupId": "riot-setup-1",
+      "state": "waiting_for_login",
+      "accountId": "",
+      "accountDisplayName": "",
+      "errorMessage": ""
+    },
+    {
+      "setupId": "riot-setup-1",
+      "state": "waiting_for_login",
+      "accountId": "",
+      "accountDisplayName": "WWWWWWWWWWWWWWWW#WWWWW",
+      "errorMessage": "Check 'Stay signed in' in the Riot Client, then sign out and sign back in."
+    }
+  ],
+  "seed": {
+    "SETTINGS": {
+      "viewMode": "grid",
+      "animations": "off",
+      "accountDisplay": {
+        "showUsernames": true,
+        "showCardNotesInline": false
+      }
+    }
+  },
+  "steps": [
+    {
+      "wait": 800
+    },
+    {
+      "click": [
+        284,
+        18
+      ]
+    },
+    {
+      "move": [
+        170,
+        18
+      ]
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "click": [
+        55,
+        18
+      ]
+    },
+    {
+      "move": [
+        420,
+        260
+      ]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "shot": "client"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "shot": "login"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "shot": "stay-signed-in"
+    },
+    {
+      "scroll": [
+        410,
+        230,
+        1200
+      ]
+    },
+    {
+      "wait": 750
+    },
+    {
+      "shot": "bottom"
+    }
+  ]
+}

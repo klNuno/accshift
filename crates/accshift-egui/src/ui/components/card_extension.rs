@@ -1,7 +1,8 @@
 //! The card extension: the surface beside an account card and the details
 //! panel it holds.
 //!
-//! - `.extension-hitbox`: the card's height, `--grid-card-width` plus
+//! - `.extension-hitbox`: the card's height (taller when the details need
+//!   it, grown downwards), `--grid-card-width` plus
 //!   130 px wide, from the card's left edge (`.right`) or to its right edge
 //!   (`.left`). The side is picked on hover: right while the window has
 //!   130 + 12 px past the card.
@@ -83,6 +84,8 @@ const T180: Transition = Transition::new(0.18, Timing::EASE_OUT);
 /// `.extension-surface.ban-red.visible`, `.ban-yellow`.
 const BAN_RED: Rgba = Rgba::new(239.0, 68.0, 68.0, 0.6);
 const BAN_YELLOW: Rgba = Rgba::new(234.0, 179.0, 8.0, 0.6);
+/// A session to renew: the blue chip's hue, never a ban colour.
+const SESSION_BLUE: Rgba = Rgba::new(59.0, 130.0, 246.0, 0.6);
 const WHITE: Rgba = Rgba::new(255.0, 255.0, 255.0, 1.0);
 /// `.section-link`.
 const LINK: Rgba = Rgba::new(147.0, 197.0, 253.0, 1.0);
@@ -126,13 +129,25 @@ pub struct ChipHit {
 }
 
 /// What [`paint`] drew.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Painted {
     /// The surface painted (not fully faded out).
     pub shown: bool,
+    /// The surface's box on screen, when shown.
+    pub rect: Rect,
     /// Its clickable chips, while `.visible` (the hitbox is `inert`
     /// otherwise).
     pub chips: Vec<ChipHit>,
+}
+
+impl Default for Painted {
+    fn default() -> Self {
+        Self {
+            shown: false,
+            rect: Rect::NOTHING,
+            chips: Vec::new(),
+        }
+    }
 }
 
 /// One `box-shadow` of the transitioned list.
@@ -233,13 +248,24 @@ pub fn paint(ui: &Ui, card: Rect, s: &Surface) -> Painted {
         return Painted::default();
     }
 
+    let w = DETAIL_WIDTH - PAD_LEFT - PAD_RIGHT;
+    let heights: Vec<f32> = s
+        .sections
+        .iter()
+        .enumerate()
+        .map(|(i, sec)| section(ctx, s, i, sec, w, None))
+        .collect();
+    let total = heights.iter().sum::<f32>() + SECTION_GAP * heights.len().saturating_sub(1) as f32;
     let width = card.width() + DETAIL_WIDTH;
     let left = if s.right {
         card.left()
     } else {
         card.right() - width
     };
-    let laid = Rect::from_min_size(pos2(left, card.top()), vec2(width, card.height()));
+    let laid = Rect::from_min_size(
+        pos2(left, card.top()),
+        vec2(width, surface_height(card.height(), total)),
+    );
     let boxed = snap::rect(laid, ppp);
     // `transform-origin: left center` (right) or `right center` (left).
     let origin = if s.right { boxed.left() } else { boxed.right() };
@@ -302,14 +328,6 @@ pub fn paint(ui: &Ui, card: Rect, s: &Surface) -> Painted {
     content.set_clip_rect(painter.clip_rect().intersect(mapped));
     content.multiply_opacity(inner);
     let place = |r: Rect| Rect::from_min_size(pos2(map_x(r.left()), r.top() + ty), r.size());
-    let w = DETAIL_WIDTH - PAD_LEFT - PAD_RIGHT;
-    let heights: Vec<f32> = s
-        .sections
-        .iter()
-        .enumerate()
-        .map(|(i, sec)| section(ctx, s, i, sec, w, None))
-        .collect();
-    let total = heights.iter().sum::<f32>() + SECTION_GAP * heights.len().saturating_sub(1) as f32;
     let free = laid.height() - 2.0 * PAD_Y - total;
     // `justify-content: center`, halved in layout units (1/64 device px).
     let mut y = laid.top() + PAD_Y + (free * ppp * 32.0).trunc() / 64.0 / ppp;
@@ -332,6 +350,7 @@ pub fn paint(ui: &Ui, card: Rect, s: &Surface) -> Painted {
             let color = match tone {
                 WarningTone::Red => BAN_RED,
                 WarningTone::Orange => BAN_YELLOW,
+                WarningTone::Blue => SESSION_BLUE,
             };
             BoxStyle {
                 radius,
@@ -353,12 +372,19 @@ pub fn paint(ui: &Ui, card: Rect, s: &Surface) -> Painted {
     }
     Painted {
         shown: true,
+        rect: mapped,
         chips: if s.visible {
             hits.into_inner()
         } else {
             Vec::new()
         },
     }
+}
+
+/// The surface's height: the card's, grown downwards when the details need
+/// more (a setup's text and detected account do not fit a short card).
+pub fn surface_height(card_height: f32, content_height: f32) -> f32 {
+    card_height.max((content_height + 2.0 * PAD_Y).ceil())
 }
 
 /// `.section-title`.
@@ -769,5 +795,85 @@ mod tests {
             out.textures_delta.clear();
         }
         assert_eq!(h, 691.0 / 64.0 + PART_GAP + 2.0 * CHIP_HEIGHT + CHIP_GAP);
+    }
+
+    /// A Riot setup waiting for "Stay signed in" holds a three-line message
+    /// and the detected account: on a grid card its chip was cut off below
+    /// the surface and the message above it (Dev Build `ae609bf`).
+    #[test]
+    fn a_setup_taller_than_the_card_grows_the_surface_down() {
+        let ctx = Context::default();
+        text::install(&ctx, false);
+        let v = vars();
+        let sections = [
+            CardSection {
+                text: Some(Text::raw(
+                    "Check 'Stay signed in' in the Riot Client, then sign out and sign back in.",
+                )),
+                ..CardSection::default()
+            },
+            CardSection {
+                title: Some(Text::key("riot.setupDetected")),
+                text: Some(Text::raw("NouveauJoueur#EUW")),
+                chips: vec![CardChip {
+                    text: Text::key("riot.setupConnected"),
+                    tone: ChipTone::Green,
+                }],
+                ..CardSection::default()
+            },
+        ];
+        let surface = Surface {
+            vars: &v,
+            id: Id::unique("riot-setup"),
+            sections: &sections,
+            clickable: &[(1, 0)],
+            locale: Locale::Fr,
+            card_color: None,
+            active: false,
+            visible: true,
+            lift: false,
+            right: true,
+            ban: None,
+            glass: false,
+        };
+        let card = Rect::from_min_size(pos2(40.0, 80.0), vec2(100.0, 136.0));
+        let mut painted = Painted::default();
+        let mut content = 0.0;
+        // The first frame binds the faces; the transitions settle after.
+        for t in 0..4 {
+            let input = RawInput {
+                time: Some(f64::from(t)),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                let w = DETAIL_WIDTH - PAD_LEFT - PAD_RIGHT;
+                content = sections
+                    .iter()
+                    .enumerate()
+                    .map(|(i, sec)| section(ui.ctx(), &surface, i, sec, w, None))
+                    .sum::<f32>()
+                    + SECTION_GAP;
+                painted = paint(ui, card, &surface);
+            });
+            out.textures_delta.clear();
+        }
+        assert!(
+            content + 2.0 * PAD_Y > card.height(),
+            "the setup must not fit"
+        );
+        assert_eq!(painted.rect.top(), card.top());
+        assert!(painted.rect.height() >= content + 2.0 * PAD_Y);
+        let chip = painted.chips.first().expect("the detected chip").rect;
+        assert!(
+            painted.rect.contains_rect(chip),
+            "chip {chip:?} outside {:?}",
+            painted.rect
+        );
+    }
+
+    #[test]
+    fn a_short_setup_keeps_the_card_height() {
+        assert_eq!(surface_height(136.0, 60.0), 136.0);
+        assert_eq!(surface_height(136.0, 130.5), 151.0);
     }
 }

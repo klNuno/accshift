@@ -65,25 +65,26 @@ fn has_session_chip(warnings: &BTreeMap<String, WarningPresentation>, id: &str) 
     })
 }
 
-fn assert_orange_session_chip(warning: &WarningPresentation, chip: &str, tooltip: &str) {
+/// A session mark is blue: the orange and red of a ban read as a ban.
+fn assert_blue_session_chip(warning: &WarningPresentation, chip: &str, tooltip: &str) {
     assert_eq!(chips(warning), vec![Text::key(chip)]);
     assert_eq!(warning.tooltip, Text::key(tooltip));
-    assert_eq!(warning.card_outline_tone, Some(WarningTone::Orange));
-    assert!(warning.list_has_orange && !warning.list_has_red);
-    assert!(warning.chips.iter().all(|c| c.tone == WarningTone::Orange));
+    assert_eq!(warning.card_outline_tone, Some(WarningTone::Blue));
+    assert!(warning.list_has_blue && !warning.list_has_orange && !warning.list_has_red);
+    assert!(warning.chips.iter().all(|c| c.tone == WarningTone::Blue));
 }
 
 #[test]
-fn steam_shows_password_needed_and_an_after_the_fact_mark_in_orange() {
+fn steam_shows_password_needed_and_an_after_the_fact_mark_in_blue() {
     let backend = support::scripted("dev");
     let (_, warnings) = warnings("steam", &backend);
     assert_eq!(backend.calls("session_marks"), vec!["steam".to_string()]);
-    assert_orange_session_chip(
+    assert_blue_session_chip(
         &warnings[STEAM_PASSWORD],
         "session.passwordNeeded",
         "session.passwordNeededTooltip",
     );
-    assert_orange_session_chip(
+    assert_blue_session_chip(
         &warnings[STEAM_EXPIRED],
         "session.expired",
         "session.expiredTooltip",
@@ -105,7 +106,13 @@ fn a_session_chip_joins_a_ban_warning_without_hiding_it() {
     let banned = &marked[STEAM_BANNED];
     let chip = Text::key("session.passwordNeeded");
     assert!(chips(banned).contains(&chip));
-    assert!(banned.list_has_orange);
+    assert!(banned.list_has_blue);
+    // A session chip never takes a ban's colour.
+    assert!(banned
+        .chips
+        .iter()
+        .filter(|c| c.text == chip)
+        .all(|c| c.tone == WarningTone::Blue));
     if let Some(before) = banned_before {
         // The ban keeps its own tooltip, outline and chips first.
         assert_eq!(banned.tooltip, before.tooltip);
@@ -155,7 +162,7 @@ fn a_riot_mark_after_the_fact_joins_the_offline_expiry() {
         Ok(json!([{ "accountId": "riot-1", "state": "expired" }])),
     );
     let (adapter, warnings) = warnings("riot", &backend);
-    assert_orange_session_chip(
+    assert_blue_session_chip(
         &warnings["riot-1"],
         "session.expired",
         "session.expiredTooltip",
@@ -190,7 +197,7 @@ fn epic_shows_password_needed_from_its_snapshot() {
             0.0,
         )
         .unwrap();
-    assert_orange_session_chip(
+    assert_blue_session_chip(
         &load.warnings["0123456789abcdef0123456789abcdef"],
         "session.passwordNeeded",
         "session.passwordNeededTooltip",

@@ -71,6 +71,8 @@ const FLIP: f64 = 0.2;
 const RED: Rgba = Rgba::new(239.0, 68.0, 68.0, 1.0);
 const YELLOW: Rgba = Rgba::new(234.0, 179.0, 8.0, 1.0);
 const ORANGE: Rgba = Rgba::new(251.0, 146.0, 60.0, 1.0);
+/// A session to renew, apart from the ban colours.
+const BLUE: Rgba = Rgba::new(59.0, 130.0, 246.0, 1.0);
 
 /// State kept across frames.
 #[derive(Default)]

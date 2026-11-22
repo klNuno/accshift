@@ -185,6 +185,7 @@ pub fn ban_presentation(info: &BanInfo) -> WarningPresentation {
         },
         list_has_red: red,
         list_has_orange: info.community_banned,
+        list_has_blue: false,
         chips,
     }
 }

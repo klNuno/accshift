@@ -123,7 +123,7 @@ fn notices(events: &[LoadingEvent]) -> usize {
 }
 
 #[test]
-fn a_load_marks_the_expired_profile_with_an_orange_badge() {
+fn a_load_marks_the_expired_profile_with_a_blue_badge() {
     let backend = Arc::new(support::scripted("dev"));
     let mut h = Harness::new(backend.clone());
     h.load();
@@ -131,8 +131,8 @@ fn a_load_marks_the_expired_profile_with_an_orange_badge() {
     assert_eq!(h.expired_ids(), vec![EXPIRED.to_string()]);
     let warning = &h.loading.loader.warning_states()[EXPIRED];
     assert_eq!(warning.tooltip, Text::key("session.expiredTooltip"));
-    assert_eq!(warning.card_outline_tone, Some(WarningTone::Orange));
-    assert!(warning.list_has_orange && !warning.list_has_red);
+    assert_eq!(warning.card_outline_tone, Some(WarningTone::Blue));
+    assert!(warning.list_has_blue && !warning.list_has_orange && !warning.list_has_red);
     assert_eq!(warning.chips.len(), 1);
     assert_eq!(warning.chips[0].text, Text::key("session.expired"));
 }
@@ -234,7 +234,7 @@ fn a_watch_verdict_after_the_switch_landed_updates_the_badge_in_place() {
     );
     let warning = &h.loading.loader.warning_states()["riot-3"];
     assert_eq!(warning.chips[0].text, Text::key("session.expired"));
-    assert_eq!(warning.card_outline_tone, Some(WarningTone::Orange));
+    assert_eq!(warning.card_outline_tone, Some(WarningTone::Blue));
 
     // A later sign-in lifted it again.
     backend.push("session_marks", Ok(json!([])));

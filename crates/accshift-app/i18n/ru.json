@@ -432,6 +432,7 @@
   "riot.setupFailed": "Не удалось настроить Riot",
   "riot.setupFailedMessage": "Accshift не смог завершить добавление этого аккаунта Riot.",
   "riot.setupStaySignedIn": "Оставьте включённой опцию «Stay signed in».",
+  "riot.setupNotPersisted": "Отметьте «Stay signed in» в клиенте Riot, затем выйдите и войдите снова.",
   "riot.setupDetected": "Аккаунт определён",
   "riot.setupConnected": "Подключено",
   "riot.forget": "Забыть аккаунт",

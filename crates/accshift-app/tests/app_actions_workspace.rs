@@ -130,6 +130,7 @@ fn warning(chips: &[&str], tooltip: &str) -> WarningPresentation {
         card_outline_tone: None,
         list_has_red: false,
         list_has_orange: false,
+        list_has_blue: false,
         chips: chips
             .iter()
             .map(|text| WarningChip {

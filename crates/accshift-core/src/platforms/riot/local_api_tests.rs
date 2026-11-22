@@ -157,10 +157,12 @@ fn no_usable_login_route_fails_closed() {
     assert_eq!(login(&read_riot_login_state(&access)), (false, None));
 }
 
-/// Unticking "Stay signed in" is an explicit `persistLogin: false`: a PSL
-/// refresh token in the settings file must not override it.
+/// A Google sign-in with "Stay signed in" ticked answers `persistLogin: false`
+/// while the client writes the PSL refresh token (Dev Build `ae609bf`, log of
+/// 2026-11-22). The setup clears the live session before it starts, so that
+/// token can only come from this login: it proves the login is kept.
 #[test]
-fn explicit_persist_login_false_never_captures_even_with_a_psl_token() {
+fn a_psl_token_captures_even_when_the_api_says_persist_login_false() {
     let (access, _) = synthetic_api(vec![(
         RSO_SESSION,
         "200 OK",
@@ -170,7 +172,15 @@ fn explicit_persist_login_false_never_captures_even_with_a_psl_token() {
         has_tokens: true,
         psl_login: true,
     };
-    assert!(!setup_can_capture(&read_riot_login_state(&access), psl));
+    assert!(setup_can_capture(&read_riot_login_state(&access), psl));
+    let unticked = RiotSettingsState {
+        has_tokens: true,
+        psl_login: false,
+    };
+    assert!(!setup_can_capture(
+        &read_riot_login_state(&access),
+        unticked
+    ));
 }
 
 /// No bool on either route reads as unknown; a bool on the legacy route
