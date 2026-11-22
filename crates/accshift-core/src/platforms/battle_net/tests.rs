@@ -1,6 +1,7 @@
 use super::setup::{
-    merge_saved_after_setup, owe_saved_accounts, purge_expired_battle_net_setup_jobs,
-    settle_owed_saved_accounts, with_owed_saved_accounts, BattleNetAccountSetupJob,
+    merge_saved_after_setup, owe_saved_accounts, owe_then_empty_saved_accounts,
+    purge_expired_battle_net_setup_jobs, settle_owed_saved_accounts, with_owed_saved_accounts,
+    BattleNetAccountSetupJob,
 };
 use super::{
     collect_unique_accounts, encode_saved_account_name, extract_saved_account_names,
@@ -555,6 +556,67 @@ fn owed_saved_accounts_persist_in_local_config() {
     let _ = crate::config::load_config(&other_ctx);
     let (_, empty) = with_owed_saved_accounts(&ctx, Vec::new());
     assert!(empty.is_empty());
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_setup_saves_the_launcher_list_before_emptying_it() {
+    let _guard = crate::config::config_io_test_mutex()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let root = std::env::temp_dir().join(format!(
+        "accshift-battlenet-handover-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let ctx = TestCtx {
+        root: root.join("ok"),
+    };
+    let previous = vec![
+        "old-a@example.com".to_string(),
+        "old-b@example.com".to_string(),
+    ];
+
+    // The copy is on disk by the time the launcher's list is emptied, so a
+    // crash between the two loses nothing.
+    let mut owed_when_emptied = None;
+    let result = owe_then_empty_saved_accounts(&ctx, &previous, &previous, || {
+        let _ = crate::config::load_config(&TestCtx {
+            root: root.join("evict-cache"),
+        });
+        owed_when_emptied = Some(with_owed_saved_accounts(&ctx, Vec::new()).1);
+        Ok(())
+    });
+    assert_eq!(result, Ok(()));
+    assert_eq!(owed_when_emptied, Some(previous.clone()));
+
+    // A list that cannot be emptied stays the launcher's: nothing is owed.
+    let locked = TestCtx {
+        root: root.join("locked"),
+    };
+    let result =
+        owe_then_empty_saved_accounts(&locked, &previous, &previous, || Err("locked".to_string()));
+    assert_eq!(result, Err("locked".to_string()));
+    let (_, owed) = with_owed_saved_accounts(&locked, Vec::new());
+    assert!(owed.is_empty(), "owed after a failed empty: {owed:?}");
+
+    // A copy that cannot be saved aborts the setup before the list is touched.
+    let blocked_root = root.join("not-a-dir");
+    std::fs::write(&blocked_root, b"file").unwrap();
+    let blocked = TestCtx { root: blocked_root };
+    let mut emptied = false;
+    let result = owe_then_empty_saved_accounts(&blocked, &previous, &previous, || {
+        emptied = true;
+        Ok(())
+    });
+    assert!(result.is_err(), "a failed save must abort the setup");
+    assert!(
+        !emptied,
+        "the launcher list was emptied without a saved copy"
+    );
 
     let _ = std::fs::remove_dir_all(&root);
 }

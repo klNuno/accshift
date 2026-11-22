@@ -39,14 +39,7 @@ pub(super) fn purge_expired_battle_net_setup_jobs(
 /// would undo what the user just did, so the next switch or forget, which
 /// quits the launcher anyway, writes them back — even after an app restart.
 pub(super) fn owe_saved_accounts(app_handle: &dyn AppContext, previous: &[String]) {
-    let incoming = collect_unique_accounts(previous.iter().cloned(), &mut HashSet::new());
-    if incoming.is_empty() {
-        return;
-    }
-    if let Err(err) = config::update_config(app_handle, |cfg| {
-        let current = std::mem::take(&mut cfg.battle_net.owed_saved_accounts);
-        cfg.battle_net.owed_saved_accounts = merge_saved_after_setup(current, &incoming);
-    }) {
+    if let Err(err) = try_owe_saved_accounts(app_handle, previous) {
         log_platform_error(
             app_handle,
             "battle_net.owe_saved_accounts",
@@ -54,6 +47,44 @@ pub(super) fn owe_saved_accounts(app_handle: &dyn AppContext, previous: &[String
             err,
         );
     }
+}
+
+/// [`owe_saved_accounts`] for a caller that must not go on when the names
+/// could not be saved.
+pub(super) fn try_owe_saved_accounts(
+    app_handle: &dyn AppContext,
+    previous: &[String],
+) -> Result<(), String> {
+    let incoming = collect_unique_accounts(previous.iter().cloned(), &mut HashSet::new());
+    if incoming.is_empty() {
+        return Ok(());
+    }
+    config::update_config(app_handle, |cfg| {
+        let current = std::mem::take(&mut cfg.battle_net.owed_saved_accounts);
+        cfg.battle_net.owed_saved_accounts = merge_saved_after_setup(current, &incoming);
+    })
+}
+
+/// Hands the launcher's saved list over to the local config before a setup
+/// empties it: `to_owe` (this setup's `previous_saved` plus the lists of
+/// expired setups) is saved, then `empty_launcher_list` clears
+/// SavedAccountNames. The copy goes first, so a crash between the two leaves
+/// the names in both places instead of neither, and a copy that cannot be
+/// saved aborts the setup before the launcher's list is touched.
+pub(super) fn owe_then_empty_saved_accounts(
+    app_handle: &dyn AppContext,
+    to_owe: &[String],
+    previous_saved: &[String],
+    empty_launcher_list: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    try_owe_saved_accounts(app_handle, to_owe)?;
+    if let Err(err) = empty_launcher_list() {
+        // The launcher still holds this list; only the expired setups' names
+        // stay owed.
+        settle_owed_saved_accounts(app_handle, previous_saved);
+        return Err(err);
+    }
+    Ok(())
 }
 
 /// `fresh` with every persisted owed name appended once, for a write that quit
@@ -117,7 +148,6 @@ pub fn begin_account_setup(app_handle: AppCtx) -> Result<SetupStatus, String> {
     kill_battle_net()?;
     // Read once the launcher is down: it saves the list while it runs.
     let previous_saved = read_saved_accounts().unwrap_or_default();
-    write_saved_accounts(&app_handle, &[])?;
 
     let expired = {
         let mut jobs = battle_net_setup_jobs()
@@ -134,10 +164,23 @@ pub fn begin_account_setup(app_handle: AppCtx) -> Result<SetupStatus, String> {
         );
         expired
     };
-    // Persist immediately after emptying SavedAccountNames so even a restart
-    // or crash mid-setup does not lose the user's previously saved accounts.
+    // Saved before SavedAccountNames is emptied so even a restart or crash
+    // mid-setup does not lose the user's previously saved accounts.
     let to_owe = merge_saved_after_setup(expired, &previous_saved);
-    owe_saved_accounts(&*app_handle, &to_owe);
+    if let Err(e) = owe_then_empty_saved_accounts(&*app_handle, &to_owe, &previous_saved, || {
+        write_saved_accounts(&app_handle, &[])
+    }) {
+        log_platform_error(
+            &app_handle,
+            "battle_net.begin_account_setup",
+            "Battle.net account setup aborted before emptying SavedAccountNames",
+            &e,
+        );
+        if let Ok(mut jobs) = battle_net_setup_jobs().lock() {
+            jobs.remove(&setup_id);
+        }
+        return Err(e);
+    }
 
     if let Err(e) = launch_battle_net(&app_handle) {
         log_platform_error(
