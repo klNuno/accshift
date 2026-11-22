@@ -11,14 +11,7 @@ pub(super) fn riot_lockfile_path() -> Result<PathBuf, String> {
         .join("lockfile"))
 }
 
-pub(super) fn read_riot_local_api_access() -> Result<RiotLocalApiAccess, String> {
-    let lockfile_path = riot_lockfile_path()?;
-    let content = fs::read_to_string(&lockfile_path).map_err(|e| {
-        format!(
-            "Could not read Riot lockfile {}: {e}",
-            lockfile_path.display()
-        )
-    })?;
+pub(super) fn parse_lockfile_content(content: &str) -> Result<RiotLocalApiAccess, String> {
     let parts: Vec<&str> = content.trim().split(':').collect();
     if parts.len() != 5 {
         return Err("Riot lockfile format is invalid".into());
@@ -44,6 +37,20 @@ pub(super) fn read_riot_local_api_access() -> Result<RiotLocalApiAccess, String>
         port,
         password: password.to_string(),
     })
+}
+
+pub(super) fn read_lockfile_at(lockfile_path: &Path) -> Result<RiotLocalApiAccess, String> {
+    let content = fs::read_to_string(lockfile_path).map_err(|e| {
+        format!(
+            "Could not read Riot lockfile {}: {e}",
+            lockfile_path.display()
+        )
+    })?;
+    parse_lockfile_content(&content)
+}
+
+pub(super) fn read_riot_local_api_access() -> Result<RiotLocalApiAccess, String> {
+    read_lockfile_at(&riot_lockfile_path()?)
 }
 
 pub(super) async fn fetch_local_json(
@@ -231,4 +238,119 @@ pub(super) fn read_rso_session_type() -> RiotSessionType {
 pub(super) fn detect_live_identity() -> Result<RiotDetectedIdentity, String> {
     let access = read_riot_local_api_access()?;
     detect_live_identity_with_access(&access)
+}
+
+pub(super) const LEAGUE_GAMEFLOW_PHASE_ENDPOINT: &str = "/lol-gameflow/v1/gameflow-phase";
+
+/// League of Legends gameflow phases where killing `LeagueClient` would cause
+/// a champion-select dodge or interrupt an active match.
+const LEAGUE_PROTECTED_PHASES: &[&str] = &["ChampSelect", "GameStart", "InProgress", "Reconnect"];
+
+/// Returns the canonical protected phase name when `value` (the JSON body of
+/// `/lol-gameflow/v1/gameflow-phase`) names a phase in which closing
+/// `LeagueClient` must be refused. Any other value returns `None`.
+pub(super) fn protected_league_phase(value: &Value) -> Option<&'static str> {
+    let phase = value.as_str()?.trim();
+    LEAGUE_PROTECTED_PHASES
+        .iter()
+        .copied()
+        .find(|protected| protected.eq_ignore_ascii_case(phase))
+}
+
+/// Probe the League Client (LCU) gameflow phase on `access`.
+/// Returns `Some(phase)` only when the LCU answers with a protected phase;
+/// any unreachable socket, non-200 status, or unreadable body returns `None`
+/// so callers keep their current behaviour.
+pub(super) fn read_protected_league_phase_with_access(
+    access: &RiotLocalApiAccess,
+) -> Option<&'static str> {
+    crate::runtime::block_on(async {
+        let value = fetch_local_json(access, LEAGUE_GAMEFLOW_PHASE_ENDPOINT)
+            .await
+            .ok()?;
+        protected_league_phase(&value)
+    })
+}
+
+/// Candidate paths for the League Client (LCU) `lockfile`, derived from Riot
+/// product metadata (`league_of_legends.live` / `league_of_legends.pbe`), a
+/// sibling `League of Legends` folder next to `riot_install_dir`, and an
+/// optional OS default. Duplicates are removed while preserving order.
+pub(super) fn league_lockfile_candidates_in(
+    metadata_root: Option<&Path>,
+    riot_install_dir: Option<&Path>,
+    default_lockfile: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let mut push_unique = |path: PathBuf| {
+        if !candidates.contains(&path) {
+            candidates.push(path);
+        }
+    };
+
+    if let Some(root) = metadata_root {
+        for patchline in ["live", "pbe"] {
+            let folder = format!("league_of_legends.{patchline}");
+            let settings = root
+                .join(&folder)
+                .join(format!("{folder}.product_settings.yaml"));
+            if let Some(install_path) = fs::read_to_string(settings)
+                .ok()
+                .and_then(|contents| product_install_path(&contents))
+            {
+                push_unique(PathBuf::from(install_path).join("lockfile"));
+            }
+        }
+    }
+
+    if let Some(parent) = riot_install_dir.and_then(Path::parent) {
+        push_unique(parent.join("League of Legends").join("lockfile"));
+    }
+
+    if let Some(default) = default_lockfile {
+        push_unique(default.to_path_buf());
+    }
+
+    candidates
+}
+
+/// Probe each readable LCU lockfile candidate until one reports a protected
+/// gameflow phase. Missing, unreadable or stale lockfiles are skipped.
+pub(super) fn detect_protected_league_phase_from_candidates(
+    candidates: &[PathBuf],
+) -> Option<&'static str> {
+    for path in candidates {
+        let Ok(access) = read_lockfile_at(path) else {
+            continue;
+        };
+        if let Some(phase) = read_protected_league_phase_with_access(&access) {
+            return Some(phase);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn default_league_lockfile_path() -> PathBuf {
+    PathBuf::from("/Applications/League of Legends.app/Contents/LoL/lockfile")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn default_league_lockfile_path() -> PathBuf {
+    PathBuf::from(r"C:\Riot Games\League of Legends\lockfile")
+}
+
+/// Probe the live League Client for a protected gameflow phase. Returns `None`
+/// if no lockfile is readable or the LCU API does not report a protected phase.
+pub(super) fn detect_protected_league_phase() -> Option<&'static str> {
+    let metadata = metadata_root();
+    let riot_install_dir = detect_installation_path_from_installs()
+        .and_then(|path| PathBuf::from(path).parent().map(Path::to_path_buf));
+    let default_lockfile = default_league_lockfile_path();
+    let candidates = league_lockfile_candidates_in(
+        metadata.as_deref(),
+        riot_install_dir.as_deref(),
+        Some(default_lockfile.as_path()),
+    );
+    detect_protected_league_phase_from_candidates(&candidates)
 }

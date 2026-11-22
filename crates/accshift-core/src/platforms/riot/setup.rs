@@ -228,6 +228,7 @@ pub(super) fn prepare_clean_riot_launch(install_dir: Option<&Path>) -> Result<()
     // A kill, not a graceful quit: the quit waits up to 8 s for the client to
     // flush a session this function wipes next. A session worth keeping was
     // flushed and saved by `begin_profile_setup` already.
+    ensure_league_not_in_protected_phase("starting Riot account setup")?;
     kill_riot_client_processes();
     thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
     ensure_riot_client_closed()?;
@@ -251,6 +252,7 @@ pub(super) fn spawn_riot_setup_launch(
             &profile_id,
             crate::platforms::SETUP_LAUNCH_LOCK_TIMEOUT,
             || {
+                ensure_league_not_in_protected_phase("starting Riot account setup")?;
                 let started = std::time::Instant::now();
                 let prepared = prepare_clean_riot_launch(client_path.parent());
                 let prepare_ms = started.elapsed().as_millis();

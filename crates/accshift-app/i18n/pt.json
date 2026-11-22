@@ -422,6 +422,8 @@
   "riot.noInstalledGames": "Nenhum jogo da Riot instalado encontrado",
   "riot.accountNotConfirmed": "O accshift não conseguiu confirmar que conta tem sessão iniciada no Riot Client, por isso nada foi alterado. Verifique a conta no Riot Client e tente novamente.",
   "riot.profileWithoutAccount": "Este perfil da Riot não tem uma conta registada, por isso o accshift não consegue distinguir a sessão guardada da sessão iniciada. Nada foi alterado. Inicie sessão com a conta deste perfil no Riot Client e use \"Voltar a capturar a sessão\".",
+  "riot.leagueInChampSelect": "O League of Legends está na seleção de campeões, por isso nada foi alterado. Termine ou saia da seleção de campeões e tente novamente.",
+  "riot.leagueGameActive": "Há uma partida de League of Legends em curso, por isso nada foi alterado. Termine ou saia da partida e tente novamente.",
   "riot.capturedSession": "Sessão capturada para {profile}",
   "riot.setupPendingLabel": "Conta Riot",
   "riot.setupWaitingForClient": "À espera do Riot Client...",

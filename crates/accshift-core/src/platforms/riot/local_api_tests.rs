@@ -266,3 +266,221 @@ fn riot_local_client_bypasses_configured_proxy() {
     assert_eq!(*proxy_hits.lock().unwrap(), 0);
     assert_eq!(*seen.lock().unwrap(), [RSO_SESSION]);
 }
+
+#[test]
+fn protected_league_phase_flags_champ_select_and_active_match_only() {
+    assert_eq!(
+        protected_league_phase(&serde_json::json!("ChampSelect")),
+        Some("ChampSelect")
+    );
+    assert_eq!(
+        protected_league_phase(&serde_json::json!("champselect")),
+        Some("ChampSelect")
+    );
+    assert_eq!(
+        protected_league_phase(&serde_json::json!("GameStart")),
+        Some("GameStart")
+    );
+    assert_eq!(
+        protected_league_phase(&serde_json::json!("InProgress")),
+        Some("InProgress")
+    );
+    assert_eq!(
+        protected_league_phase(&serde_json::json!("Reconnect")),
+        Some("Reconnect")
+    );
+
+    for safe in [
+        serde_json::json!("None"),
+        serde_json::json!("Lobby"),
+        serde_json::json!("Matchmaking"),
+        serde_json::json!("ReadyCheck"),
+        serde_json::json!("EndOfGame"),
+        serde_json::json!(""),
+        serde_json::json!(null),
+        serde_json::json!({ "phase": "ChampSelect" }),
+    ] {
+        assert_eq!(protected_league_phase(&safe), None, "{safe}");
+    }
+}
+
+#[test]
+fn read_protected_league_phase_probes_lcu_and_keeps_behaviour_when_unreadable() {
+    let (access, seen) = synthetic_api(vec![(
+        LEAGUE_GAMEFLOW_PHASE_ENDPOINT,
+        "200 OK",
+        r#""ChampSelect""#,
+    )]);
+    assert_eq!(
+        read_protected_league_phase_with_access(&access),
+        Some("ChampSelect")
+    );
+    assert_eq!(*seen.lock().unwrap(), [LEAGUE_GAMEFLOW_PHASE_ENDPOINT]);
+
+    let (access, _) = synthetic_api(vec![(
+        LEAGUE_GAMEFLOW_PHASE_ENDPOINT,
+        "200 OK",
+        r#""InProgress""#,
+    )]);
+    assert_eq!(
+        read_protected_league_phase_with_access(&access),
+        Some("InProgress")
+    );
+
+    let (access, _) = synthetic_api(vec![(
+        LEAGUE_GAMEFLOW_PHASE_ENDPOINT,
+        "200 OK",
+        r#""Lobby""#,
+    )]);
+    assert_eq!(read_protected_league_phase_with_access(&access), None);
+
+    // 404, non-JSON, or unreachable socket: fall back to current behaviour (None).
+    let (access, _) = synthetic_api(vec![]);
+    assert_eq!(read_protected_league_phase_with_access(&access), None);
+
+    let (access, _) = synthetic_api(vec![(LEAGUE_GAMEFLOW_PHASE_ENDPOINT, "200 OK", "not json")]);
+    assert_eq!(read_protected_league_phase_with_access(&access), None);
+
+    let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+    let closed_port = closed.local_addr().unwrap().port();
+    drop(closed);
+    let unreachable = RiotLocalApiAccess {
+        protocol: "http".into(),
+        port: closed_port,
+        password: "synthetic-only".into(),
+    };
+    assert_eq!(read_protected_league_phase_with_access(&unreachable), None);
+}
+
+#[test]
+fn league_lockfile_candidates_collects_metadata_sibling_and_default_unique() {
+    let root = std::env::temp_dir().join(format!(
+        "accshift-lcu-candidates-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    let metadata = root.join("Metadata");
+    let live_dir = metadata.join("league_of_legends.live");
+    let pbe_dir = metadata.join("league_of_legends.pbe");
+    fs::create_dir_all(&live_dir).unwrap();
+    fs::create_dir_all(&pbe_dir).unwrap();
+
+    let live_install = root.join("Riot Games").join("League of Legends");
+    let pbe_install = root.join("Riot Games").join("League of Legends (PBE)");
+    let riot_install = root.join("Riot Games").join("Riot Client");
+    let default_lockfile = root.join("Default").join("lockfile");
+
+    fs::write(
+        live_dir.join("league_of_legends.live.product_settings.yaml"),
+        format!(
+            "product_install_full_path: \"{}\"\n",
+            live_install.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+    fs::write(
+        pbe_dir.join("league_of_legends.pbe.product_settings.yaml"),
+        format!(
+            "product_install_full_path: \"{}\"\n",
+            pbe_install.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+
+    // Sibling of `riot_install` points to the same `League of Legends/lockfile`
+    // as metadata live, so deduplication removes the duplicate.
+    let candidates = league_lockfile_candidates_in(
+        Some(&metadata),
+        Some(&riot_install),
+        Some(&default_lockfile),
+    );
+    assert_eq!(
+        candidates,
+        vec![
+            live_install.join("lockfile"),
+            pbe_install.join("lockfile"),
+            default_lockfile.clone(),
+        ]
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn detect_protected_league_phase_skips_missing_and_stale_lockfiles() {
+    let root = std::env::temp_dir().join(format!(
+        "accshift-lcu-detect-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+
+    let missing = root.join("missing-lockfile");
+    let invalid = root.join("invalid-lockfile");
+    fs::write(&invalid, "not-a-valid-lockfile").unwrap();
+
+    let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+    let closed_port = closed.local_addr().unwrap().port();
+    drop(closed);
+    let stale = root.join("stale-lockfile");
+    fs::write(&stale, format!("LeagueClient:999:{closed_port}:pw:http")).unwrap();
+
+    // Only missing/invalid/stale lockfiles: returns None (keeps current behaviour).
+    assert_eq!(
+        detect_protected_league_phase_from_candidates(&[
+            missing.clone(),
+            invalid.clone(),
+            stale.clone()
+        ]),
+        None
+    );
+
+    // A live lockfile later in the list reporting ChampSelect is detected.
+    let (access, _) = synthetic_api(vec![(
+        LEAGUE_GAMEFLOW_PHASE_ENDPOINT,
+        "200 OK",
+        r#""ChampSelect""#,
+    )]);
+    let live = root.join("live-lockfile");
+    fs::write(
+        &live,
+        format!(
+            "LeagueClient:1234:{}:{}:{}",
+            access.port, access.password, access.protocol
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(
+        detect_protected_league_phase_from_candidates(&[missing, invalid, stale, live]),
+        Some("ChampSelect")
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn league_phase_guard_error_formats_clear_messages_for_gui() {
+    assert_eq!(
+        league_phase_guard_error(None, "switching Riot account"),
+        Ok(())
+    );
+
+    let champ_err =
+        league_phase_guard_error(Some("ChampSelect"), "switching Riot account").unwrap_err();
+    assert!(
+        champ_err.starts_with(RIOT_LEAGUE_IN_CHAMP_SELECT),
+        "unexpected champ-select error: {champ_err}"
+    );
+    assert!(champ_err.contains("switching Riot account"));
+
+    let match_err =
+        league_phase_guard_error(Some("InProgress"), "switching Riot account").unwrap_err();
+    assert!(
+        match_err.starts_with(RIOT_LEAGUE_GAME_ACTIVE),
+        "unexpected active-match error: {match_err}"
+    );
+    assert!(match_err.contains("InProgress"));
+}

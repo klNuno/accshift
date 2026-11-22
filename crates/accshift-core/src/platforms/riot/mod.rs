@@ -92,6 +92,12 @@ const RIOT_CLOSE_PROCESS_NAMES: &[&str] = &[
     "LeagueCrashHandler64.exe",
 ];
 
+const LEAGUE_CLIENT_PROCESS_NAMES: &[&str] = &[
+    "LeagueClient.exe",
+    "LeagueClientUx.exe",
+    "LeagueClientUxRender.exe",
+];
+
 // The League game process has spaces in its name; the client processes do not.
 const RIOT_GAME_PROCESS_NAMES: &[&str] = &["League of Legends.exe", "VALORANT-Win64-Shipping.exe"];
 

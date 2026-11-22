@@ -39,7 +39,7 @@ pub(super) fn known_product(product_id: &str) -> Option<&'static str> {
 
 /// `ProgramData/Riot Games/Metadata`, where the Riot Client keeps one
 /// `<product>.<patchline>` folder per installed product.
-fn metadata_root() -> Option<PathBuf> {
+pub(super) fn metadata_root() -> Option<PathBuf> {
     std::env::var_os("PROGRAMDATA")
         .map(PathBuf::from)
         .map(|root| root.join("Riot Games").join("Metadata"))

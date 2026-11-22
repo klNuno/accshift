@@ -34,15 +34,48 @@ pub(super) fn build_riot_switch_details(
     .to_string()
 }
 
-pub(super) fn ensure_no_riot_game_running(action: &str) -> Result<(), String> {
-    let running_games = running_process_names(RIOT_GAME_PROCESS_NAMES);
-    if running_games.is_empty() {
+/// Start of the error returned when League of Legends is in champion select.
+/// The app matches it to show a dedicated toast.
+pub(super) const RIOT_LEAGUE_IN_CHAMP_SELECT: &str = "League of Legends is in champion select";
+
+/// Start of the error returned when League of Legends is in an active match
+/// phase (`GameStart`, `InProgress`, `Reconnect`). The app matches it.
+pub(super) const RIOT_LEAGUE_GAME_ACTIVE: &str = "League of Legends is in an active match";
+
+pub(super) fn league_phase_guard_error(phase: Option<&str>, action: &str) -> Result<(), String> {
+    let Some(phase) = phase else {
+        return Ok(());
+    };
+    if phase.eq_ignore_ascii_case("ChampSelect") {
+        Err(format!(
+            "{RIOT_LEAGUE_IN_CHAMP_SELECT}: finish or leave champion select before {action}."
+        ))
+    } else {
+        Err(format!(
+            "{RIOT_LEAGUE_GAME_ACTIVE} ({phase}): finish or leave the match before {action}."
+        ))
+    }
+}
+
+/// Refuse to close `LeagueClient` while the player is in champion select or an
+/// active match. If `LeagueClient` is not running or its LCU API is unreadable,
+/// keep the current behaviour and return `Ok(())`.
+pub(super) fn ensure_league_not_in_protected_phase(action: &str) -> Result<(), String> {
+    if !is_any_process_running(LEAGUE_CLIENT_PROCESS_NAMES) {
         return Ok(());
     }
-    Err(format!(
-        "Close Riot game processes before {action}: {}",
-        running_games.join(", ")
-    ))
+    league_phase_guard_error(detect_protected_league_phase(), action)
+}
+
+pub(super) fn ensure_no_riot_game_running(action: &str) -> Result<(), String> {
+    let running_games = running_process_names(RIOT_GAME_PROCESS_NAMES);
+    if !running_games.is_empty() {
+        return Err(format!(
+            "Close Riot game processes before {action}: {}",
+            running_games.join(", ")
+        ));
+    }
+    ensure_league_not_in_protected_phase(action)
 }
 
 /// Fails when a client process outlived the quit. The session files are only
@@ -124,6 +157,7 @@ pub(super) fn riot_local_client() -> &'static reqwest::Client {
 /// or the process doesn't exit within the timeout. An error means a client
 /// process survived both (an elevated or hung client).
 pub(super) fn graceful_riot_quit() -> Result<(), String> {
+    ensure_league_not_in_protected_phase("closing Riot Client")?;
     let access = match read_riot_local_api_access() {
         Ok(a) => a,
         Err(_) => {

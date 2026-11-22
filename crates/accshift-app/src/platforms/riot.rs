@@ -176,6 +176,14 @@ pub const ACCOUNT_UNCONFIRMED_PATTERN: &str = "riot account not confirmed";
 /// (`RIOT_PROFILE_WITHOUT_ACCOUNT` in the core).
 pub const PROFILE_WITHOUT_ACCOUNT_PATTERN: &str = "riot profile has no recorded account";
 
+/// Start of the backend's refusal to close `LeagueClient` while in champion
+/// select (`RIOT_LEAGUE_IN_CHAMP_SELECT` in the core).
+pub const LEAGUE_CHAMP_SELECT_PATTERN: &str = "league of legends is in champion select";
+
+/// Start of the backend's refusal to close `LeagueClient` during an active
+/// match phase (`RIOT_LEAGUE_GAME_ACTIVE` in the core).
+pub const LEAGUE_GAME_ACTIVE_PATTERN: &str = "league of legends is in an active match";
+
 /// The dedicated toast for a failed switch or game launch, `None` for the
 /// generic one.
 pub fn switch_error_toast(message: &str) -> Option<Text> {
@@ -184,6 +192,10 @@ pub fn switch_error_toast(message: &str) -> Option<Text> {
         Some(Text::key("riot.accountNotConfirmed"))
     } else if message.starts_with(PROFILE_WITHOUT_ACCOUNT_PATTERN) {
         Some(Text::key("riot.profileWithoutAccount"))
+    } else if message.starts_with(LEAGUE_CHAMP_SELECT_PATTERN) {
+        Some(Text::key("riot.leagueInChampSelect"))
+    } else if message.starts_with(LEAGUE_GAME_ACTIVE_PATTERN) {
+        Some(Text::key("riot.leagueGameActive"))
     } else {
         None
     }

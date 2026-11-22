@@ -422,6 +422,8 @@
   "riot.noInstalledGames": "Установленные игры Riot не найдены",
   "riot.accountNotConfirmed": "accshift не смог подтвердить, какой аккаунт вошёл в Riot Client, поэтому ничего не изменено. Проверьте аккаунт в Riot Client и повторите попытку.",
   "riot.profileWithoutAccount": "У этого профиля Riot нет сохранённого аккаунта, поэтому accshift не может отличить его сохранённую сессию от текущей. Ничего не изменено. Войдите в аккаунт этого профиля в Riot Client, затем выберите «Захватить сессию заново».",
+  "riot.leagueInChampSelect": "League of Legends находится на этапе выбора чемпионов, поэтому ничего не изменено. Завершите или покиньте выбор чемпионов и попробуйте снова.",
+  "riot.leagueGameActive": "Идёт матч в League of Legends, поэтому ничего не изменено. Завершите или покиньте матч и попробуйте снова.",
   "riot.capturedSession": "Сессия для {profile} захвачена",
   "riot.setupPendingLabel": "Аккаунт Riot",
   "riot.setupWaitingForClient": "Ожидание Riot Client...",
