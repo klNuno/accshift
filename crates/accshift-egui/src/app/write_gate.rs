@@ -12,11 +12,12 @@ use egui::Context;
 
 use super::{AppModel, Booted};
 
-/// The account writes started by the account loader and the personas,
-/// outside the gate: a switch, an add or a persona switch still running.
-/// Each may rewrite a platform's account list after the boundary's job.
+/// The account writes started by the account loader, the add flow and the
+/// personas, outside the gate: a switch, an add, a setup poll or a persona
+/// switch still running. Each may rewrite a platform's account list after
+/// the boundary's job.
 pub(super) fn account_writes_running(b: &Booted) -> bool {
-    b.accounts.loading.writes_in_flight() || b.personas.switching()
+    b.accounts.loading.writes_in_flight() || b.accounts.add_flow.is_busy() || b.personas.switching()
 }
 
 impl AppModel {
@@ -27,7 +28,7 @@ impl AppModel {
             return false;
         }
         self.toasts.add(
-            Text::key("settings.backupHoldsWrites"),
+            Text::key(self.backup.gate.refusal_key()),
             AddToastOptions::default(),
             std::time::Instant::now(),
         );
@@ -46,6 +47,8 @@ pub(super) struct WriteGate(Arc<GateState>);
 struct GateState {
     running: AtomicUsize,
     closed: AtomicBool,
+    /// A TcNo import holds the boundary, not a backup.
+    tcno: AtomicBool,
     /// The first write that failed while a backup held the boundary.
     failed: Mutex<Option<String>>,
     /// The UI to wake when an admitted call returns: a boundary waiting
@@ -120,6 +123,20 @@ impl WriteGate {
             }
             result
         })
+    }
+
+    /// Says the next refusals come from a TcNo import, not a backup.
+    pub(super) fn set_tcno(&self, tcno: bool) {
+        self.0.tcno.store(tcno, Ordering::SeqCst);
+    }
+
+    /// The text key of a refused write: what holds the boundary.
+    pub(super) fn refusal_key(&self) -> &'static str {
+        if self.0.tcno.load(Ordering::SeqCst) {
+            "settings.tcnoHoldsWrites"
+        } else {
+            "settings.backupHoldsWrites"
+        }
     }
 
     /// An admitted call has not returned yet.

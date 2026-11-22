@@ -516,7 +516,7 @@ impl AppModel {
             // A persona switch writes accounts: not behind a held boundary.
             if self.backup.holds_writes() {
                 self.toasts.add(
-                    Text::key("settings.backupHoldsWrites"),
+                    Text::key(self.backup.gate.refusal_key()),
                     accshift_app::actions::toasts::AddToastOptions::default(),
                     std::time::Instant::now(),
                 );

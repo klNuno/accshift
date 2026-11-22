@@ -166,6 +166,8 @@ pub struct PlatformAddFlow {
     cancel: Option<(AddFlowEntry, Pending<BackendResult<()>>)>,
     primes: Vec<PrimeJob>,
     events: Vec<AddFlowEvent>,
+    /// No poll is sent: see [`Self::hold_polls`].
+    polls_held: bool,
 }
 
 impl PlatformAddFlow {
@@ -189,9 +191,16 @@ impl PlatformAddFlow {
         self.poll.is_some() || self.cancel.is_some() || !self.primes.is_empty()
     }
 
-    /// When [`Self::tick`] next has work.
+    /// Holds the setup polls while a backup or an import holds writes: a
+    /// poll may finish the setup and save the account.
+    pub fn hold_polls(&mut self, held: bool) {
+        self.polls_held = held;
+    }
+
+    /// When [`Self::tick`] next has work. None while the polls are held: a
+    /// due poll would ask for a frame every frame.
     pub fn next_deadline(&self) -> Option<Instant> {
-        self.poll_deadline
+        self.poll_deadline.filter(|_| !self.polls_held)
     }
 
     /// Stops the poll timer.
@@ -446,7 +455,10 @@ impl PlatformAddFlow {
             }
             Poll::Gone => false,
         });
-        if self.poll_deadline.is_some_and(|due| ctx.now >= due) && self.poll.is_none() {
+        if self.poll_deadline.is_some_and(|due| ctx.now >= due)
+            && self.poll.is_none()
+            && !self.polls_held
+        {
             self.poll_now(ctx);
         }
         std::mem::take(&mut self.events)

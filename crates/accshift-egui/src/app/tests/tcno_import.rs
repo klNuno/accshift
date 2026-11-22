@@ -14,9 +14,18 @@ const ROBLOX_ADD: &str = "roblox_add_account_by_cookie";
 /// The mock app, with a TcNo folder whose import adds a note to account
 /// `a` and puts it first in the Steam root.
 fn tcno_app(ctx: &Context) -> (AppModel, Arc<MockBackend>) {
+    tcno_app_with(ctx, |_| {})
+}
+
+/// [`tcno_app`] on a fixture `configure` changes first.
+fn tcno_app_with(
+    ctx: &Context,
+    configure: impl FnOnce(&mut Value),
+) -> (AppModel, Arc<MockBackend>) {
     let mut fixture: Value =
         serde_json::from_str(include_str!("../../../parity/data/empty.json")).unwrap();
     fixture["spec"]["switchDelayMs"] = json!(0);
+    configure(&mut fixture);
     let boot = &fixture["commands"]["get_boot_payload"][0]["result"];
     let mut imported = boot["storageSnapshot"].clone();
     imported["stores"]["client.account-card-notes"] = json!({"a": "imported note"});
@@ -210,6 +219,7 @@ fn an_account_being_saved_holds_the_tcno_import_and_none_starts_during_it() {
     add_roblox(&mut app, &ctx, "cookie-b");
     frames(&mut app, &ctx, 10);
     let added_during = mock.seen(ROBLOX_ADD);
+    let refusal = app.settings_panel.as_ref().unwrap().roblox_error.clone();
     // Every held call ends before asserting: a worker left blocked would
     // hang the test's teardown.
     mock.release(ROBLOX_ADD);
@@ -220,5 +230,57 @@ fn an_account_being_saved_holds_the_tcno_import_and_none_starts_during_it() {
         "the import ran while an account was saved"
     );
     assert_eq!(added_during, 1, "an account write ran during the import");
+    assert_eq!(
+        refusal,
+        accshift_app::i18n::translate(accshift_app::i18n::Locale::En, "settings.tcnoHoldsWrites")
+    );
     assert_eq!(mock.seen(IMPORT), 1);
+}
+
+const POLL: &str = "platform_get_setup_status";
+
+#[test]
+fn a_setup_poll_holds_the_tcno_import_and_none_is_sent_during_it() {
+    let ctx = Context::default();
+    let (mut app, mock) = tcno_app_with(&ctx, |fixture| {
+        let boot = &mut fixture["commands"]["get_boot_payload"][0]["result"];
+        let settings = &mut boot["storageSnapshot"]["stores"]["client.settings"];
+        settings["enabledPlatforms"] = json!(["riot"]);
+        settings["defaultPlatformId"] = json!("riot");
+    });
+    mock.set_setup(Some(vec![json!({
+        "setupId": "riot-profile-new",
+        "state": "waiting_for_login",
+        "accountId": "",
+        "accountDisplayName": "",
+        "errorMessage": ""
+    })]));
+    pump_until(&mut app, &ctx, |a| a.booted().unwrap().accounts.settled());
+    app.apply_one(&ctx, Action::AddAccount);
+    pump_until(&mut app, &ctx, |a| {
+        a.booted().unwrap().accounts.add_flow.is_active()
+    });
+    // A poll is on its way: its answer may save the new account.
+    assert!(mock.hold(POLL));
+    pump_until(&mut app, &ctx, |_| mock.waiting(POLL) == 1);
+
+    assert!(mock.hold(IMPORT));
+    app.start_tcno_import("C:/TcNo".into());
+    frames(&mut app, &ctx, 20);
+    let imported_early = mock.seen(IMPORT);
+    mock.release(POLL);
+    pump_until(&mut app, &ctx, |_| mock.waiting(IMPORT) == 1);
+    let polls = mock.seen(POLL);
+    // Past the poll delay: the setup sends no poll while the import runs.
+    let until = Instant::now() + accshift_app::platform_add_flow::POLL_DELAY * 2;
+    while Instant::now() < until {
+        frames(&mut app, &ctx, 1);
+    }
+    let polled_during = mock.seen(POLL) - polls;
+    // Every held call ends before asserting (see above).
+    mock.release(IMPORT);
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+    assert_eq!(imported_early, 0, "the import ran while a setup poll did");
+    assert_eq!(polled_during, 0, "a setup poll ran during the import");
+    assert!(app.booted().unwrap().accounts.add_flow.is_active());
 }

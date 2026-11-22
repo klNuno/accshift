@@ -433,6 +433,9 @@ impl AppModel {
         // restore, it would put the old setup back.
         self.flush_settings(Instant::now());
         self.backup.notice_for(purpose, String::new(), false);
+        // The boundary's refusals name it until the next one is raised.
+        let tcno = purpose == Purpose::TcnoImport;
+        self.backup.gate.set_tcno(tcno);
         self.backup.set_stage(Stage::Draining {
             path,
             digest,

@@ -516,7 +516,7 @@ impl SettingsPanel {
         };
         let Some(job) = job else {
             self.descriptor_notice.clear();
-            self.descriptor_error = translate(self.draft.language, "settings.backupHoldsWrites");
+            self.descriptor_error = translate(self.draft.language, gate.refusal_key());
             return;
         };
         self.descriptor_busy = true;
@@ -570,7 +570,7 @@ impl SettingsPanel {
             b.roblox_add_account_by_cookie(&trimmed)
         };
         let Some(call) = gate.admit(call) else {
-            self.roblox_error = translate(self.draft.language, "settings.backupHoldsWrites");
+            self.roblox_error = translate(self.draft.language, gate.refusal_key());
             return;
         };
         self.roblox_adding = true;
