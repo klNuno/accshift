@@ -154,6 +154,42 @@ fn native_external_storage_on_focus_refreshes_stores_and_accounts() {
     assert_eq!(b.accounts.loading.loader.current_account(), "external");
 }
 
+/// Commands held at the mock for one test, released when it drops. A failed
+/// assertion then unwinds through the release: otherwise a worker stays parked
+/// at the hold and `Jobs::drop`, joining it, hangs the suite.
+struct HeldCommands {
+    mock: Arc<MockBackend>,
+    commands: Vec<&'static str>,
+}
+
+impl HeldCommands {
+    /// Declare it after the app so it drops first.
+    fn new(mock: &Arc<MockBackend>) -> Self {
+        Self {
+            mock: mock.clone(),
+            commands: Vec::new(),
+        }
+    }
+
+    fn hold(&mut self, command: &'static str) {
+        self.commands.push(command);
+        assert!(self.mock.hold(command), "{command} could not be held");
+    }
+
+    fn release(&mut self, command: &str) {
+        self.commands.retain(|held| *held != command);
+        self.mock.release(command);
+    }
+}
+
+impl Drop for HeldCommands {
+    fn drop(&mut self) {
+        for command in self.commands.drain(..) {
+            self.mock.release(command);
+        }
+    }
+}
+
 /// Waits until a call of `command` sits at its hold in the mock.
 fn wait_held(mock: &MockBackend, command: &str) {
     let deadline = Instant::now() + std::time::Duration::from_secs(10);
@@ -177,9 +213,10 @@ fn native_external_storage_on_restore_preserves_dirty_local_values() {
     // Hold the manifest read, the snapshot read and the store write at the
     // mock so every phase transition is synchronized explicitly, with no
     // dependence on wall-clock timing.
-    assert!(mock.hold("get_storage_manifest"));
-    assert!(mock.hold("load_client_storage_snapshot"));
-    assert!(mock.hold("save_client_storage_store"));
+    let mut held = HeldCommands::new(&mock);
+    held.hold("get_storage_manifest");
+    held.hold("load_client_storage_snapshot");
+    held.hold("save_client_storage_store");
     // Restoration must work even if the viewport still reports focus.
     frame(&mut app, &ctx, true, true);
     frame(&mut app, &ctx, true, false);
@@ -190,7 +227,7 @@ fn native_external_storage_on_restore_preserves_dirty_local_values() {
         .unwrap()
         .stores
         .set_account_card_note("external", "local draft");
-    mock.release("get_storage_manifest");
+    held.release("get_storage_manifest");
     // begin_refresh records the other targets and starts the snapshot job,
     // which waits at its hold until we release it below.
     pump_until(&mut app, &ctx, |a| {
@@ -213,15 +250,42 @@ fn native_external_storage_on_restore_preserves_dirty_local_values() {
     // Let the snapshot finish first while the store write stays held, so
     // finish_refresh deterministically runs with the dirty local value still
     // pending instead of racing the write completion.
-    mock.release("load_client_storage_snapshot");
+    held.release("load_client_storage_snapshot");
     pump_until(&mut app, &ctx, |a| {
         a.booted().unwrap().stores.view_mode() == ViewMode::List
     });
-    mock.release("save_client_storage_store");
+    held.release("save_client_storage_store");
     wait_refresh_over(&mut app, &ctx);
     let b = app.booted().unwrap();
     assert_eq!(b.stores.view_mode(), ViewMode::List);
     assert_eq!(b.stores.account_card_note("external"), "local draft");
+}
+
+#[test]
+fn a_failed_assertion_while_a_command_is_held_fails_instead_of_hanging() {
+    // Jobs::drop joins its workers, so a worker parked at a hold the test
+    // never released would keep the failing test, and the suite, waiting.
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let outcome = std::panic::catch_unwind(|| {
+            let ctx = Context::default();
+            let (mut app, mock) = external_app(&ctx);
+            pump_until(&mut app, &ctx, |a| a.booted().unwrap().accounts.settled());
+            frame(&mut app, &ctx, true, false);
+            let mut held = HeldCommands::new(&mock);
+            held.hold("get_storage_manifest");
+            frame(&mut app, &ctx, true, true);
+            frame(&mut app, &ctx, true, false);
+            wait_held(&mock, "get_storage_manifest");
+            panic!("assertion failed while get_storage_manifest is held");
+        });
+        let _ = done_tx.send(outcome.is_err());
+    });
+    assert_eq!(
+        done_rx.recv_timeout(std::time::Duration::from_secs(20)),
+        Ok(true),
+        "the failing test hung on its held command instead of failing"
+    );
 }
 
 #[test]

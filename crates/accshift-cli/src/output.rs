@@ -188,7 +188,9 @@ pub fn render_accounts(
 
 /// Non-sensitive human label for a requested account id (persona name,
 /// BattleTag, display name or user label), never falling back to the raw
-/// account id or email address.
+/// account id or email address. The account is the one the platform's switch
+/// resolves `requested` to: an id written exactly wins over one that only
+/// matches once folded, so two ids that differ by case never swap labels.
 pub fn display_label_for(platform_id: &str, accounts: &[Value], requested: &str) -> Option<String> {
     let get = |account: &Value, key: &str| {
         account
@@ -198,19 +200,40 @@ pub fn display_label_for(platform_id: &str, accounts: &[Value], requested: &str)
             .filter(|s| !s.is_empty())
             .map(String::from)
     };
-    accounts.iter().find_map(|account| {
-        let row = extract_row(platform_id, account)?;
-        let matches = requested.eq_ignore_ascii_case(&row.switch_id) || requested == row.storage_id;
-        if !matches {
-            return None;
+    let rows: Vec<(&Value, AccountRow)> = accounts
+        .iter()
+        .filter_map(|account| Some((account, extract_row(platform_id, account)?)))
+        .collect();
+    let (account, _) = rows
+        .iter()
+        .find(|(_, row)| requested == row.switch_id || requested == row.storage_id)
+        .or_else(|| {
+            rows.iter()
+                .find(|(_, row)| folded_id_matches(platform_id, requested, &row.switch_id))
+        })?;
+    match platform_id {
+        "steam" => get(account, "persona_name"),
+        "roblox" => get(account, "displayName"),
+        "battle-net" => get(account, "battleTag"),
+        _ => get(account, "label"),
+    }
+}
+
+/// Whether `requested` names `id` only through the spelling the platform's
+/// own switch forgives: Steam login names and Battle.net emails ignore ASCII
+/// case (Battle.net also surrounding spaces), Riot and Roblox take ids as
+/// written, and a descriptor trims the id and, when its format folds case,
+/// lowercases it, so its stored ids are already in that form.
+fn folded_id_matches(platform_id: &str, requested: &str, id: &str) -> bool {
+    match platform_id {
+        "steam" => requested.eq_ignore_ascii_case(id),
+        "battle-net" => requested.trim().eq_ignore_ascii_case(id.trim()),
+        "riot" | "roblox" => false,
+        _ => {
+            let trimmed = requested.trim();
+            trimmed == id || trimmed.to_lowercase() == id
         }
-        match platform_id {
-            "steam" => get(account, "persona_name"),
-            "roblox" => get(account, "displayName"),
-            "battle-net" => get(account, "battleTag"),
-            _ => get(account, "label"),
-        }
-    })
+    }
 }
 
 pub fn format_switch_ok(platform_id: &str, label: Option<&str>) -> String {
@@ -505,6 +528,57 @@ mod tests {
             Some("Main")
         );
         assert_eq!(display_label_for("epic", &epic, "acct-unlabeled"), None);
+    }
+
+    #[test]
+    fn display_label_never_takes_the_label_of_an_id_that_differs_only_by_case() {
+        let epic = vec![
+            json!({"accountId": "Main-ID", "label": "Someone else"}),
+            json!({"accountId": "main-id", "label": "Mine"}),
+        ];
+        assert_eq!(
+            display_label_for("epic", &epic, "main-id").as_deref(),
+            Some("Mine")
+        );
+        assert_eq!(
+            display_label_for("epic", &epic, "Main-ID").as_deref(),
+            Some("Someone else")
+        );
+        // A descriptor that folds ids stores them lowercase and switches any
+        // spelling to that one.
+        let folded = vec![json!({"accountId": "abc123", "label": "Folded"})];
+        assert_eq!(
+            display_label_for("epic", &folded, " ABC123 ").as_deref(),
+            Some("Folded")
+        );
+
+        // Riot and Roblox ids switch only as written.
+        let riot = vec![
+            json!({"id": "Profile-1", "label": "Someone else"}),
+            json!({"id": "profile-2", "label": "Mine"}),
+        ];
+        assert_eq!(display_label_for("riot", &riot, "profile-1"), None);
+        assert_eq!(
+            display_label_for("riot", &riot, "profile-2").as_deref(),
+            Some("Mine")
+        );
+
+        // Battle.net and Steam match their ids without case, as their
+        // switches do.
+        let bnet = vec![json!({"email": "hero@example.com", "battleTag": "Hero#1234"})];
+        assert_eq!(
+            display_label_for("battle-net", &bnet, " HERO@example.com ").as_deref(),
+            Some("Hero#1234")
+        );
+        let steam = vec![json!({
+            "steam_id": "76561198000000001",
+            "account_name": "login_name",
+            "persona_name": "Alice"
+        })];
+        assert_eq!(
+            display_label_for("steam", &steam, "Login_Name").as_deref(),
+            Some("Alice")
+        );
     }
 
     #[test]

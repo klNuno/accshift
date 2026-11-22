@@ -4,30 +4,82 @@
 //! instance release) before exiting.
 //!
 //! Uses a self-pipe and `sigaction`: the signal handler performs only POSIX
-//! async-signal-safe operations (`AtomicBool::swap`, `AtomicI32::load`,
+//! async-signal-safe operations (lock-free atomics and
 //! `libc::write`), and a lightweight watcher thread reads the pipe and invokes
 //! the caller's wake callback.
 
+/// The pipe's write end as the signal handler sees it, with a count of
+/// handlers between their load of the fd and the end of their `write`. Signal
+/// handlers run on any thread: without the count, teardown could close the fd
+/// after a handler loaded it, and the handler would then write into whatever
+/// file reused that number. Only lock-free atomics are touched on the handler
+/// side, so it stays async-signal-safe.
+#[cfg(any(unix, test))]
+struct SignalFdSlot {
+    fd: std::sync::atomic::AtomicI32,
+    in_flight: std::sync::atomic::AtomicUsize,
+}
+
+#[cfg(any(unix, test))]
+impl SignalFdSlot {
+    const fn new() -> Self {
+        Self {
+            fd: std::sync::atomic::AtomicI32::new(-1),
+            in_flight: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    fn publish(&self, fd: i32) {
+        self.fd.store(fd, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Handler side: runs `write` with the fd unless it was retired. All four
+    /// accesses here and in `retire` are `SeqCst`: a handler whose increment
+    /// comes after `retire` read a zero count also loads the fd after it was
+    /// hidden, so it sees `-1`.
+    fn with_fd(&self, write: impl FnOnce(i32)) {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.in_flight.fetch_add(1, SeqCst);
+        let fd = self.fd.load(SeqCst);
+        if fd >= 0 {
+            write(fd);
+        }
+        self.in_flight.fetch_sub(1, SeqCst);
+    }
+
+    /// Hides the fd from new handlers and waits for any handler that already
+    /// loaded it; the caller may then close it. A handler interrupting this
+    /// thread's own wait runs to completion first, so the wait cannot hang on
+    /// it, and a handler does one non-blocking `write`, so the wait is short.
+    fn retire(&self) {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.fd.store(-1, SeqCst);
+        while self.in_flight.load(SeqCst) != 0 {
+            std::thread::yield_now();
+        }
+    }
+}
+
 #[cfg(unix)]
 mod imp {
-    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+    use super::SignalFdSlot;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread::JoinHandle;
 
-    static SIGNAL_WRITE_FD: AtomicI32 = AtomicI32::new(-1);
+    static SIGNAL_WRITE_FD: SignalFdSlot = SignalFdSlot::new();
     static SIGNAL_RECEIVED: AtomicBool = AtomicBool::new(false);
 
     extern "C" fn handle_signal(_sig: libc::c_int) {
         if !SIGNAL_RECEIVED.swap(true, Ordering::AcqRel) {
-            let fd = SIGNAL_WRITE_FD.load(Ordering::Acquire);
-            if fd >= 0 {
+            SIGNAL_WRITE_FD.with_fd(|fd| {
                 let byte: u8 = 1;
                 // SAFETY: `write` on a non-blocking pipe fd is POSIX
-                // async-signal-safe; ignoring errors (such as a closed pipe
-                // during teardown) is safe.
+                // async-signal-safe, and the fd stays open until this
+                // closure returns (see `SignalFdSlot::retire`).
                 unsafe {
                     let _ = libc::write(fd, (&byte as *const u8).cast::<libc::c_void>(), 1);
                 }
-            }
+            });
         }
     }
 
@@ -46,7 +98,7 @@ mod imp {
                 let _ = libc::sigaction(libc::SIGTERM, &self.prev_term, std::ptr::null_mut());
                 let _ = libc::sigaction(libc::SIGINT, &self.prev_int, std::ptr::null_mut());
             }
-            SIGNAL_WRITE_FD.store(-1, Ordering::Release);
+            SIGNAL_WRITE_FD.retire();
             // Closing the write end wakes the watcher thread with EOF.
             unsafe {
                 let _ = libc::close(self.write_fd);
@@ -88,7 +140,7 @@ mod imp {
         }
 
         SIGNAL_RECEIVED.store(false, Ordering::Release);
-        SIGNAL_WRITE_FD.store(write_fd, Ordering::Release);
+        SIGNAL_WRITE_FD.publish(write_fd);
 
         let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
         action.sa_sigaction = handle_signal as *const () as libc::sighandler_t;
@@ -101,7 +153,7 @@ mod imp {
         let mut prev_int: libc::sigaction = unsafe { std::mem::zeroed() };
         let term_ok = unsafe { libc::sigaction(libc::SIGTERM, &action, &mut prev_term) } == 0;
         if !term_ok {
-            SIGNAL_WRITE_FD.store(-1, Ordering::Release);
+            SIGNAL_WRITE_FD.retire();
             unsafe {
                 let _ = libc::close(read_fd);
                 let _ = libc::close(write_fd);
@@ -113,7 +165,7 @@ mod imp {
             unsafe {
                 let _ = libc::sigaction(libc::SIGTERM, &prev_term, std::ptr::null_mut());
             }
-            SIGNAL_WRITE_FD.store(-1, Ordering::Release);
+            SIGNAL_WRITE_FD.retire();
             unsafe {
                 let _ = libc::close(read_fd);
                 let _ = libc::close(write_fd);
@@ -154,7 +206,7 @@ mod imp {
                     let _ = libc::sigaction(libc::SIGTERM, &prev_term, std::ptr::null_mut());
                     let _ = libc::sigaction(libc::SIGINT, &prev_int, std::ptr::null_mut());
                 }
-                SIGNAL_WRITE_FD.store(-1, Ordering::Release);
+                SIGNAL_WRITE_FD.retire();
                 unsafe {
                     let _ = libc::close(read_fd);
                     let _ = libc::close(write_fd);
@@ -196,6 +248,48 @@ mod tests {
     fn non_unix_signal_handler_is_a_noop() {
         assert!(!received());
         assert!(install(|| {}).is_none());
+    }
+
+    #[test]
+    fn retiring_the_fd_waits_for_a_handler_that_already_loaded_it() {
+        use std::sync::{mpsc, Arc};
+        use std::time::Duration;
+
+        let slot = Arc::new(SignalFdSlot::new());
+        slot.publish(7);
+        let (loaded_tx, loaded_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let handler = std::thread::spawn({
+            let slot = Arc::clone(&slot);
+            move || {
+                slot.with_fd(|fd| {
+                    let _ = loaded_tx.send(fd);
+                    let _ = release_rx.recv_timeout(Duration::from_secs(5));
+                })
+            }
+        });
+        assert_eq!(loaded_rx.recv_timeout(Duration::from_secs(5)), Ok(7));
+
+        let (retired_tx, retired_rx) = mpsc::channel();
+        let retirer = std::thread::spawn({
+            let slot = Arc::clone(&slot);
+            move || {
+                slot.retire();
+                let _ = retired_tx.send(());
+            }
+        });
+        let early = retired_rx.recv_timeout(Duration::from_millis(200));
+        let _ = release_tx.send(());
+        handler.join().unwrap();
+        retirer.join().unwrap();
+        assert!(
+            early.is_err(),
+            "the fd was released for closing while a handler was still writing to it"
+        );
+
+        let mut called = false;
+        slot.with_fd(|_| called = true);
+        assert!(!called, "a handler after retire must not see the fd");
     }
 
     #[cfg(unix)]
