@@ -229,11 +229,13 @@ pub(super) fn clear_live_session_for_login(
 }
 
 pub(super) fn prepare_clean_riot_launch(install_dir: Option<&Path>) -> Result<(), String> {
-    graceful_riot_quit()?;
-    clear_live_riot_setup_state(install_dir)?;
+    // A kill, not a graceful quit: the quit waits up to 8 s for the client to
+    // flush a session this function wipes next. A session worth keeping was
+    // flushed and saved by `begin_profile_setup` already.
     kill_riot_client_processes();
     thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
-    ensure_riot_client_closed()
+    ensure_riot_client_closed()?;
+    clear_live_riot_setup_state(install_dir)
 }
 
 /// Quit the client, clear its session and relaunch it on the login screen, in
@@ -259,8 +261,8 @@ pub(super) fn spawn_riot_setup_launch(
                 // Relaunch even when the clear stopped halfway, so the client
                 // is not left closed. The failure still fails the setup.
                 let launched = relaunch_after_quit(prepared, || launch_riot_client(&client_path));
-                // The quit waits up to 8 s for the old client; the poll's
-                // `lockfile=true` line then dates the new client's start.
+                // The poll's `lockfile=true` line then dates the new client's
+                // start.
                 log_platform_info(
                     &app_handle,
                     "riot.setup_launch",
