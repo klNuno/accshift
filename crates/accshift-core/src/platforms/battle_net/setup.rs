@@ -130,6 +130,32 @@ pub(super) fn settle_owed_saved_accounts(app_handle: &dyn AppContext, settled: &
     }
 }
 
+/// Runs `work` once `stop` has quit the launcher. When `work` fails, a
+/// launcher that was running before is started again, so a setup that gives
+/// up does not leave Battle.net closed; the error returned stays `work`'s,
+/// and a failed restart is only logged.
+pub(super) fn run_with_launcher_stopped<T>(
+    app_handle: &dyn AppContext,
+    was_running: bool,
+    stop: impl FnOnce() -> Result<(), String>,
+    work: impl FnOnce() -> Result<T, String>,
+    restart: impl FnOnce() -> Result<(), String>,
+) -> Result<T, String> {
+    stop()?;
+    let result = work();
+    if result.is_err() && was_running {
+        if let Err(err) = restart() {
+            log_platform_error(
+                app_handle,
+                "battle_net.begin_account_setup",
+                "Could not start Battle.net again after an aborted setup",
+                err,
+            );
+        }
+    }
+    result
+}
+
 pub fn begin_account_setup(app_handle: AppCtx) -> Result<SetupStatus, String> {
     log_platform_info(
         &app_handle,
@@ -145,42 +171,54 @@ pub fn begin_account_setup(app_handle: AppCtx) -> Result<SetupStatus, String> {
         .map(|account| normalize_account_key(account))
         .collect::<HashSet<_>>();
 
-    kill_battle_net()?;
-    // Read once the launcher is down: it saves the list while it runs.
-    let previous_saved = read_saved_accounts().unwrap_or_default();
+    let was_running = is_battle_net_running();
+    let previous_saved = run_with_launcher_stopped(
+        &*app_handle,
+        was_running,
+        kill_battle_net,
+        || {
+            // Read once the launcher is down: it saves the list while it runs.
+            let previous_saved = read_saved_accounts().unwrap_or_default();
 
-    let expired = {
-        let mut jobs = battle_net_setup_jobs()
-            .lock()
-            .map_err(|_| "Battle.net setup storage is unavailable".to_string())?;
-        let expired = purge_expired_battle_net_setup_jobs(&mut jobs);
-        jobs.insert(
-            setup_id.clone(),
-            BattleNetAccountSetupJob {
-                known_account_keys,
-                previous_saved: previous_saved.clone(),
-                last_touched_at: created_at,
-            },
-        );
-        expired
-    };
-    // Saved before SavedAccountNames is emptied so even a restart or crash
-    // mid-setup does not lose the user's previously saved accounts.
-    let to_owe = merge_saved_after_setup(expired, &previous_saved);
-    if let Err(e) = owe_then_empty_saved_accounts(&*app_handle, &to_owe, &previous_saved, || {
-        write_saved_accounts(&app_handle, &[])
-    }) {
-        log_platform_error(
-            &app_handle,
-            "battle_net.begin_account_setup",
-            "Battle.net account setup aborted before emptying SavedAccountNames",
-            &e,
-        );
-        if let Ok(mut jobs) = battle_net_setup_jobs().lock() {
-            jobs.remove(&setup_id);
-        }
-        return Err(e);
-    }
+            let expired = {
+                let mut jobs = battle_net_setup_jobs()
+                    .lock()
+                    .map_err(|_| "Battle.net setup storage is unavailable".to_string())?;
+                let expired = purge_expired_battle_net_setup_jobs(&mut jobs);
+                jobs.insert(
+                    setup_id.clone(),
+                    BattleNetAccountSetupJob {
+                        known_account_keys,
+                        previous_saved: previous_saved.clone(),
+                        last_touched_at: created_at,
+                    },
+                );
+                expired
+            };
+            // Saved before SavedAccountNames is emptied so even a restart or
+            // crash mid-setup does not lose the user's previously saved
+            // accounts.
+            let to_owe = merge_saved_after_setup(expired, &previous_saved);
+            if let Err(e) =
+                owe_then_empty_saved_accounts(&*app_handle, &to_owe, &previous_saved, || {
+                    write_saved_accounts(&app_handle, &[])
+                })
+            {
+                log_platform_error(
+                    &app_handle,
+                    "battle_net.begin_account_setup",
+                    "Battle.net account setup aborted before emptying SavedAccountNames",
+                    &e,
+                );
+                if let Ok(mut jobs) = battle_net_setup_jobs().lock() {
+                    jobs.remove(&setup_id);
+                }
+                return Err(e);
+            }
+            Ok(previous_saved)
+        },
+        || launch_battle_net(&app_handle),
+    )?;
 
     if let Err(e) = launch_battle_net(&app_handle) {
         log_platform_error(

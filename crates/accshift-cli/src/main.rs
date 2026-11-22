@@ -502,7 +502,8 @@ fn cmd_switch(
                     json!({ "platform": platform_id, "accountId": account_id }),
                 ),
                 Format::Human => {
-                    let label = resolve_display_label(service, ctx, platform_id, account_id);
+                    let resolved = service.normalize_account_id(account_id);
+                    let label = resolve_display_label(service, ctx, platform_id, &resolved);
                     output::render_switch_ok(platform_id, label.as_deref());
                 }
             }
@@ -657,7 +658,8 @@ fn cmd_dry_run(format: Format, platform_id: &str, account_id: &str) -> u8 {
         }
         Format::Human => match serde_json::from_value::<DryRunPlan>(value) {
             Ok(plan) => {
-                let label = resolve_display_label(service, ctx, platform_id, account_id);
+                // The plan names the account the engine resolved the input to.
+                let label = resolve_display_label(service, ctx, platform_id, &plan.account_id);
                 output::render_dry_run(&plan, label.as_deref());
                 exit::OK
             }

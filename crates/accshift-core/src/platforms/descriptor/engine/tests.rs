@@ -1913,3 +1913,18 @@ fn a_hand_off_argument_is_passed_only_to_the_binary_that_understands_it() {
     assert_eq!(launch.args_for(Path::new("C:/App/Update.exe")).len(), 2);
     assert!(launch.args_for(Path::new("C:/App/Client.exe")).is_empty());
 }
+
+#[test]
+fn the_switch_id_a_caller_matches_is_the_one_the_engine_stores() {
+    use crate::platforms::PlatformService;
+    let root = scratch("normalize-id");
+    let live = root.join("live");
+    // Case-sensitive format: only the spaces go.
+    assert_eq!(service(&live).normalize_account_id(" ABC "), "ABC");
+    // A format that folds case lowercases too.
+    assert_eq!(
+        log_service(&live).normalize_account_id(&format!(" {} ", UUID_ONE.to_uppercase())),
+        UUID_ONE
+    );
+    let _ = fs::remove_dir_all(&root);
+}

@@ -1,7 +1,7 @@
 use super::setup::{
     merge_saved_after_setup, owe_saved_accounts, owe_then_empty_saved_accounts,
-    purge_expired_battle_net_setup_jobs, settle_owed_saved_accounts, with_owed_saved_accounts,
-    BattleNetAccountSetupJob,
+    purge_expired_battle_net_setup_jobs, run_with_launcher_stopped, settle_owed_saved_accounts,
+    with_owed_saved_accounts, BattleNetAccountSetupJob,
 };
 use super::{
     collect_unique_accounts, encode_saved_account_name, extract_saved_account_names,
@@ -619,4 +619,47 @@ fn a_setup_saves_the_launcher_list_before_emptying_it() {
     );
 
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_setup_that_fails_after_quitting_the_launcher_starts_it_again() {
+    let ctx = TestCtx {
+        root: std::env::temp_dir().join("accshift-battlenet-relaunch-unused"),
+    };
+    let stop = || Ok(());
+    let fail = || Err::<(), _>("local config is read-only".to_string());
+
+    // The launcher was running: it is started again, and the setup's own
+    // error is the one reported even when the restart fails too.
+    let mut restarted = false;
+    let result = run_with_launcher_stopped(&ctx, true, stop, fail, || {
+        restarted = true;
+        Err("launch failed".to_string())
+    });
+    assert_eq!(result, Err("local config is read-only".to_string()));
+    assert!(restarted, "a launcher that was running stays closed");
+
+    // It was not running: a failed setup does not start it.
+    let mut restarted = false;
+    let result = run_with_launcher_stopped(&ctx, false, stop, fail, || {
+        restarted = true;
+        Ok(())
+    });
+    assert_eq!(result, Err("local config is read-only".to_string()));
+    assert!(!restarted);
+
+    // A setup that goes on leaves the launcher to its own launch.
+    let mut restarted = false;
+    let result = run_with_launcher_stopped(
+        &ctx,
+        true,
+        stop,
+        || Ok(7),
+        || {
+            restarted = true;
+            Ok(())
+        },
+    );
+    assert_eq!(result, Ok(7));
+    assert!(!restarted);
 }

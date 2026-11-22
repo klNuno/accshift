@@ -188,9 +188,11 @@ pub fn render_accounts(
 
 /// Non-sensitive human label for a requested account id (persona name,
 /// BattleTag, display name or user label), never falling back to the raw
-/// account id or email address. The account is the one the platform's switch
-/// resolves `requested` to: an id written exactly wins over one that only
-/// matches once folded, so two ids that differ by case never swap labels.
+/// account id or email address. `requested` is the id as the platform resolved
+/// it (the dry-run plan's id, or the switch id through
+/// `PlatformService::normalize_account_id`): an id written exactly wins over
+/// one that only matches once folded, so two ids that differ by case never
+/// swap labels.
 pub fn display_label_for(platform_id: &str, accounts: &[Value], requested: &str) -> Option<String> {
     let get = |account: &Value, key: &str| {
         account
@@ -221,18 +223,14 @@ pub fn display_label_for(platform_id: &str, accounts: &[Value], requested: &str)
 
 /// Whether `requested` names `id` only through the spelling the platform's
 /// own switch forgives: Steam login names and Battle.net emails ignore ASCII
-/// case (Battle.net also surrounding spaces), Riot and Roblox take ids as
-/// written, and a descriptor trims the id and, when its format folds case,
-/// lowercases it, so its stored ids are already in that form.
+/// case (Battle.net also surrounding spaces). Riot and Roblox take ids as
+/// written, and a descriptor id arrives already normalised by its engine,
+/// which stores ids in that same form, so only the exact match counts.
 fn folded_id_matches(platform_id: &str, requested: &str, id: &str) -> bool {
     match platform_id {
         "steam" => requested.eq_ignore_ascii_case(id),
         "battle-net" => requested.trim().eq_ignore_ascii_case(id.trim()),
-        "riot" | "roblox" => false,
-        _ => {
-            let trimmed = requested.trim();
-            trimmed == id || trimmed.to_lowercase() == id
-        }
+        _ => false,
     }
 }
 
@@ -544,13 +542,6 @@ mod tests {
             display_label_for("epic", &epic, "Main-ID").as_deref(),
             Some("Someone else")
         );
-        // A descriptor that folds ids stores them lowercase and switches any
-        // spelling to that one.
-        let folded = vec![json!({"accountId": "abc123", "label": "Folded"})];
-        assert_eq!(
-            display_label_for("epic", &folded, " ABC123 ").as_deref(),
-            Some("Folded")
-        );
 
         // Riot and Roblox ids switch only as written.
         let riot = vec![
@@ -578,6 +569,24 @@ mod tests {
         assert_eq!(
             display_label_for("steam", &steam, "Login_Name").as_deref(),
             Some("Alice")
+        );
+    }
+
+    #[test]
+    fn a_case_sensitive_descriptor_never_labels_an_id_with_another_spelling() {
+        let rows = vec![
+            json!({"accountId": "abc", "label": "Lower"}),
+            json!({"accountId": "ABC", "label": "Upper"}),
+        ];
+        // The engine switches ` ABC ` to `ABC`; the caller passes that id.
+        assert_eq!(
+            display_label_for("epic", &rows, "ABC").as_deref(),
+            Some("Upper")
+        );
+        assert_eq!(
+            display_label_for("epic", &rows, " ABC "),
+            None,
+            "an id the engine did not resolve must not fold onto another row"
         );
     }
 

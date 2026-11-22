@@ -509,6 +509,10 @@ impl PlatformService for DescriptorService {
         config_bridge::set_label(&app, &self.descriptor.id, &account_id, label).map_err(Into::into)
     }
 
+    fn normalize_account_id(&self, account_id: &str) -> String {
+        self.normalise_id(account_id)
+    }
+
     fn supports_dry_run(&self) -> bool {
         true
     }
