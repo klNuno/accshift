@@ -45,3 +45,21 @@ fn a_switch_never_kills_roblox_studio() {
     // Studio can hold unsaved work: only the game client is closed.
     assert_eq!(ROBLOX_SWITCH_KILL_NAMES, ["RobloxPlayerBeta.exe"]);
 }
+
+#[test]
+fn an_account_imported_without_a_cookie_asks_for_a_sign_in() {
+    // An account imported from TcNo has no saved session: the switch must
+    // say how to get one, not that a cookie failed to decrypt.
+    let account = RobloxAccountConfig {
+        user_id: "1234".into(),
+        username: "Imported".into(),
+        display_name: "Imported".into(),
+        cookie_encrypted: String::new(),
+        last_used_at: None,
+    };
+    let error = stored_cookie(&account).unwrap_err();
+    assert!(
+        error.starts_with("Sign in to this Roblox account again"),
+        "{error}"
+    );
+}

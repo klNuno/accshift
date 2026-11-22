@@ -78,6 +78,24 @@ static SETUP_JOBS: SetupJobs<QuickLoginJob> = SetupJobs::new("Roblox", DEFAULT_S
 // Public operations
 // ---------------------------------------------------------------------------
 
+/// The cookie saved for `account`, decrypted.
+fn stored_cookie(account: &RobloxAccountConfig) -> Result<String, String> {
+    // An account imported from another switcher comes without a session:
+    // signing in again through "Add account" stores its cookie.
+    if account.cookie_encrypted.trim().is_empty() {
+        return Err(
+            "Sign in to this Roblox account again with Add account: accshift has no saved session for it yet"
+                .to_string(),
+        );
+    }
+    let cookie = crate::os::decrypt_secret(&account.cookie_encrypted)
+        .map_err(|e| format!("Could not decrypt Roblox cookie: {e}"))?;
+    if cookie.trim().is_empty() {
+        return Err("Stored Roblox cookie is empty".to_string());
+    }
+    Ok(cookie)
+}
+
 pub fn get_accounts(app_handle: &dyn AppContext) -> Result<Vec<RobloxAccount>, String> {
     Ok(read_accounts(app_handle))
 }
@@ -119,12 +137,7 @@ pub fn switch_account(app_handle: &dyn AppContext, user_id: &str) -> Result<(), 
         .find(|a| a.user_id == user_id)
         .ok_or_else(|| "Roblox account not found".to_string())?;
 
-    let cookie = crate::os::decrypt_secret(&account.cookie_encrypted)
-        .map_err(|e| format!("Could not decrypt Roblox cookie: {e}"))?;
-
-    if cookie.trim().is_empty() {
-        return Err("Stored Roblox cookie is empty".to_string());
-    }
+    let cookie = stored_cookie(account)?;
 
     log_platform_info(
         app_handle,
