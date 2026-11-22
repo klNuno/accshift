@@ -70,6 +70,7 @@ impl AppModel {
                 AppEffect::ConfirmSettled { ticket, allowed } => {
                     self.settle_descriptor_removal(ticket, allowed);
                     self.settle_backup_restore(ticket, allowed);
+                    self.settle_tcno_import(ticket, allowed);
                     self.settle_persona_confirm(ticket, allowed);
                     self.settle_deep_link_confirm(ctx, ticket, allowed);
                 }

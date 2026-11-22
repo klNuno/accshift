@@ -13,6 +13,73 @@
     "currentRobloxAccount": ""
   },
   "commands": {
+    "tcno_import": [
+      {
+        "args": {},
+        "result": {
+          "path": "C:\\Users\\player\\AppData\\Roaming\\TcNo Account Switcher",
+          "version": "v4",
+          "accountsImported": 9,
+          "accountsSkipped": 2,
+          "notesImported": 4,
+          "notesSkipped": 1,
+          "snapshotsImported": 3,
+          "orderEntriesAdded": 9,
+          "toCapture": 6,
+          "eglv2Skipped": 1,
+          "vaultDetected": false,
+          "platforms": [],
+          "warnings": [
+            {
+              "platform": "jagex",
+              "kind": "identityNotPortable",
+              "detail": "Main"
+            },
+            {
+              "platform": "epic",
+              "kind": "epicEglv2Skipped",
+              "detail": "Builder"
+            }
+          ]
+        }
+      }
+    ],
+    "tcno_preview": [
+      {
+        "args": {},
+        "result": {
+          "path": "C:\\Users\\player\\AppData\\Roaming\\TcNo Account Switcher",
+          "version": "v4",
+          "platforms": [],
+          "accountsNew": 9,
+          "accountsExisting": 2,
+          "notesNew": 4,
+          "notesExisting": 1,
+          "snapshotsNew": 3,
+          "toCapture": 6,
+          "eglv2Skipped": 1,
+          "vaultDetected": false,
+          "warnings": [
+            {
+              "platform": "jagex",
+              "kind": "identityNotPortable",
+              "detail": "Main"
+            },
+            {
+              "platform": "epic",
+              "kind": "epicEglv2Skipped",
+              "detail": "Builder"
+            }
+          ]
+        }
+      }
+    ],
+    "tcno_select_folder": [
+      {
+        "args": {},
+        "result": "C:\\Users\\player\\AppData\\Roaming\\TcNo Account Switcher"
+      }
+    ],
     "backup_export": [
       {
         "args": {},
