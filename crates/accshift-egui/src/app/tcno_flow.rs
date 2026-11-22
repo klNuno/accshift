@@ -183,10 +183,11 @@ impl AppModel {
         let snapshot = match imported.read_back {
             Ok(snapshot) => snapshot,
             Err(_) => {
-                self.backup
-                    .tcno
-                    .set_notice(translate(locale, "settings.tcnoRestartNeeded"), false);
-                self.keep_restored_files(RestartWhy::Imported);
+                self.keep_restored_files(RestartWhy::Imported {
+                    error: error.then_some(text),
+                });
+                let notice = self.backup.restart_message(locale).unwrap_or_default();
+                self.backup.tcno.set_notice(notice, error);
                 ctx.request_repaint();
                 return;
             }

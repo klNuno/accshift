@@ -9,7 +9,11 @@ use super::{TcNoFormatVersion, TcNoWarning, TcNoWarningKind};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use super::MAX_NOTE_UTF16_LEN;
 
 /// Hard cap on TcNo JSON metadata files so a damaged or hostile file cannot
 /// exhaust memory.
@@ -99,7 +103,7 @@ pub(super) struct ParsedIds {
     /// Ordered as in the file (`serde_json` uses `preserve_order`).
     pub(super) accounts: Vec<(String, String)>,
     pub(super) last_used: BTreeMap<String, Value>,
-    pub(super) account_tags: BTreeMap<String, Vec<String>>,
+    pub(super) account_tags: BTreeMap<String, Vec<Arc<str>>>,
 }
 
 /// Content sniffed inside an Epic account's saved session folder.
@@ -149,19 +153,19 @@ pub(super) struct RootScan {
 
 /// Scan `root` read-only. Requires `root/LoginCache` to exist as a directory.
 pub(super) fn scan_root(root: &Path) -> Result<RootScan, String> {
-    if !root.is_dir() {
-        return Err(format!(
-            "TcNo Account Switcher folder does not exist: {}",
+    let source = root.canonicalize().map_err(|err| {
+        format!(
+            "Could not open TcNo Account Switcher folder {}: {err}",
             root.display()
-        ));
-    }
-    let login_cache = root.join("LoginCache");
-    if !login_cache.is_dir() {
-        return Err(format!(
-            "Folder does not look like a TcNo Account Switcher data directory (LoginCache is missing): {}",
+        )
+    })?;
+    let login_cache = source.join("LoginCache");
+    source_directory(&login_cache).map_err(|err| {
+        format!(
+            "Could not open TcNo LoginCache in {}: {err}",
             root.display()
-        ));
-    }
+        )
+    })?;
 
     let mut warnings = Vec::new();
     let mut platforms = Vec::new();
@@ -174,44 +178,41 @@ pub(super) fn scan_root(root: &Path) -> Result<RootScan, String> {
 
         for &tcno_name in spec.cache_dirs {
             let dir = login_cache.join(tcno_name);
-            let vaulted_uids = detect_vault_uids(root, tcno_name);
+            let vaulted_uids = detect_vault_uids(&source, tcno_name);
             let dir_vault = !vaulted_uids.is_empty();
             if dir_vault {
                 platform_vault = true;
                 saw_v4 = true;
             }
-            if !dir.is_dir() {
+            if let Err(err) = source_directory(&dir) {
+                if err.kind() != io::ErrorKind::NotFound {
+                    corrupt_file(&dir, spec.accshift_id, &mut warnings, &err.to_string());
+                }
                 continue;
             }
 
             let ids_path = dir.join("ids.json");
-            let ids = if ids_path.exists() {
-                match read_ids_file(&ids_path, spec.accshift_id == "steam") {
-                    Ok(parsed) => {
-                        match parsed.version {
-                            TcNoFormatVersion::Classic => saw_classic = true,
-                            TcNoFormatVersion::V4 => saw_v4 = true,
-                            TcNoFormatVersion::Mixed => {
-                                saw_classic = true;
-                                saw_v4 = true;
-                            }
-                            TcNoFormatVersion::Unknown => {}
-                        }
-                        parsed
-                    }
-                    Err(err) => {
-                        warnings.push(TcNoWarning {
-                            platform: spec.accshift_id.to_string(),
-                            kind: err.kind,
-                            detail: format!("{}: {}", ids_path.display(), err.detail),
-                        });
-                        // Never guess when ids.json has an unrecognized format:
-                        // skip this platform cache dir cleanly.
-                        continue;
-                    }
+            let ids = match read_ids_file(&ids_path, spec.accshift_id == "steam") {
+                Ok(Some(parsed)) => {
+                    saw_classic |= matches!(
+                        parsed.version,
+                        TcNoFormatVersion::Classic | TcNoFormatVersion::Mixed
+                    );
+                    saw_v4 |= matches!(
+                        parsed.version,
+                        TcNoFormatVersion::V4 | TcNoFormatVersion::Mixed
+                    );
+                    parsed
                 }
-            } else {
-                ParsedIds::default()
+                Ok(None) => ParsedIds::default(),
+                Err(err) => {
+                    warnings.push(TcNoWarning {
+                        platform: spec.accshift_id.to_string(),
+                        kind: err.kind,
+                        detail: format!("{}: {}", ids_path.display(), err.detail),
+                    });
+                    continue;
+                }
             };
 
             let order = read_order_file(&dir.join("order.json"), spec.accshift_id, &mut warnings);
@@ -223,7 +224,7 @@ pub(super) fn scan_root(root: &Path) -> Result<RootScan, String> {
             });
         }
 
-        let (notes, notes_classic, notes_v4) = read_platform_notes(root, spec, &mut warnings);
+        let (notes, notes_classic, notes_v4) = read_platform_notes(&source, spec, &mut warnings);
         if notes_classic {
             saw_classic = true;
         }
@@ -269,24 +270,126 @@ struct IdsParseError {
     detail: String,
 }
 
-fn read_json_value(path: &Path) -> Result<Value, String> {
-    let meta = fs::symlink_metadata(path).map_err(|e| format!("Could not stat file: {e}"))?;
-    if meta.file_type().is_symlink() || !meta.is_file() {
-        return Err("Expected a regular file".to_string());
-    }
-    if meta.len() > MAX_JSON_BYTES {
-        return Err(format!("File exceeds {} bytes", MAX_JSON_BYTES));
-    }
-    let raw = fs::read_to_string(path).map_err(|e| format!("Could not read file: {e}"))?;
-    let trimmed = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
-    serde_json::from_str(trimmed).map_err(|e| format!("Invalid JSON: {e}"))
+struct SourceDirectory {
+    #[cfg(windows)]
+    _handles: Vec<fs::File>,
 }
 
-fn read_ids_file(path: &Path, is_steam: bool) -> Result<ParsedIds, IdsParseError> {
-    let value = read_json_value(path).map_err(|detail| IdsParseError {
-        kind: TcNoWarningKind::CorruptFile,
-        detail,
-    })?;
+#[cfg(windows)]
+fn open_source_entry(path: &Path, directory: bool) -> io::Result<fs::File> {
+    use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+
+    const BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const SHARE_READ: u32 = 1;
+    const REPARSE_POINT: u32 = 0x400;
+    let flags = OPEN_REPARSE_POINT | if directory { BACKUP_SEMANTICS } else { 0 };
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(SHARE_READ)
+        .custom_flags(flags)
+        .open(path)?;
+    let meta = file.metadata()?;
+    let expected_type = if directory {
+        meta.is_dir()
+    } else {
+        meta.is_file()
+    };
+    if !expected_type || meta.file_attributes() & REPARSE_POINT != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Expected a regular source entry",
+        ));
+    }
+    Ok(file)
+}
+
+fn source_directory(path: &Path) -> io::Result<SourceDirectory> {
+    let paths: Vec<_> = path.ancestors().take_while(|p| p.has_root()).collect();
+    #[cfg(windows)]
+    {
+        // Pin each directory before opening the next path component. Denying
+        // write and delete sharing prevents retargeting or replacing a parent
+        // between the reparse-point check and the child open.
+        let handles = paths
+            .into_iter()
+            .rev()
+            .map(|path| open_source_entry(path, true))
+            .collect::<io::Result<_>>()?;
+        Ok(SourceDirectory { _handles: handles })
+    }
+    #[cfg(not(windows))]
+    {
+        for path in paths.into_iter().rev() {
+            if !fs::symlink_metadata(path)?.is_dir() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Expected a regular source directory",
+                ));
+            }
+        }
+        Ok(SourceDirectory {})
+    }
+}
+
+fn open_source_file(path: &Path) -> io::Result<fs::File> {
+    let _parent = source_directory(path.parent().expect("source file has a parent"))?;
+    #[cfg(windows)]
+    {
+        open_source_entry(path, false)
+    }
+    #[cfg(not(windows))]
+    {
+        if !fs::symlink_metadata(path)?.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Expected a regular source file",
+            ));
+        }
+        fs::File::open(path)
+    }
+}
+
+fn read_source_bytes(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
+    let file = open_source_file(path)?;
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("File exceeds {limit} bytes"),
+        ));
+    }
+    Ok(bytes)
+}
+
+pub(super) fn read_session_file(path: &Path) -> Result<Vec<u8>, String> {
+    let raw = read_source_bytes(path, MAX_SNAPSHOT_FILE_BYTES)
+        .map_err(|err| format!("Could not read {}: {err}", path.display()))?;
+    if raw.is_empty() {
+        return Err(format!("Session file is empty: {}", path.display()));
+    }
+    Ok(raw)
+}
+
+fn read_json_value(path: &Path) -> io::Result<Value> {
+    let raw = read_source_bytes(path, MAX_JSON_BYTES)?;
+    let trimmed = raw.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&raw);
+    serde_json::from_slice(trimmed).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+fn read_ids_file(path: &Path, is_steam: bool) -> Result<Option<ParsedIds>, IdsParseError> {
+    match read_json_value(path) {
+        Ok(value) => parse_ids(value, is_steam).map(Some),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(IdsParseError {
+            kind: TcNoWarningKind::CorruptFile,
+            detail: err.to_string(),
+        }),
+    }
+}
+
+fn parse_ids(value: Value, is_steam: bool) -> Result<ParsedIds, IdsParseError> {
     let Value::Object(map) = value else {
         return Err(IdsParseError {
             kind: TcNoWarningKind::UnsupportedIdsFormat,
@@ -359,21 +462,20 @@ fn parse_v4_ids(map: &Map<String, Value>, ids_val: &Value) -> Result<ParsedIds, 
     }
 
     // Resolve tag ids to human names when a `tags` dictionary is present.
-    let mut tag_names: BTreeMap<String, String> = BTreeMap::new();
+    let mut tag_names: BTreeMap<&str, Arc<str>> = BTreeMap::new();
     if let Some(Value::Object(tags_obj)) = map.get("tags") {
         for (tag_id, entry) in tags_obj {
             let label = match entry {
-                Value::String(s) => Some(s.trim().to_string()),
+                Value::String(s) => Some(s.as_str()),
                 Value::Object(obj) => obj
                     .get("name")
                     .or_else(|| obj.get("Name"))
                     .or_else(|| obj.get("label"))
-                    .and_then(Value::as_str)
-                    .map(|s| s.trim().to_string()),
+                    .and_then(Value::as_str),
                 _ => None,
             };
-            if let Some(label) = label.filter(|s| !s.is_empty()) {
-                tag_names.insert(tag_id.clone(), label);
+            if let Some(label) = label.map(clean_note_text).filter(|s| !s.is_empty()) {
+                tag_names.insert(tag_id, Arc::from(label));
             }
         }
     }
@@ -384,14 +486,14 @@ fn parse_v4_ids(map: &Map<String, Value>, ids_val: &Value) -> Result<ParsedIds, 
             let Value::Array(items) = raw_list else {
                 continue;
             };
-            let resolved: Vec<String> = items
+            let resolved: Vec<_> = items
                 .iter()
                 .filter_map(Value::as_str)
                 .map(|raw| {
                     tag_names
                         .get(raw)
                         .cloned()
-                        .unwrap_or_else(|| raw.trim().to_string())
+                        .unwrap_or_else(|| Arc::from(clean_note_text(raw)))
                 })
                 .filter(|s| !s.is_empty())
                 .collect();
@@ -409,10 +511,33 @@ fn parse_v4_ids(map: &Map<String, Value>, ids_val: &Value) -> Result<ParsedIds, 
     })
 }
 
-fn read_order_file(path: &Path, platform: &str, warnings: &mut Vec<TcNoWarning>) -> Vec<String> {
-    if !path.exists() {
-        return Vec::new();
+/// Keep one character past the note budget so clipping preserves the
+/// original cutoff even when the next character uses two UTF-16 units.
+pub(super) fn clean_note_text(value: &str) -> String {
+    let mut clean = String::new();
+    let mut units = 0;
+    for ch in value
+        .trim_matches(|ch: char| ch.is_whitespace() || ch.is_control())
+        .chars()
+    {
+        clean.push(if ch.is_control() { ' ' } else { ch });
+        units += ch.len_utf16();
+        if units > MAX_NOTE_UTF16_LEN {
+            break;
+        }
     }
+    clean
+}
+
+fn corrupt_file(path: &Path, platform: &str, warnings: &mut Vec<TcNoWarning>, detail: &str) {
+    warnings.push(TcNoWarning {
+        platform: platform.to_string(),
+        kind: TcNoWarningKind::CorruptFile,
+        detail: format!("{}: {detail}", path.display()),
+    });
+}
+
+fn read_order_file(path: &Path, platform: &str, warnings: &mut Vec<TcNoWarning>) -> Vec<String> {
     match read_json_value(path) {
         Ok(Value::Array(items)) => items
             .into_iter()
@@ -422,19 +547,13 @@ fn read_order_file(path: &Path, platform: &str, warnings: &mut Vec<TcNoWarning>)
             })
             .collect(),
         Ok(_) => {
-            warnings.push(TcNoWarning {
-                platform: platform.to_string(),
-                kind: TcNoWarningKind::CorruptFile,
-                detail: format!("{}: expected JSON array", path.display()),
-            });
+            corrupt_file(path, platform, warnings, "expected JSON array");
             Vec::new()
         }
-        Err(detail) => {
-            warnings.push(TcNoWarning {
-                platform: platform.to_string(),
-                kind: TcNoWarningKind::CorruptFile,
-                detail: format!("{}: {detail}", path.display()),
-            });
+        Err(err) => {
+            if err.kind() != io::ErrorKind::NotFound {
+                corrupt_file(path, platform, warnings, &err.to_string());
+            }
             Vec::new()
         }
     }
@@ -450,19 +569,11 @@ fn read_platform_notes(
     let mut saw_v4 = false;
 
     for rel in spec.classic_settings {
-        let path = root.join(rel);
-        if path.exists() {
-            saw_classic = true;
-            merge_notes_file(&path, spec.accshift_id, &mut notes, warnings);
-        }
+        saw_classic |= merge_notes_file(&root.join(rel), spec.accshift_id, &mut notes, warnings);
     }
     // v4 settings override classic notes when both exist.
     for rel in spec.v4_settings {
-        let path = root.join(rel);
-        if path.exists() {
-            saw_v4 = true;
-            merge_notes_file(&path, spec.accshift_id, &mut notes, warnings);
-        }
+        saw_v4 |= merge_notes_file(&root.join(rel), spec.accshift_id, &mut notes, warnings);
     }
 
     (notes, saw_classic, saw_v4)
@@ -473,32 +584,25 @@ fn merge_notes_file(
     platform: &str,
     out: &mut BTreeMap<String, String>,
     warnings: &mut Vec<TcNoWarning>,
-) {
+) -> bool {
     let value = match read_json_value(path) {
         Ok(value) => value,
-        Err(detail) => {
-            warnings.push(TcNoWarning {
-                platform: platform.to_string(),
-                kind: TcNoWarningKind::CorruptFile,
-                detail: format!("{}: {detail}", path.display()),
-            });
-            return;
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return false,
+        Err(err) => {
+            corrupt_file(path, platform, warnings, &err.to_string());
+            return true;
         }
     };
     let Some(obj) = value.as_object() else {
-        warnings.push(TcNoWarning {
-            platform: platform.to_string(),
-            kind: TcNoWarningKind::CorruptFile,
-            detail: format!("{}: expected JSON object", path.display()),
-        });
-        return;
+        corrupt_file(path, platform, warnings, "expected JSON object");
+        return true;
     };
     let notes_map = obj
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case("AccountNotes"))
         .and_then(|(_, v)| v.as_object());
     let Some(notes_map) = notes_map else {
-        return;
+        return true;
     };
     for (uid, raw_note) in notes_map {
         if let Some(text) = raw_note.as_str() {
@@ -508,12 +612,16 @@ fn merge_notes_file(
             }
         }
     }
+    true
 }
 
 /// List `<uid>` stems for any `.tcvault` files under
 /// `Vault/accounts/<tcno_platform>/`.
 fn detect_vault_uids(root: &Path, tcno_platform: &str) -> Vec<String> {
     let vault_dir = root.join("Vault").join("accounts").join(tcno_platform);
+    let Ok(_guard) = source_directory(&vault_dir) else {
+        return Vec::new();
+    };
     let Ok(entries) = fs::read_dir(&vault_dir) else {
         return Vec::new();
     };
@@ -541,20 +649,14 @@ pub(super) fn safe_account_dir(parent: &Path, account_name: &str) -> Option<Path
         return None;
     }
     let path = parent.join(name);
-    let meta = fs::symlink_metadata(&path).ok()?;
-    if meta.file_type().is_symlink() || !meta.is_dir() {
-        return None;
-    }
+    source_directory(&path).ok()?;
     Some(path)
 }
 
 fn is_non_empty_regular_file(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok_and(|meta| {
-        !meta.file_type().is_symlink()
-            && meta.is_file()
-            && meta.len() > 0
-            && meta.len() <= MAX_SNAPSHOT_FILE_BYTES
-    })
+    open_source_file(path)
+        .and_then(|file| file.metadata())
+        .is_ok_and(|meta| meta.len() > 0 && meta.len() <= MAX_SNAPSHOT_FILE_BYTES)
 }
 
 /// Sniff a Ubisoft account's plaintext cache folder for the two files
@@ -576,6 +678,9 @@ pub(super) fn sniff_ubisoft_folder(account_dir: &Path) -> Option<UbisoftFolderFi
 /// (`GameUserSettings.ini` + `reg.json` AccountId) from v4 eglv2 (`auth/` or
 /// `*.dpapi`).
 pub(super) fn sniff_epic_folder(account_dir: &Path) -> EpicFolderKind {
+    let Ok(_guard) = source_directory(account_dir) else {
+        return EpicFolderKind::Incomplete;
+    };
     if let Ok(entries) = fs::read_dir(account_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name();
@@ -619,14 +724,16 @@ pub(super) fn read_reg_json_account_id(reg_path: &Path) -> Option<String> {
         if !matches_key {
             continue;
         }
-        let raw = match value {
+        let Some(raw) = (match value {
             Value::String(s) => Some(s.as_str()),
             Value::Object(obj) => obj
                 .get("v")
                 .or_else(|| obj.get("V"))
                 .and_then(Value::as_str),
             _ => None,
-        }?;
+        }) else {
+            continue;
+        };
         let trimmed = raw.trim();
         if trimmed.len() == 32 && trimmed.bytes().all(|b| b.is_ascii_hexdigit()) {
             // Kept as written: it goes back into the registry on restore.

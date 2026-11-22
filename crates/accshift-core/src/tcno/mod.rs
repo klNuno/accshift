@@ -24,6 +24,9 @@ mod tests_edge;
 #[cfg(test)]
 mod tests_safety;
 
+/// Matches `accshift_app::stores::MAX_NOTE_LENGTH` (UTF-16 code units).
+const MAX_NOTE_UTF16_LEN: usize = 180;
+
 use crate::AppContext;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -146,10 +149,10 @@ const IMPORT_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 /// It reads then rewrites the account lists: the whole of it holds the
 /// cross-process lock a switch, an add or the CLI takes.
 pub fn apply_tcno_import(app: &dyn AppContext, root: &Path) -> Result<TcNoImportReport, String> {
-    let _lock =
-        crate::lock::acquire_exclusive(app, IMPORT_LOCK_TIMEOUT).map_err(|e| e.to_string())?;
     let scan = reader::scan_root(root)?;
     let plan = mapper::build_plan(scan);
+    let _lock =
+        crate::lock::acquire_exclusive(app, IMPORT_LOCK_TIMEOUT).map_err(|e| e.to_string())?;
     let report = apply::execute_plan(app, &plan)?;
     log_warnings(app, &report.warnings);
     Ok(report)

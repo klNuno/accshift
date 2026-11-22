@@ -6,7 +6,7 @@ use crate::config::{self, BattleNetAccountConfig};
 #[cfg(windows)]
 use crate::snapshot_crypto;
 use crate::storage::{self, STORE_ACCOUNT_CARD_NOTES, STORE_FOLDERS};
-use serde_json::{json, Value};
+use serde_json::json;
 #[cfg(windows)]
 use std::fs;
 
@@ -165,7 +165,7 @@ fn classic_flat_fixture_imports_accounts_notes_order_and_snapshots() {
 
     // Preview is read-only: config and notes must not exist yet.
     assert!(config::load_config(&ctx).battle_net.accounts.is_empty());
-    assert_eq!(read_store(&ctx, STORE_ACCOUNT_CARD_NOTES), Value::Null);
+    assert!(read_store(&ctx, STORE_ACCOUNT_CARD_NOTES).is_null());
 
     let report = apply_tcno_import(&ctx, tcno.path()).expect("apply classic");
     assert_eq!(report.version, TcNoFormatVersion::Classic);
@@ -334,6 +334,10 @@ fn rerun_deduplicates_and_preserves_existing_labels_notes_and_folders() {
 
     let folders = read_store(&ctx, STORE_FOLDERS);
     assert_eq!(
+        folders["itemOrder"]["f1"],
+        json!([{ "type": "account", "id": "Alpha@Example.com" }])
+    );
+    assert_eq!(
         folders["itemOrder"]["root:battle-net"],
         json!([{ "type": "account", "id": "gamma@example.com" }])
     );
@@ -432,6 +436,12 @@ fn v4_object_fixture_folds_tags_parses_timestamps_and_imports_roblox() {
     assert_eq!(report.accounts_imported, 2);
     assert_eq!(report.notes_imported, 3);
     assert_eq!(report.to_capture, 1); // Roblox needs re-login
+    let steam = report
+        .platforms
+        .iter()
+        .find(|p| p.platform_id == "steam")
+        .unwrap();
+    assert_eq!(steam.accounts_new, 0);
 
     let notes = read_store(&ctx, STORE_ACCOUNT_CARD_NOTES);
     assert_eq!(notes["76561198000000010"], "Main [CS2, Prime]");

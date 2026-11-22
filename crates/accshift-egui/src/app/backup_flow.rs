@@ -132,7 +132,7 @@ pub(super) enum RestartWhy {
     /// which ones, and where the copy of the old files is.
     Incomplete { error: String },
     /// The TcNo import ran; this session could not read the stores back.
-    Imported,
+    Imported { error: Option<String> },
 }
 
 /// The backup card's jobs and the boundary's stage.
@@ -199,7 +199,13 @@ impl BackupFlow {
                 "error",
                 error.clone(),
             ),
-            RestartWhy::Imported => translate(locale, "settings.tcnoRestartNeeded"),
+            RestartWhy::Imported { error } => {
+                let restart = translate(locale, "settings.tcnoRestartNeeded");
+                match error {
+                    Some(error) => format!("{error}\n{restart}"),
+                    None => restart,
+                }
+            }
         })
     }
 
@@ -465,6 +471,8 @@ impl AppModel {
             || b.stores.storage().has_unsaved()
             || self.external_refresh.running()
             || self.backup.gate.running()
+            || !self.task_jobs.is_empty()
+            || !self.rename_jobs.is_empty()
             || account_writes_running(b)
         {
             return;
@@ -544,7 +552,7 @@ impl AppModel {
             Poll::Gone => {
                 let text = translate(self.backup_locale(), "settings.tcnoRestartNeeded");
                 self.backup.tcno.set_notice(text, true);
-                self.keep_restored_files(RestartWhy::Imported);
+                self.keep_restored_files(RestartWhy::Imported { error: None });
                 ctx.request_repaint();
                 return;
             }
@@ -634,7 +642,7 @@ impl AppModel {
             Stage::Importing(job) => match job.wait() {
                 Some(imported) => Some(imported.into_snapshot()),
                 None => {
-                    self.keep_restored_files(RestartWhy::Imported);
+                    self.keep_restored_files(RestartWhy::Imported { error: None });
                     return;
                 }
             },

@@ -2,6 +2,7 @@
 //! accshift's config, Roblox store, client stores and encrypted snapshots.
 
 use super::mapper::{ImportPlan, PlannedAccount, PlannedPlatform, PlannedSnapshot};
+use super::reader::read_session_file;
 use super::{
     TcNoFormatVersion, TcNoImportReport, TcNoPlatformPreview, TcNoPreview, TcNoWarning,
     TcNoWarningKind,
@@ -40,13 +41,13 @@ struct OriginLedger {
     items: BTreeMap<String, TcNoOriginRecord>,
 }
 
-/// How [`CurrentState::load`] finds the stores and snapshot folders.
+/// Whether a config read may clear a previous unreadable-file marker.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Access {
     /// The preview: legacy locations are read where they are, never moved.
     ReadOnly,
-    /// The import, about to write: legacy locations migrate first.
-    Migrate,
+    /// The import has acquired the write lock and checked the disk config.
+    ForWrite,
 }
 
 /// Snapshot of accshift's current state needed to preview or deduplicate a
@@ -56,8 +57,6 @@ struct CurrentState {
     roblox_accounts: Vec<RobloxAccountConfig>,
     notes: Map<String, Value>,
     folders: Value,
-    ubisoft_snapshots: Option<std::path::PathBuf>,
-    epic_snapshots: Option<std::path::PathBuf>,
     origins: OriginLedger,
 }
 
@@ -69,29 +68,18 @@ impl CurrentState {
         // The preview only looks: an unreadable config is not logged then.
         let cfg = match access {
             Access::ReadOnly => config::peek_config(app)?,
-            Access::Migrate => config::load_config_checked(app)?,
+            Access::ForWrite => config::load_config_checked(app)?,
         };
         let roblox_accounts = load_roblox_accounts(app, &cfg)?;
-        let store_path = |id: &str| match access {
-            Access::ReadOnly => storage::peek_client_store_path(app, id),
-            Access::Migrate => storage::client_store_path(app, id),
-        };
+        let store_path = |id: &str| storage::peek_client_store_path(app, id);
         let notes = read_notes_map(&store_path(STORE_ACCOUNT_CARD_NOTES)?)?;
         let folders = read_folders_value(&store_path(STORE_FOLDERS)?)?;
-        let snapshots = |id: &str| match access {
-            Access::ReadOnly => storage::peek_platform_snapshots_dir(app, id),
-            Access::Migrate => storage::platform_snapshots_dir(app, id),
-        };
-        let ubisoft_snapshots = snapshots("ubisoft").ok();
-        let epic_snapshots = snapshots("epic").ok();
         let origins = load_origin_ledger(app)?;
         Ok(Self {
             cfg,
             roblox_accounts,
             notes,
             folders,
-            ubisoft_snapshots,
-            epic_snapshots,
             origins,
         })
     }
@@ -166,28 +154,24 @@ impl CurrentState {
         id.to_string()
     }
 
-    fn note_exists(&self, key: &str) -> bool {
-        self.notes
-            .get(key)
-            .and_then(Value::as_str)
-            .is_some_and(|s| !s.trim().is_empty())
-    }
-
-    fn snapshot_exists(&self, acc: &PlannedAccount) -> bool {
-        let id = self.resolved_accshift_id(acc);
-        match acc.platform_id {
-            // Both files or none: half a session would restore broken.
-            "ubisoft" => self.ubisoft_snapshots.as_deref().is_some_and(|root| {
-                let dir = root.join(&id);
-                dir.join("user.dat").is_file() && dir.join("ConnectSecureStorage.dat").is_file()
-            }),
-            "epic" => self.epic_snapshots.as_deref().is_some_and(|root| {
-                let dir = root.join(&id);
-                dir.join("GameUserSettings.ini").is_file()
-                    && dir.join("registry_account_id.txt").is_file()
-            }),
-            _ => false,
+    fn snapshot_exists(&self, app: &dyn AppContext, acc: &PlannedAccount) -> Result<bool, String> {
+        let files = match acc.platform_id {
+            "ubisoft" => ["user.dat", "ConnectSecureStorage.dat"],
+            "epic" => ["GameUserSettings.ini", "registry_account_id.txt"],
+            _ => return Ok(false),
+        };
+        let root = storage::peek_platform_snapshots_dir(app, acc.platform_id)?;
+        let dir = root.join(self.resolved_accshift_id(acc));
+        let mut complete = true;
+        for name in files {
+            let path = dir.join(name);
+            match fs::metadata(&path) {
+                Ok(meta) => complete &= meta.is_file(),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => complete = false,
+                Err(e) => return Err(format!("Could not check {}: {e}", path.display())),
+            }
         }
+        Ok(complete)
     }
 }
 
@@ -201,8 +185,9 @@ pub(super) fn preview_plan(app: &dyn AppContext, plan: &ImportPlan) -> Result<Tc
         ..TcNoPreview::default()
     };
 
+    let mut notes = state.notes.clone();
     for platform in &plan.platforms {
-        let stats = compute_platform_stats(&state, platform);
+        let (stats, _) = compute_platform_stats(app, &state, platform, &mut notes)?;
         preview.accounts_new += stats.accounts_new;
         preview.accounts_existing += stats.accounts_existing;
         preview.notes_new += stats.notes_new;
@@ -218,7 +203,14 @@ pub(super) fn preview_plan(app: &dyn AppContext, plan: &ImportPlan) -> Result<Tc
     Ok(preview)
 }
 
-fn compute_platform_stats(state: &CurrentState, platform: &PlannedPlatform) -> TcNoPlatformPreview {
+type NewSnapshots<'a> = Vec<(&'a PlannedAccount, &'a PlannedSnapshot)>;
+
+fn compute_platform_stats<'a>(
+    app: &dyn AppContext,
+    state: &CurrentState,
+    platform: &'a PlannedPlatform,
+    notes: &mut Map<String, Value>,
+) -> Result<(TcNoPlatformPreview, NewSnapshots<'a>), String> {
     let mut stats = TcNoPlatformPreview {
         platform_id: platform.platform_id.to_string(),
         eglv2_skipped: platform.eglv2_skipped,
@@ -226,6 +218,7 @@ fn compute_platform_stats(state: &CurrentState, platform: &PlannedPlatform) -> T
         ..TcNoPlatformPreview::default()
     };
 
+    let mut new_snapshots = Vec::new();
     for acc in &platform.accounts {
         let exists = state.account_exists(acc);
         if exists {
@@ -233,19 +226,27 @@ fn compute_platform_stats(state: &CurrentState, platform: &PlannedPlatform) -> T
         } else {
             stats.accounts_new += 1;
         }
-        let has_snap = state.snapshot_exists(acc);
-        if acc.snapshot.is_some() && !has_snap {
-            stats.snapshots_new += 1;
-        } else if !exists && acc.needs_capture && !has_snap {
-            stats.to_capture += 1;
+        let has_snap = state.snapshot_exists(app, acc)?;
+        if !has_snap {
+            if let Some(snapshot) = &acc.snapshot {
+                new_snapshots.push((acc, snapshot));
+            } else if !exists && acc.needs_capture {
+                stats.to_capture += 1;
+            }
         }
     }
+    stats.snapshots_new = new_snapshots.len();
 
-    for id in platform.notes.keys() {
+    for (id, text) in &platform.notes {
         let note_key = state.canonical_note_key(platform.platform_id, id);
-        if state.note_exists(&note_key) {
+        if notes
+            .get(&note_key)
+            .and_then(Value::as_str)
+            .is_some_and(|s| !s.trim().is_empty())
+        {
             stats.notes_existing += 1;
         } else {
+            notes.insert(note_key, Value::String(text.clone()));
             stats.notes_new += 1;
         }
     }
@@ -256,7 +257,7 @@ fn compute_platform_stats(state: &CurrentState, platform: &PlannedPlatform) -> T
         stats.order_new = merge_platform_order(&mut folders, platform.platform_id, &order);
     }
 
-    stats
+    Ok((stats, new_snapshots))
 }
 
 /// `platform`'s TcNo order, with the ids accshift already writes otherwise.
@@ -274,7 +275,7 @@ pub(super) fn execute_plan(
     app: &dyn AppContext,
     plan: &ImportPlan,
 ) -> Result<TcNoImportReport, String> {
-    let state = CurrentState::load(app, Access::Migrate)?;
+    let state = CurrentState::load(app, Access::ForWrite)?;
     let now = now_unix_ms();
 
     let mut report = TcNoImportReport {
@@ -285,7 +286,6 @@ pub(super) fn execute_plan(
     };
 
     let mut notes_map = state.notes.clone();
-    let mut notes_dirty = false;
     let mut folders_val = state.folders.clone();
     let mut folders_dirty = false;
     let mut origins = state.origins.clone();
@@ -296,10 +296,15 @@ pub(super) fn execute_plan(
     let mut roblox_dirty = false;
 
     let mut config_accounts: Vec<PlannedAccount> = Vec::new();
-    let mut snapshots_to_write: Vec<(PlannedAccount, PlannedSnapshot)> = Vec::new();
+    let mut snapshots_to_write = Vec::new();
 
-    for platform in &plan.platforms {
-        let stats = compute_platform_stats(&state, platform);
+    for (platform_index, platform) in plan.platforms.iter().enumerate() {
+        let (stats, new_snapshots) = compute_platform_stats(app, &state, platform, &mut notes_map)?;
+        snapshots_to_write.extend(new_snapshots.into_iter().map(|(acc, snapshot)| {
+            let mut resolved = acc.clone();
+            resolved.accshift_id = state.resolved_accshift_id(acc);
+            (platform_index, resolved, snapshot)
+        }));
         report.accounts_imported += stats.accounts_new;
         report.accounts_skipped += stats.accounts_existing;
         report.notes_imported += stats.notes_new;
@@ -337,12 +342,6 @@ pub(super) fn execute_plan(
                 config_accounts.push(acc_resolved.clone());
             }
 
-            if let Some(snap) = acc.snapshot.clone() {
-                if !state.snapshot_exists(&acc_resolved) {
-                    snapshots_to_write.push((acc_resolved.clone(), snap));
-                }
-            }
-
             let key = origin_key(acc.platform_id, &acc.tcno_uid);
             origins.items.entry(key).or_insert_with(|| {
                 origins_dirty = true;
@@ -356,14 +355,6 @@ pub(super) fn execute_plan(
             });
         }
 
-        for (id, note_text) in &platform.notes {
-            let key = state.canonical_note_key(platform.platform_id, id);
-            if !state.note_exists(&key) {
-                notes_map.insert(key, Value::String(note_text.clone()));
-                notes_dirty = true;
-            }
-        }
-
         if !platform.order.is_empty() {
             let order = canonical_order(&state, platform);
             let added = merge_platform_order(&mut folders_val, platform.platform_id, &order);
@@ -374,30 +365,30 @@ pub(super) fn execute_plan(
         }
     }
 
-    if !config_accounts.is_empty() {
-        config::update_config(app, |cfg| {
-            for acc in &config_accounts {
-                upsert_config_account(cfg, acc);
-            }
-        })?;
+    let update_config = !config_accounts.is_empty() || roblox_dirty;
+    let mut cfg = state.cfg;
+    for acc in &config_accounts {
+        upsert_config_account(&mut cfg, acc);
     }
-
     if roblox_dirty {
         let path = storage::roblox_accounts_path(app)?;
         storage::write_json_atomic(&path, &roblox_accounts)?;
-        let clone = roblox_accounts.clone();
-        config::update_config(app, |cfg| {
-            cfg.roblox.accounts = clone;
-        })?;
+        cfg.roblox.accounts = roblox_accounts;
+    }
+    if update_config {
+        config::save_config(app, &cfg)?;
     }
 
-    for (acc, snap) in snapshots_to_write {
-        match write_snapshot(app, &acc, &snap) {
+    for (platform_index, acc, snap) in snapshots_to_write {
+        match write_snapshot(app, &acc, snap) {
             Ok(()) => report.snapshots_imported += 1,
             // The account is already in the config: it stays, to capture on
             // its first sign-in, rather than failing the whole import.
             Err(error) => {
                 report.to_capture += 1;
+                let stats = &mut report.platforms[platform_index];
+                stats.snapshots_new -= 1;
+                stats.to_capture += 1;
                 report.warnings.push(TcNoWarning {
                     platform: acc.platform_id.to_string(),
                     kind: TcNoWarningKind::SnapshotFailed,
@@ -414,7 +405,7 @@ pub(super) fn execute_plan(
         }
     }
 
-    if notes_dirty {
+    if report.notes_imported > 0 {
         storage::save_client_store(app, STORE_ACCOUNT_CARD_NOTES, &Value::Object(notes_map))?;
     }
 
@@ -580,14 +571,18 @@ pub(super) fn publish_staged(
     }
     match fs::rename(staging, dir) {
         Ok(()) => {
-            if previous {
-                let _ = fs::remove_dir_all(aside);
-            }
+            let _ = fs::remove_dir_all(aside);
             Ok(())
         }
         Err(e) => {
             if previous {
-                let _ = fs::rename(aside, dir);
+                if let Err(rollback) = fs::rename(aside, dir) {
+                    return Err(format!(
+                        "Could not publish {}: {e}. The previous files remain at {} because restoring them failed: {rollback}",
+                        dir.display(),
+                        aside.display()
+                    ));
+                }
             }
             Err(format!("Could not publish {}: {e}", dir.display()))
         }
@@ -600,17 +595,23 @@ fn write_snapshot_files(dir: &std::path::Path, snap: &PlannedSnapshot) -> Result
             user_dat,
             connect_secure_storage,
         } => {
-            snapshot_crypto::replace_encrypted_file(user_dat, &dir.join("user.dat"))?;
-            snapshot_crypto::replace_encrypted_file(
-                connect_secure_storage,
+            snapshot_crypto::replace_encrypted_bytes(
+                &dir.join("user.dat"),
+                &read_session_file(user_dat)?,
+            )?;
+            snapshot_crypto::replace_encrypted_bytes(
                 &dir.join("ConnectSecureStorage.dat"),
+                &read_session_file(connect_secure_storage)?,
             )?;
         }
         PlannedSnapshot::EpicLegacy {
             ini_path,
             account_id,
         } => {
-            snapshot_crypto::replace_encrypted_file(ini_path, &dir.join("GameUserSettings.ini"))?;
+            snapshot_crypto::replace_encrypted_bytes(
+                &dir.join("GameUserSettings.ini"),
+                &read_session_file(ini_path)?,
+            )?;
             snapshot_crypto::replace_encrypted_bytes(
                 &dir.join("registry_account_id.txt"),
                 account_id.as_bytes(),
@@ -726,9 +727,25 @@ fn read_notes_map(path: &std::path::Path) -> Result<Map<String, Value>, String> 
 }
 
 fn read_folders_value(path: &std::path::Path) -> Result<Value, String> {
-    Ok(storage::read_json_if_exists::<Value>(path)
+    let value = storage::read_json_if_exists::<Value>(path)
         .map_err(|e| format!("Could not read the folders: {e}"))?
-        .unwrap_or(Value::Null))
+        .unwrap_or(Value::Null);
+    if value.is_null()
+        || value.as_object().is_some_and(|folders| {
+            folders.get("folders").is_none_or(Value::is_array)
+                && folders.get("itemOrder").is_none_or(|order| {
+                    order
+                        .as_object()
+                        .is_some_and(|buckets| buckets.values().all(Value::is_array))
+                })
+        })
+    {
+        return Ok(value);
+    }
+    Err(format!(
+        "Could not read the folders: {} has invalid folders or order",
+        path.display()
+    ))
 }
 
 fn origin_key(platform_id: &str, tcno_uid: &str) -> String {

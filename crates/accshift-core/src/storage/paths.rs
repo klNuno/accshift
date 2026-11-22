@@ -123,10 +123,14 @@ pub fn peek_platform_snapshots_dir(
         .join("platforms")
         .join(platform_id)
         .join("snapshots");
-    if !target.exists() {
+    let path_exists = |path: &Path| {
+        path.try_exists()
+            .map_err(|e| format!("Could not check {}: {e}", path.display()))
+    };
+    if !path_exists(&target)? {
         if let Some(name) = old_legacy_snapshots_name(platform_id) {
             let old_legacy = legacy_app_data_root(app_handle)?.join(name);
-            if old_legacy.exists() {
+            if path_exists(&old_legacy)? {
                 return Ok(old_legacy);
             }
         }

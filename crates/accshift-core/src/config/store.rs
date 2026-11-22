@@ -198,10 +198,12 @@ pub fn peek_config(app_handle: &dyn AppContext) -> Result<AppConfig, String> {
     };
     let portable = read(crate::storage::portable_config_path(app_handle)?)?;
     let local = read(crate::storage::local_config_path(app_handle)?)?;
+    let legacy = || super::migrate::peek_legacy_config(app_handle);
     Ok(match (portable, local) {
-        (Some(portable), local) => merge_split_configs(portable, local.unwrap_or_default()),
-        (None, Some(local)) => merge_split_configs(AppConfig::default(), local),
-        (None, None) => super::migrate::peek_legacy_config(app_handle)?,
+        (Some(portable), Some(local)) => merge_split_configs(portable, local),
+        (Some(portable), None) => merge_split_configs(portable, legacy()?),
+        (None, Some(local)) => merge_split_configs(legacy()?, local),
+        (None, None) => legacy()?,
     })
 }
 
@@ -209,19 +211,14 @@ pub fn peek_config(app_handle: &dyn AppContext) -> Result<AppConfig, String> {
 /// when a config file is present but could not be read, which
 /// [`save_config`] would refuse to write over anyway.
 pub fn load_config_checked(app_handle: &dyn AppContext) -> Result<AppConfig, String> {
-    let config = load_config(app_handle);
+    let config = peek_config(app_handle)?;
     let paths = [
         crate::storage::portable_config_path(app_handle),
         crate::storage::local_config_path(app_handle),
         crate::storage::legacy_config_path(app_handle),
     ];
     for path in paths.into_iter().flatten() {
-        if config_unreadable(&path) {
-            return Err(format!(
-                "The accshift config at {} cannot be read",
-                path.display()
-            ));
-        }
+        set_config_unreadable(&path, false);
     }
     Ok(config)
 }

@@ -2,17 +2,15 @@
 //! note, order and snapshot import plans.
 
 use super::reader::{
-    safe_account_dir, sniff_epic_folder, sniff_ubisoft_folder, EpicFolderKind, RootScan,
-    ScannedCacheDir, ScannedPlatform,
+    clean_note_text, safe_account_dir, sniff_epic_folder, sniff_ubisoft_folder, EpicFolderKind,
+    RootScan, ScannedCacheDir, ScannedPlatform,
 };
-use super::{TcNoFormatVersion, TcNoWarning, TcNoWarningKind};
+use super::{TcNoFormatVersion, TcNoWarning, TcNoWarningKind, MAX_NOTE_UTF16_LEN};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 use uuid::Uuid;
-
-/// Matches `accshift_app::stores::MAX_NOTE_LENGTH` (UTF-16 code units).
-const MAX_NOTE_UTF16_LEN: usize = 180;
 
 /// Session snapshot ready to be encrypted into accshift's descriptor storage.
 #[derive(Debug, Clone)]
@@ -97,7 +95,7 @@ fn map_platform(scanned: ScannedPlatform, warnings: &mut Vec<TcNoWarning>) -> Pl
     let mut seen_ids: HashSet<String> = HashSet::new();
     let mut uid_to_accshift: HashMap<String, String> = HashMap::new();
     let mut name_to_accshift: HashMap<String, String> = HashMap::new();
-    let mut tags_by_accshift: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut tags_by_accshift: BTreeMap<String, Vec<Arc<str>>> = BTreeMap::new();
     let mut raw_orders: Vec<String> = Vec::new();
     let mut eglv2_skipped = 0usize;
 
@@ -112,12 +110,13 @@ fn map_platform(scanned: ScannedPlatform, warnings: &mut Vec<TcNoWarning>) -> Pl
             }
 
             if scanned.accshift_id == "epic" {
+                let raw_key = trimmed_uid.to_ascii_lowercase();
+                if uid_to_accshift.contains_key(&raw_key) {
+                    continue;
+                }
                 match map_epic_account(cache_dir, trimmed_uid, &label, warnings) {
                     EpicAccountOutcome::Planned(account) => {
                         let key = account.accshift_id.to_ascii_lowercase();
-                        if !seen_ids.insert(key) {
-                            continue;
-                        }
                         uid_to_accshift
                             .insert(trimmed_uid.to_string(), account.accshift_id.clone());
                         uid_to_accshift.insert(
@@ -127,6 +126,9 @@ fn map_platform(scanned: ScannedPlatform, warnings: &mut Vec<TcNoWarning>) -> Pl
                         if !label.is_empty() {
                             name_to_accshift
                                 .insert(label.to_ascii_lowercase(), account.accshift_id.clone());
+                        }
+                        if !seen_ids.insert(key) {
+                            continue;
                         }
                         if let Some(tags) = cache_dir.ids.account_tags.get(raw_uid) {
                             tags_by_accshift.insert(account.accshift_id.clone(), tags.clone());
@@ -147,6 +149,11 @@ fn map_platform(scanned: ScannedPlatform, warnings: &mut Vec<TcNoWarning>) -> Pl
             };
 
             let dedup_key = accshift_id.to_ascii_lowercase();
+            uid_to_accshift.insert(trimmed_uid.to_string(), accshift_id.clone());
+            uid_to_accshift.insert(trimmed_uid.to_ascii_lowercase(), accshift_id.clone());
+            if !label.is_empty() {
+                name_to_accshift.insert(label.to_ascii_lowercase(), accshift_id.clone());
+            }
             if !seen_ids.insert(dedup_key) {
                 continue;
             }
@@ -195,11 +202,6 @@ fn map_platform(scanned: ScannedPlatform, warnings: &mut Vec<TcNoWarning>) -> Pl
                 _ => (None, true),
             };
 
-            uid_to_accshift.insert(trimmed_uid.to_string(), accshift_id.clone());
-            uid_to_accshift.insert(trimmed_uid.to_ascii_lowercase(), accshift_id.clone());
-            if !label.is_empty() {
-                name_to_accshift.insert(label.to_ascii_lowercase(), accshift_id.clone());
-            }
             if let Some(tags) = cache_dir.ids.account_tags.get(raw_uid) {
                 tags_by_accshift.insert(accshift_id.clone(), tags.clone());
             }
@@ -262,7 +264,7 @@ fn map_platform(scanned: ScannedPlatform, warnings: &mut Vec<TcNoWarning>) -> Pl
 /// Steam accounts already come from Steam's `loginusers.vdf`. Import notes
 /// (keyed by SteamID64), v4 tags (folded into notes) and `order.json`.
 fn map_steam(scanned: ScannedPlatform, _warnings: &mut Vec<TcNoWarning>) -> PlannedPlatform {
-    let mut tags_by_id: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut tags_by_id: BTreeMap<String, Vec<Arc<str>>> = BTreeMap::new();
     let mut raw_orders: Vec<String> = Vec::new();
     let mut uid_to_id: HashMap<String, String> = HashMap::new();
     let mut name_to_id: HashMap<String, String> = HashMap::new();
@@ -533,46 +535,45 @@ fn resolve_order(
 
 /// Sanitize a note identically to `accshift_app::stores::sanitize_note`,
 /// folding optional v4 tags onto the end.
-pub(super) fn compose_note(base: Option<&str>, tags: &[String]) -> Option<String> {
-    let clean_base = base.map(clean_inline_text).unwrap_or_default();
-    let mut clean_tags: Vec<String> = Vec::new();
-    let mut seen_tags: HashSet<String> = HashSet::new();
+pub(super) fn compose_note(base: Option<&str>, tags: &[Arc<str>]) -> Option<String> {
+    let mut combined = base.map(clean_note_text).unwrap_or_default();
+    let mut units = combined.encode_utf16().count();
+    let mut seen_tags = HashSet::new();
     for tag in tags {
-        let t = clean_inline_text(tag);
-        if !t.is_empty() && seen_tags.insert(t.to_ascii_lowercase()) {
-            clean_tags.push(t);
-        }
-    }
-    let combined = match (clean_base.is_empty(), clean_tags.is_empty()) {
-        (true, true) => return None,
-        (false, true) => clean_base,
-        (true, false) => format!("[{}]", clean_tags.join(", ")),
-        (false, false) => format!("{clean_base} [{}]", clean_tags.join(", ")),
-    };
-    let clipped = utf16_prefix(&combined, MAX_NOTE_UTF16_LEN);
-    (!clipped.is_empty()).then_some(clipped)
-}
-
-fn clean_inline_text(value: &str) -> String {
-    let spaced: String = value
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
-    spaced.trim().to_string()
-}
-
-fn utf16_prefix(text: &str, max_units: usize) -> String {
-    let mut units = 0usize;
-    let mut out = String::new();
-    for ch in text.chars() {
-        let next = ch.len_utf16();
-        if units + next > max_units {
+        if units >= MAX_NOTE_UTF16_LEN {
             break;
         }
-        units += next;
-        out.push(ch);
+        if tag.is_empty() || !seen_tags.insert(tag.to_ascii_lowercase()) {
+            continue;
+        }
+        let separator = if seen_tags.len() > 1 {
+            ", "
+        } else if combined.is_empty() {
+            "["
+        } else {
+            " ["
+        };
+        combined.push_str(separator);
+        combined.push_str(tag);
+        units += separator.len() + tag.encode_utf16().count();
     }
-    out.trim_end().to_string()
+    if !seen_tags.is_empty() {
+        combined.push(']');
+    }
+    let mut units = 0;
+    let clipped = combined
+        .chars()
+        .take_while(|ch| {
+            units += ch.len_utf16();
+            units <= MAX_NOTE_UTF16_LEN
+        })
+        .collect::<String>();
+    let clipped = clipped.trim_end();
+    if clipped.is_empty() {
+        None
+    } else {
+        Some(clipped.to_owned())
+    }
 }
 
 /// Parse a TcNo v4 `lastused` value (Unix seconds/ms or RFC3339 date-time)

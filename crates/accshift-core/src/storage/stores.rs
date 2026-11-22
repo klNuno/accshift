@@ -130,9 +130,13 @@ pub fn peek_client_store_path(
         StoreRoot::Cache => app_cache_root(app_handle)?,
     };
     let target = join_all(root, layout.current);
-    if !target.exists() {
+    let path_exists = |path: &Path| {
+        path.try_exists()
+            .map_err(|e| format!("Could not check {}: {e}", path.display()))
+    };
+    if !path_exists(&target)? {
         if let Some(legacy) = legacy_client_store_path(app_handle, store_id)? {
-            if legacy.exists() {
+            if path_exists(&legacy)? {
                 return Ok(legacy);
             }
         }

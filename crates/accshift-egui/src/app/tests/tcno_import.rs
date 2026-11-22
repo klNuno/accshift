@@ -11,6 +11,22 @@ const SAVE: &str = "save_client_storage_store";
 const IMPORT: &str = "tcno_import";
 const ROBLOX_ADD: &str = "roblox_add_account_by_cookie";
 
+struct HeldCommand<'a>(&'a MockBackend, &'static str);
+
+impl<'a> HeldCommand<'a> {
+    fn new(mock: &'a MockBackend, command: &'static str) -> Self {
+        let held = Self(mock, command);
+        assert!(mock.hold(command));
+        held
+    }
+}
+
+impl Drop for HeldCommand<'_> {
+    fn drop(&mut self) {
+        self.0.release(self.1);
+    }
+}
+
 /// The mock app, with a TcNo folder whose import adds a note to account
 /// `a` and puts it first in the Steam root.
 fn tcno_app(ctx: &Context) -> (AppModel, Arc<MockBackend>) {
@@ -105,7 +121,7 @@ fn the_open_app_never_writes_its_stores_over_a_tcno_import() {
     let (mut app, mock) = tcno_app(&ctx);
     frame(&mut app, &ctx);
     // A note write is under way and held at the disk.
-    assert!(mock.hold(SAVE));
+    let held_save = HeldCommand::new(&mock, SAVE);
     set_note(&mut app, "typed before");
     pump_until(&mut app, &ctx, |_| mock.waiting(SAVE) == 1);
 
@@ -119,8 +135,8 @@ fn the_open_app_never_writes_its_stores_over_a_tcno_import() {
 
     // The held write ends, the one typed meanwhile is written, then the
     // import runs.
-    assert!(mock.hold(IMPORT));
-    mock.release(SAVE);
+    let held_import = HeldCommand::new(&mock, IMPORT);
+    drop(held_save);
     pump_until(&mut app, &ctx, |_| mock.waiting(IMPORT) == 1);
     let written = mock.seen(SAVE);
     assert_eq!(written, 2);
@@ -128,7 +144,7 @@ fn the_open_app_never_writes_its_stores_over_a_tcno_import() {
     set_note(&mut app, "typed while importing");
     frames(&mut app, &ctx, 20);
     assert_eq!(mock.seen(SAVE), written, "a write ran during the import");
-    mock.release(IMPORT);
+    drop(held_import);
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     frames(&mut app, &ctx, 5);
     assert_eq!(mock.seen(IMPORT), 1);
@@ -205,16 +221,16 @@ fn an_account_being_saved_holds_the_tcno_import_and_none_starts_during_it() {
     app.toggle_settings_panel();
     frame(&mut app, &ctx);
     // A Roblox account is being written to its list.
-    assert!(mock.hold(ROBLOX_ADD));
+    let held_add = HeldCommand::new(&mock, ROBLOX_ADD);
     add_roblox(&mut app, &ctx, "cookie-a");
     pump_until(&mut app, &ctx, |_| mock.waiting(ROBLOX_ADD) == 1);
 
-    assert!(mock.hold(IMPORT));
+    let held_import = HeldCommand::new(&mock, IMPORT);
     app.start_tcno_import("C:/TcNo".into());
     frames(&mut app, &ctx, 20);
     let imported_early = mock.seen(IMPORT);
     // Nor does an account write start while the import waits or runs.
-    mock.release(ROBLOX_ADD);
+    drop(held_add);
     pump_until(&mut app, &ctx, |_| mock.waiting(IMPORT) == 1);
     add_roblox(&mut app, &ctx, "cookie-b");
     frames(&mut app, &ctx, 10);
@@ -222,8 +238,7 @@ fn an_account_being_saved_holds_the_tcno_import_and_none_starts_during_it() {
     let refusal = app.settings_panel.as_ref().unwrap().roblox_error.clone();
     // Every held call ends before asserting: a worker left blocked would
     // hang the test's teardown.
-    mock.release(ROBLOX_ADD);
-    mock.release(IMPORT);
+    drop(held_import);
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     assert_eq!(
         imported_early, 0,
@@ -261,14 +276,14 @@ fn a_setup_poll_holds_the_tcno_import_and_none_is_sent_during_it() {
         a.booted().unwrap().accounts.add_flow.is_active()
     });
     // A poll is on its way: its answer may save the new account.
-    assert!(mock.hold(POLL));
+    let held_poll = HeldCommand::new(&mock, POLL);
     pump_until(&mut app, &ctx, |_| mock.waiting(POLL) == 1);
 
-    assert!(mock.hold(IMPORT));
+    let held_import = HeldCommand::new(&mock, IMPORT);
     app.start_tcno_import("C:/TcNo".into());
     frames(&mut app, &ctx, 20);
     let imported_early = mock.seen(IMPORT);
-    mock.release(POLL);
+    drop(held_poll);
     pump_until(&mut app, &ctx, |_| mock.waiting(IMPORT) == 1);
     let polls = mock.seen(POLL);
     // Past the poll delay: the setup sends no poll while the import runs.
@@ -278,7 +293,7 @@ fn a_setup_poll_holds_the_tcno_import_and_none_is_sent_during_it() {
     }
     let polled_during = mock.seen(POLL) - polls;
     // Every held call ends before asserting (see above).
-    mock.release(IMPORT);
+    drop(held_import);
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     assert_eq!(imported_early, 0, "the import ran while a setup poll did");
     assert_eq!(polled_during, 0, "a setup poll ran during the import");

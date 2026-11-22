@@ -70,7 +70,7 @@ fn epic_account_id_keeps_the_case_it_had_in_the_registry() {
         }),
     );
     assert_eq!(
-        read_reg_json_account_id(&dir.path().join("reg.json")).as_deref(),
+        read_reg_json_account_id(&dir.path().canonicalize().unwrap().join("reg.json")).as_deref(),
         Some("ABCDEF0123456789ABCDEF0123456789")
     );
     write_json(
@@ -78,7 +78,92 @@ fn epic_account_id_keeps_the_case_it_had_in_the_registry() {
         "bad.json",
         &json!({ "Identifiers:AccountId": "xyz" }),
     );
-    assert!(read_reg_json_account_id(&dir.path().join("bad.json")).is_none());
+    assert!(
+        read_reg_json_account_id(&dir.path().canonicalize().unwrap().join("bad.json")).is_none()
+    );
+}
+
+#[test]
+fn an_invalid_epic_registry_value_does_not_hide_a_valid_account_id() {
+    let dir = TempDir::new("epic-invalid-first");
+    let id = "ABCDEF0123456789ABCDEF0123456789";
+    write_json(
+        dir.path(),
+        "reg.json",
+        &json!({ "A:AccountId": 7, "B:AccountId": {"v": id} }),
+    );
+    assert_eq!(
+        read_reg_json_account_id(&dir.path().canonicalize().unwrap().join("reg.json")).as_deref(),
+        Some(id)
+    );
+}
+
+#[test]
+fn the_new_epic_cache_does_not_count_a_legacy_account_as_skipped() {
+    let _config = config_guard();
+    let tcno = TempDir::new("epic-duplicate");
+    let ctx = TestCtx::new("epic-duplicate");
+    let id = "abcdef0123456789abcdef0123456789";
+    write_json(
+        tcno.path(),
+        "LoginCache/Epic Games (Legacy)/ids.json",
+        &json!({"ids": {id: "Legacy"}}),
+    );
+    write_json(
+        tcno.path(),
+        "LoginCache/Epic Games/ids.json",
+        &json!({"ids": {id: "New"}}),
+    );
+    std::fs::create_dir_all(tcno.path().join("LoginCache/Epic Games/New/auth")).unwrap();
+
+    let preview = preview_tcno_import(&ctx, tcno.path()).unwrap();
+    assert_eq!(preview.accounts_new, 1);
+    assert_eq!(preview.eglv2_skipped, 0);
+}
+
+#[test]
+fn a_duplicate_battle_net_label_still_places_the_account() {
+    let _config = config_guard();
+    let tcno = TempDir::new("alias");
+    let ctx = TestCtx::new("alias");
+    write_json(
+        tcno.path(),
+        "LoginCache/BattleNet/ids.json",
+        &json!({"One@example.com": "First", "one@example.com": "Second"}),
+    );
+    write_json(
+        tcno.path(),
+        "LoginCache/BattleNet/order.json",
+        &json!(["Second"]),
+    );
+
+    let preview = preview_tcno_import(&ctx, tcno.path()).unwrap();
+    assert_eq!(preview.accounts_new, 1);
+    assert_eq!(preview.order_new, 1);
+}
+
+#[test]
+fn two_platform_notes_with_the_same_key_are_counted_once() {
+    let _config = config_guard();
+    let tcno = TempDir::new("note-collision");
+    let ctx = TestCtx::new("note-collision");
+    for (platform, name) in [("GOG", "Gog"), ("Roblox", "Roblox")] {
+        write_json(
+            tcno.path(),
+            &format!("LoginCache/{platform}/ids.json"),
+            &json!({"ids": {"1234": name}}),
+        );
+        write_json(
+            tcno.path(),
+            &format!("Settings/{platform}Settings.json"),
+            &json!({"AccountNotes": {"1234": name}}),
+        );
+    }
+    let preview = preview_tcno_import(&ctx, tcno.path()).unwrap();
+    let report = apply_tcno_import(&ctx, tcno.path()).unwrap();
+    assert_eq!(preview.notes_new, 1);
+    assert_eq!(report.notes_imported, 1);
+    assert_eq!(report.notes_skipped, 1);
 }
 
 // Encrypts the first file before the second fails: DPAPI on Windows, the

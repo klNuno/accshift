@@ -10,6 +10,72 @@ use crate::storage::{self, STORE_ACCOUNT_CARD_NOTES};
 use serde_json::json;
 use std::fs;
 
+#[test]
+fn a_linked_platform_cache_cannot_import_accounts_or_sessions() {
+    let _config = config_guard();
+    let tcno = TempDir::new("linked-cache");
+    let outside = TempDir::new("outside-cache");
+    let cache = tcno.path().join("LoginCache");
+    let link = cache.join("Ubisoft");
+    fs::create_dir(&cache).unwrap();
+    write_json(
+        outside.path(),
+        "ids.json",
+        &json!({"11111111-2222-3333-4444-555555555555": "Outside"}),
+    );
+    fs::write(outside.path().join("user.dat"), b"synthetic session").unwrap();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let result = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(outside.path())
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{result:?}");
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+
+    let ctx = TestCtx::new("linked-cache-app");
+    let preview = preview_tcno_import(&ctx, tcno.path());
+    let session = super::reader::read_session_file(
+        &tcno
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("LoginCache/Ubisoft/user.dat"),
+    );
+    #[cfg(windows)]
+    fs::remove_dir(&link).unwrap();
+    let preview = preview.unwrap();
+    assert!(session.is_err());
+    assert_eq!(preview.accounts_new, 0);
+    assert!(preview.warnings.iter().any(|warning| {
+        warning.platform == "ubisoft" && warning.kind == super::TcNoWarningKind::CorruptFile
+    }));
+}
+
+#[test]
+fn session_reads_enforce_the_byte_limit() {
+    let tcno = TempDir::new("sized-session");
+    let path = tcno.path().canonicalize().unwrap().join("user.dat");
+    let limit = 16 * 1024 * 1024;
+    let file = fs::File::create(&path).unwrap();
+    file.set_len(limit).unwrap();
+    drop(file);
+    assert_eq!(
+        super::reader::read_session_file(&path).unwrap().len() as u64,
+        limit
+    );
+    let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+    file.set_len(limit + 1).unwrap();
+    drop(file);
+    assert!(super::reader::read_session_file(&path).is_err());
+}
+
 /// A Battle.net folder with one account and its note.
 fn battle_net_folder() -> TempDir {
     let tcno = TempDir::new("bnet-src");
@@ -296,4 +362,49 @@ fn the_import_waits_for_the_lock_a_switch_holds() {
     holder.join().unwrap();
     assert!(result.is_err(), "the import ran under another lock");
     assert!(!written, "the Roblox list was written under another lock");
+}
+
+#[test]
+fn an_import_keeps_the_local_half_of_an_interrupted_config_migration() {
+    let _config = config_guard();
+    let tcno = battle_net_folder();
+    let ctx = TestCtx::new("split-half");
+    let portable = storage::portable_config_path(&ctx).unwrap();
+    storage::write_json_atomic(&portable, &config::AppConfig::default()).unwrap();
+    let legacy = storage::legacy_config_path(&ctx).unwrap();
+    storage::write_json_atomic(&legacy, &json!({"steam_api_key": "fixture-key"})).unwrap();
+
+    apply_tcno_import(&ctx, tcno.path()).unwrap();
+    let cfg = config::load_config(&ctx);
+    assert_eq!(cfg.steam.api_key, "fixture-key");
+    assert_eq!(cfg.battle_net.accounts.len(), 1);
+}
+
+#[test]
+fn a_corrupt_ledger_stops_import_before_legacy_snapshots_move() {
+    let _config = config_guard();
+    let tcno = battle_net_folder();
+    let ctx = TestCtx::new("bad-ledger");
+    let legacy = storage::app_data_root(&ctx).unwrap().join("ubisoft_cache");
+    fs::create_dir_all(&legacy).unwrap();
+    fs::write(legacy.join("session"), b"synthetic").unwrap();
+    let ledger = storage::tcno_import_origins_path(&ctx).unwrap();
+    fs::create_dir_all(ledger.parent().unwrap()).unwrap();
+    fs::write(ledger, b"{broken").unwrap();
+
+    assert!(apply_tcno_import(&ctx, tcno.path()).is_err());
+    assert!(legacy.join("session").exists());
+}
+
+#[test]
+fn an_invalid_folders_store_blocks_import() {
+    let _config = config_guard();
+    let tcno = battle_net_folder();
+    let ctx = TestCtx::new("bad-folders");
+    let folders = storage::client_store_path(&ctx, storage::STORE_FOLDERS).unwrap();
+    let existing = json!({"version": 1, "folders": [], "itemOrder": []});
+    storage::write_json_atomic(&folders, &existing).unwrap();
+
+    assert!(apply_tcno_import(&ctx, tcno.path()).is_err());
+    assert!(config::load_config(&ctx).battle_net.accounts.is_empty());
 }
