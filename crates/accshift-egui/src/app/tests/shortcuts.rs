@@ -88,8 +88,10 @@ fn frame(app: &mut AppModel, ctx: &Context) {
     frame_with(app, ctx, Vec::new());
 }
 
+/// Ten seconds: the macOS runner boots these mocks slowly under the parallel
+/// test load, and the deadline only bounds a failure.
 fn pump_until(app: &mut AppModel, ctx: &Context, condition: impl Fn(&AppModel) -> bool) -> bool {
-    let deadline = Instant::now() + std::time::Duration::from_secs(3);
+    let deadline = Instant::now() + std::time::Duration::from_secs(10);
     while !condition(app) && Instant::now() < deadline {
         frame(app, ctx);
         std::thread::sleep(std::time::Duration::from_millis(1));
