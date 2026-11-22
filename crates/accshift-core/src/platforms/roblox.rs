@@ -108,6 +108,16 @@ pub fn get_startup_snapshot(app_handle: &dyn AppContext) -> Result<RobloxStartup
     })
 }
 
+/// The account the live HKCU cookie belongs to: the one switched to last.
+/// An account without a saved session (imported from TcNo, whose date says
+/// when it was last used there) was never switched to by accshift.
+fn live_cookie_owner(accounts: &[RobloxAccountConfig]) -> Option<&RobloxAccountConfig> {
+    accounts
+        .iter()
+        .filter(|a| !a.cookie_encrypted.is_empty())
+        .max_by_key(|a| a.last_used_at.unwrap_or(0))
+}
+
 pub fn switch_account(app_handle: &dyn AppContext, user_id: &str) -> Result<(), String> {
     let accounts = load_account_configs(app_handle);
 
@@ -118,9 +128,7 @@ pub fn switch_account(app_handle: &dyn AppContext, user_id: &str) -> Result<(), 
     // loaded. This also covers re-loading the already-active account: its own
     // rotation is persisted first, then decrypted below. Windows-only; the
     // helper is a no-op elsewhere.
-    let rotated = accounts
-        .iter()
-        .max_by_key(|a| a.last_used_at.unwrap_or(0))
+    let rotated = live_cookie_owner(&accounts)
         .map(|active| persist_rotated_cookie(app_handle, active))
         .unwrap_or(false);
 
