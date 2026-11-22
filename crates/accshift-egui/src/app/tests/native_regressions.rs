@@ -111,8 +111,12 @@ fn frame(app: &mut AppModel, ctx: &Context, focused: bool, minimized: bool) {
 }
 
 fn pump_until(app: &mut AppModel, ctx: &Context, condition: impl Fn(&AppModel) -> bool) {
-    let deadline = Instant::now() + std::time::Duration::from_secs(2);
-    while !condition(app) && Instant::now() < deadline {
+    let deadline = Instant::now() + std::time::Duration::from_secs(10);
+    while !condition(app) {
+        assert!(
+            Instant::now() < deadline,
+            "condition did not become true within 10 s"
+        );
         frame(app, ctx, true, false);
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
@@ -152,13 +156,13 @@ fn native_external_storage_on_focus_refreshes_stores_and_accounts() {
 
 /// Waits until a call of `command` sits at its hold in the mock.
 fn wait_held(mock: &MockBackend, command: &str) {
-    let deadline = Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = Instant::now() + std::time::Duration::from_secs(10);
     while mock.waiting(command) == 0 {
         assert!(
             Instant::now() < deadline,
             "{command} never reached the mock"
         );
-        std::thread::yield_now();
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
 }
 
@@ -166,11 +170,15 @@ fn wait_held(mock: &MockBackend, command: &str) {
 fn native_external_storage_on_restore_preserves_dirty_local_values() {
     let ctx = Context::default();
     let (mut app, mock) = external_app(&ctx);
+    // Drain initial boot jobs so the 2-worker pool is completely free before
+    // holding commands at the mock.
+    pump_until(&mut app, &ctx, |a| a.booted().unwrap().accounts.settled());
     frame(&mut app, &ctx, true, false);
-    // The manifest read and the store writes wait at the mock until the test
-    // releases them, so the order below holds on any runner: a latency only
-    // made it likely, and a slow runner finished the write before the assert.
+    // Hold the manifest read, the snapshot read and the store write at the
+    // mock so every phase transition is synchronized explicitly, with no
+    // dependence on wall-clock timing.
     assert!(mock.hold("get_storage_manifest"));
+    assert!(mock.hold("load_client_storage_snapshot"));
     assert!(mock.hold("save_client_storage_store"));
     // Restoration must work even if the viewport still reports focus.
     frame(&mut app, &ctx, true, true);
@@ -183,7 +191,8 @@ fn native_external_storage_on_restore_preserves_dirty_local_values() {
         .stores
         .set_account_card_note("external", "local draft");
     mock.release("get_storage_manifest");
-    // begin_refresh records the other targets: the boundary, as below.
+    // begin_refresh records the other targets and starts the snapshot job,
+    // which waits at its hold until we release it below.
     pump_until(&mut app, &ctx, |a| {
         a.booted()
             .unwrap()
@@ -201,10 +210,12 @@ fn native_external_storage_on_restore_preserves_dirty_local_values() {
         .stores
         .storage()
         .has_pending_save("client.account-card-notes"));
+    mock.release("load_client_storage_snapshot");
     mock.release("save_client_storage_store");
     pump_until(&mut app, &ctx, |a| {
         a.booted().unwrap().stores.view_mode() == ViewMode::List
     });
+    wait_refresh_over(&mut app, &ctx);
     let b = app.booted().unwrap();
     assert_eq!(b.stores.view_mode(), ViewMode::List);
     assert_eq!(b.stores.account_card_note("external"), "local draft");

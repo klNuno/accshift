@@ -694,17 +694,39 @@ fn a_failing_endpoint_falls_through_to_the_next_one() {
 
 #[test]
 fn an_unreachable_endpoint_is_a_request_error() {
-    // A port nothing listens on: bind, read the port, close.
-    let port = {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.local_addr().unwrap().port()
-    };
-    let server = Server::start(|_| (404, Vec::new()));
+    // Keep the listener bound for the whole test so no parallel test can claim
+    // the port; dropping every accepted socket immediately produces a
+    // deterministic transport error without waiting on OS SYN retries.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_flag = stop.clone();
+    let dropper = std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            if stop_flag.load(Ordering::SeqCst) {
+                break;
+            }
+            drop(stream);
+        }
+    });
+
     let key = TestKey::new();
-    let mut unreachable = config(&server, &key.pubkey(), "1.0.5", None);
-    unreachable.endpoints =
-        vec![Url::parse(&format!("http://127.0.0.1:{port}/latest.json")).unwrap()];
+    let unreachable = UpdaterConfig {
+        pubkey: key.pubkey(),
+        endpoints: vec![Url::parse(&format!("http://{addr}/latest.json")).unwrap()],
+        current_version: Version::parse("1.0.5").unwrap(),
+        app_name: "accshift-m5test".into(),
+        timeout: Some(Duration::from_secs(20)),
+        relaunch_args: Vec::new(),
+        bundle_type: None,
+        executable_path: None,
+    };
     let error = check(unreachable).unwrap_err();
+
+    stop.store(true, Ordering::SeqCst);
+    let _ = TcpStream::connect(addr);
+    let _ = dropper.join();
+
     assert!(
         matches!(&error, UpdaterError::Reqwest(text) if text.contains("error sending request")),
         "{error:?}"
