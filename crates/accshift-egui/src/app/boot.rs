@@ -2,7 +2,7 @@
 //! fresh install, launcher detection), then the stores hydrated from the
 //! payload's storage snapshot and the UI state built on them.
 
-use std::sync::Arc;
+use std::sync::{mpsc, Arc, OnceLock};
 use std::time::Instant;
 
 use accshift_app::actions::dialogs::AppDialogs;
@@ -87,19 +87,58 @@ pub(super) fn enable_detected_platforms_on_first_run(
 /// stored, awaited before the first tab is picked. Asked in the same job so
 /// boot waits once; a detection error counts as nothing found.
 fn start_boot(jobs: &Jobs) -> Pending<BootResult> {
-    jobs.run(|backend| {
-        let payload = backend.get_boot_payload()?;
-        let fresh = !payload
-            .storage_snapshot
-            .stores
-            .contains_key(storage::CLIENT_STORE_SETTINGS);
-        let detected = if fresh {
-            backend.platform_detect_installed().unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-        Ok(Boot { payload, detected })
-    })
+    jobs.run(load_boot)
+}
+
+fn load_boot(backend: &dyn Backend) -> BootResult {
+    let payload = backend.get_boot_payload()?;
+    let fresh = !payload
+        .storage_snapshot
+        .stores
+        .contains_key(storage::CLIENT_STORE_SETTINGS);
+    let detected = if fresh {
+        backend.platform_detect_installed().unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    Ok(Boot { payload, detected })
+}
+
+/// The boot job of a normal run, started from `main` before the window
+/// exists: the event loop and the window take about 12 ms to build, and
+/// the window waits for boot to show. [`AppModel::real`] polls it as its
+/// own boot job.
+pub struct EarlyBoot {
+    pending: Pending<BootResult>,
+    wake: Arc<OnceLock<Context>>,
+}
+
+/// The working half of an [`EarlyBoot`], for the thread that runs it.
+pub struct BootTask {
+    tx: mpsc::Sender<BootResult>,
+    wake: Arc<OnceLock<Context>>,
+}
+
+pub fn early_boot() -> (EarlyBoot, BootTask) {
+    let (tx, rx) = mpsc::channel();
+    let wake: Arc<OnceLock<Context>> = Arc::default();
+    let early = EarlyBoot {
+        pending: Pending::from_receiver(rx),
+        wake: Arc::clone(&wake),
+    };
+    (early, BootTask { tx, wake })
+}
+
+impl BootTask {
+    /// The boot payload, then a repaint once the model polls for it. A
+    /// result in before the model exists waits for its first frame.
+    pub fn run(self, backend: &dyn Backend) {
+        if self.tx.send(load_boot(backend)).is_ok() {
+            if let Some(ctx) = self.wake.get() {
+                ctx.request_repaint();
+            }
+        }
+    }
 }
 
 impl AppModel {
@@ -159,9 +198,10 @@ impl AppModel {
         ctx: &Context,
         backend: Arc<RealBackend>,
         legacy: Option<LegacyLocalStorage>,
+        early: Option<EarlyBoot>,
     ) -> AppModel {
         let backend: Arc<dyn Backend> = backend;
-        let mut model = AppModel::from_backend(ctx, backend, Clock::wall());
+        let mut model = AppModel::from_backend(ctx, backend, Clock::wall(), early);
         model.legacy = legacy;
         model.os_reduced_motion = os_prefers_reduced_motion();
         model.updates = updates::Updates::real(Instant::now());
@@ -176,15 +216,28 @@ impl AppModel {
         mock: Option<Arc<MockBackend>>,
         clock: Clock,
     ) -> AppModel {
-        let mut model = AppModel::from_backend(ctx, backend, clock);
+        let mut model = AppModel::from_backend(ctx, backend, clock, None);
         model.mock = mock;
         model
     }
 
-    fn from_backend(ctx: &Context, backend: Arc<dyn Backend>, clock: Clock) -> AppModel {
+    /// The model on `backend`, its boot job the [`EarlyBoot`] when there
+    /// is one.
+    pub(super) fn from_backend(
+        ctx: &Context,
+        backend: Arc<dyn Backend>,
+        clock: Clock,
+        early: Option<EarlyBoot>,
+    ) -> AppModel {
         let wake = ctx.clone();
         let jobs = Jobs::new(Arc::clone(&backend), 2, move || wake.request_repaint());
-        let boot_job = Some(start_boot(&jobs));
+        let boot_job = Some(match early {
+            Some(early) => {
+                let _ = early.wake.set(ctx.clone());
+                early.pending
+            }
+            None => start_boot(&jobs),
+        });
         // A Chinese UI draws Han from its first frame: load those faces now
         // rather than rebuild the fonts mid frame.
         let zh = accshift_app::i18n::detect_preferred_locale(&preferred_languages()) == Locale::Zh;

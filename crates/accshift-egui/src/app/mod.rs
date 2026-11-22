@@ -45,6 +45,7 @@ pub mod personas;
 pub mod platforms;
 mod saves;
 mod secure;
+pub mod session;
 pub mod settings_panel;
 mod shell;
 pub mod shortcuts;
@@ -84,6 +85,7 @@ use crate::ui::components::secure_overlays::{PinEvent, StreamerEvent};
 use crate::ui::components::toast::ToastEvent;
 use accounts::Accounts;
 // What the tests reach through `use super::*`.
+pub use boot::{early_boot, BootTask, EarlyBoot};
 use boot::{preferred_languages, BootResult};
 use clock::Clock;
 #[cfg(any(test, feature = "harness"))]

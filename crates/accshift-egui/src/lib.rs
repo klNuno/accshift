@@ -573,7 +573,7 @@ mod tests {
             };
             let backend = Arc::new(RealBackend::with_context(dir.clone()));
             let ctx = egui::Context::default();
-            let mut app = crate::AppModel::real(&ctx, backend.clone(), None);
+            let mut app = crate::AppModel::real(&ctx, backend.clone(), None, None);
             app.wait_boot(&ctx).expect("boot on scratch dir");
             backend.boot_state().mark_completed();
 

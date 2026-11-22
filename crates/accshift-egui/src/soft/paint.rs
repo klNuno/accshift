@@ -226,7 +226,14 @@ impl Runner {
                 }
             }
             match buffer.present_with_damage(&damage) {
-                Ok(()) => live.faults.succeeded(),
+                Ok(()) => {
+                    live.faults.succeeded();
+                    // Startup bench builds only: the shown frame is on screen.
+                    #[cfg(feature = "startup-bench")]
+                    if show {
+                        bench::mark("presented");
+                    }
+                }
                 Err(err) => {
                     live.faults.fail();
                     fault = Some(format!("present: {err}"));
