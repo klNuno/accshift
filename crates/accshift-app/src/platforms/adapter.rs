@@ -820,4 +820,12 @@ impl PlatformAdapter {
             _ => None,
         }
     }
+
+    /// The dedicated toast for a failed add, `None` for the generic one.
+    pub fn add_error_toast(&self, message: &str) -> Option<Text> {
+        match self.kind {
+            AdapterKind::Riot => riot::add_error_toast(message),
+            _ => None,
+        }
+    }
 }

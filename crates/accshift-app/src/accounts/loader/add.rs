@@ -45,7 +45,9 @@ impl AccountLoader {
                         [("platform", platform_name)],
                     )
                 } else {
-                    Text::key("toast.addAccountFailed")
+                    hooks
+                        .add_error_toast(&message)
+                        .unwrap_or_else(|| Text::key("toast.addAccountFailed"))
                 };
                 return AddOutcome::Failed(Toast::new(text, ToastKind::Error));
             }

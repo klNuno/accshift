@@ -107,6 +107,10 @@ impl LoaderHooks for AdapterHooks<'_> {
         self.adapter.switch_error_toast(message)
     }
 
+    fn add_error_toast(&self, message: &str) -> Option<Text> {
+        self.adapter.add_error_toast(message)
+    }
+
     fn cached_warning_states(&self) -> Option<BTreeMap<String, WarningPresentation>> {
         self.adapter
             .has_warnings()

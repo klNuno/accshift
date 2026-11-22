@@ -46,15 +46,25 @@ pub(super) fn run_switch(
         return Err("Riot profile not found".into());
     }
 
+    let launch = |product: &str| launch_riot_product(&client_path, product);
+    let identity = || detect_live_identity().ok();
+    let io = SwitchIo {
+        launch: &launch,
+        quit: &graceful_riot_quit_checked,
+        identity: &identity,
+        wait: UNCONFIRMED_IDENTITY_WAIT,
+        poll: UNCONFIRMED_IDENTITY_POLL,
+    };
+
     // Riot Client only flushes its in-memory session tokens to
     // RiotGamesPrivateSettings.yaml on a graceful quit. Quit (and wait for the
     // process to exit + settle) BEFORE snapshotting the outgoing profile, so the
     // backup captures rotated tokens rather than the stale pre-rotation ones.
-    // Same quit-then-backup order as begin_profile_setup. This is the single
-    // quit for the whole switch; the target snapshot is restored afterwards.
+    // Same quit-then-backup order as begin_profile_setup. A confirmed switch
+    // only needs this quit before restoring the target snapshot.
     // A client that could not be closed fails the switch here, before any
     // session file is touched.
-    if let Err(error) = graceful_riot_quit() {
+    if let Err(error) = quit_for_switch(app_handle, &io) {
         log_platform_error(
             app_handle,
             source,
@@ -74,15 +84,6 @@ pub(super) fn run_switch(
         .cloned();
     // The client path is resolved once for the whole switch.
     let install_dir = client_path.parent();
-    let launch = |product: &str| launch_riot_product(&client_path, product);
-    let identity = || detect_live_identity().ok();
-    let io = SwitchIo {
-        launch: &launch,
-        quit: &graceful_riot_quit,
-        identity: &identity,
-        wait: UNCONFIRMED_IDENTITY_WAIT,
-        poll: UNCONFIRMED_IDENTITY_POLL,
-    };
     let result = finish_switch(
         app_handle,
         &mut cfg,
@@ -222,17 +223,35 @@ pub(super) enum SwitchWork {
 const UNCONFIRMED_IDENTITY_WAIT: Duration = Duration::from_secs(45);
 const UNCONFIRMED_IDENTITY_POLL: Duration = Duration::from_secs(1);
 
-/// The process side of a switch once the client is closed, injected so the
-/// orchestration runs in tests without a Riot client.
+/// The process side of a switch, injected so the orchestration runs in tests
+/// without a Riot client.
 pub(super) struct SwitchIo<'a> {
     /// Starts the client with a product (`riot-client` for the bare client).
     pub launch: &'a dyn Fn(&str) -> Result<(), String>,
     /// Quits the client gracefully, so it flushes its session files.
-    pub quit: &'a dyn Fn() -> Result<(), String>,
+    pub quit: &'a dyn Fn() -> Result<(), CloseError>,
     /// The account the running client reports, `None` while it cannot say.
     pub identity: &'a dyn Fn() -> Option<RiotDetectedIdentity>,
     pub wait: Duration,
     pub poll: Duration,
+}
+
+/// Recover a partially closed client before returning the original switch error.
+fn quit_for_switch(app_handle: &dyn AppContext, io: &SwitchIo) -> Result<(), String> {
+    match (io.quit)() {
+        Err(CloseError::AfterClose(error)) => {
+            if let Err(launch_error) = (io.launch)(RIOT_CLIENT_PRODUCT) {
+                log_platform_error(
+                    app_handle,
+                    "riot.switch_profile",
+                    "Could not relaunch Riot Client after a failed quit",
+                    launch_error,
+                );
+            }
+            Err(error)
+        }
+        result => result.map_err(String::from),
+    }
 }
 
 /// The session work and the relaunch, once the client is closed. A failed
@@ -307,7 +326,7 @@ fn resolve_unconfirmed(
     refuse_unrecorded_account(app_handle, &profile, Some(&identity))?;
     // Another account, or an account a profile without one can adopt: the
     // regular switch knows what to do now that the identity is known.
-    (io.quit)()?;
+    quit_for_switch(app_handle, io)?;
     let work = match switch_after_quit(app_handle, cfg, target_id, install_dir, Some(&identity)) {
         Ok(SwitchWork::Switched) => Ok(()),
         Ok(SwitchWork::KeptUnconfirmed) => Err(format!(

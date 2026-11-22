@@ -445,6 +445,8 @@
   "riot.noInstalledGames": "未找到已安装的 Riot 游戏",
   "riot.accountNotConfirmed": "accshift 无法确认 Riot Client 中登录的是哪个账户，因此未做任何更改。请在 Riot Client 中检查账户后重试。",
   "riot.profileWithoutAccount": "此 Riot 配置文件没有记录账户，accshift 无法区分其已保存的会话和当前登录的会话。未做任何更改。请在 Riot Client 中登录此配置文件的账户，然后使用“重新捕获会话”。",
+  "riot.leagueInChampSelect": "《英雄联盟》正处于英雄选择阶段，因此未做任何更改。请完成或退出英雄选择后再试。",
+  "riot.leagueGameActive": "《英雄联盟》对局正在进行中，因此未做任何更改。请结束或退出对局后再试。",
   "riot.capturedSession": "已捕获 {profile} 的会话",
   "riot.setupPendingLabel": "Riot 账号",
   "riot.setupWaitingForClient": "等待 Riot 客户端...",

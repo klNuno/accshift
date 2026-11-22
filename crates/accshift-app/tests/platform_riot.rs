@@ -294,3 +294,44 @@ fn a_profile_without_a_recorded_account_asks_for_a_recapture() {
         vec![TaskEffect::Toast(Text::key("riot.profileWithoutAccount"))]
     );
 }
+
+#[test]
+fn league_champ_select_and_active_match_toast_dedicated_messages() {
+    let champ_select =
+        "League of Legends is in champion select: finish or leave champion select before switching Riot account.";
+    let active_match =
+        "League of Legends is in an active match (InProgress): finish or leave the match before switching Riot account.";
+    let adapter = PlatformAdapter::shipped("riot").unwrap();
+
+    assert_eq!(
+        adapter.switch_error_toast(champ_select),
+        Some(Text::key("riot.leagueInChampSelect"))
+    );
+    assert_eq!(
+        adapter.switch_error_toast(active_match),
+        Some(Text::key("riot.leagueGameActive"))
+    );
+
+    let backend = support::scripted("dev");
+    backend.push("riot_switch_profile_and_launch_game", Err(champ_select));
+    let outcome = adapter.run_task(
+        &run_task("riot-2", "league_of_legends"),
+        &backend,
+        &settings(),
+    );
+    assert_eq!(
+        outcome.effects,
+        vec![TaskEffect::Toast(Text::key("riot.leagueInChampSelect"))]
+    );
+
+    backend.push("riot_switch_profile_and_launch_game", Err(active_match));
+    let outcome = adapter.run_task(
+        &run_task("riot-2", "league_of_legends"),
+        &backend,
+        &settings(),
+    );
+    assert_eq!(
+        outcome.effects,
+        vec![TaskEffect::Toast(Text::key("riot.leagueGameActive"))]
+    );
+}

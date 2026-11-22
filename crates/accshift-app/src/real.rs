@@ -46,7 +46,7 @@ use accshift_core::telemetry::Event;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU32;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 /// Cross-process lock budget of every mutating command.
@@ -61,6 +61,9 @@ pub struct RealBackend {
     http: OnceLock<reqwest::Client>,
     ui_logs_written: AtomicU32,
     telemetry: telemetry::Telemetry,
+    /// The outcome of [`Self::migrate_config_early`], for the next boot
+    /// payload to report.
+    early_migration: Mutex<Option<String>>,
 }
 
 impl RealBackend {
@@ -92,7 +95,20 @@ impl RealBackend {
             http: OnceLock::new(),
             ui_logs_written: AtomicU32::new(0),
             telemetry: telemetry::Telemetry::new(telemetry_endpoint),
+            early_migration: Mutex::new(None),
         }
+    }
+
+    /// Migrates a pre-1.0 config now rather than in the next
+    /// [`Backend::get_boot_payload`], which reports this outcome instead.
+    /// The shell runs it before anything else reads the config (the
+    /// telemetry consent), while the rest of the boot runs alongside.
+    pub fn migrate_config_early(&self) {
+        let outcome = app::migrate_legacy_config(&self.ctx);
+        *self
+            .early_migration
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(outcome);
     }
 
     pub fn context(&self) -> &accshift_core::AppCtx {
@@ -123,7 +139,12 @@ impl RealBackend {
 
 impl Backend for RealBackend {
     fn get_boot_payload(&self) -> BackendResult<BootPayload> {
-        app::boot_payload(&self.ctx)
+        let early = self
+            .early_migration
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        app::boot_payload(&self.ctx, early)
     }
     fn get_runtime_os(&self) -> BackendResult<String> {
         Ok(app::runtime_os())

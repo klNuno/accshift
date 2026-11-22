@@ -125,13 +125,17 @@ fn main() {
         accshift_egui::app::avatars::prefetch_pack(cache);
     }
     // The log rotation, "App setup started" and the panic hook, on a thread
-    // while the window builds, joined before anything else logs.
+    // while the window builds, waited for before anything else logs.
     // The `localStorage` of a v0.x install is read first, before the hook: a
     // corrupt LevelDB panics inside the reader, which catches it, and the
-    // hook would report it.
+    // hook would report it. The boot job follows on the same thread, after
+    // the hook: the window shows once boot is done, and no longer waits for
+    // its own creation before boot starts (about 11 ms in the bench). The
+    // saved geometry is read before the thread starts, and the legacy read
+    // arrives once the config is migrated (app/session.rs).
+    bench::mark("backend");
     let session = real.as_ref().map(|backend| {
-        let backend = Arc::clone(backend);
-        std::thread::spawn(move || {
+        accshift_egui::app::session::start(backend, move |backend| {
             let ctx = backend.context().as_ref();
             let legacy = match legacy_root {
                 Some(root) => legacy_web_storage::read_for_boot_with(ctx, || {
@@ -143,11 +147,16 @@ fn main() {
             legacy
         })
     });
-    bench::mark("backend");
-    let saved = real
-        .as_ref()
-        .map(|backend| config::load_window(backend.context().as_ref()));
     bench::mark("saved_window");
+    let saved = session.as_ref().map(|session| session.saved);
+    let (early, legacy_rx, session_thread) = match session {
+        Some(session) => (
+            Some(session.early),
+            Some(session.legacy),
+            Some(session.thread),
+        ),
+        None => (None, None, None),
+    };
 
     let mut viewport = window::chrome(
         egui::ViewportBuilder::default()
@@ -218,7 +227,8 @@ fn main() {
         match real {
             // The real app folders, through accshift-core.
             Some(backend) => {
-                let legacy = session.and_then(|s| s.join().ok()).flatten();
+                // A panic on the thread drops the sender: no legacy storage.
+                let legacy = legacy_rx.and_then(|rx| rx.recv().ok()).flatten();
                 if let Some(read) = &legacy {
                     // Places and key names, never a value.
                     let _ = accshift_core::logging::append_app_log(
@@ -229,11 +239,11 @@ fn main() {
                         Some(&read.notes.join("; ")),
                     );
                 }
-                // The rest of `setup`, in its order. The probe's folders
-                // are a scratch copy: no telemetry from it, and the keyring
-                // sweep would read every real entry as an orphan.
-                // Neither does a bench run, nor does it register the scheme
-                // or run the maintenance.
+                // The rest of `setup`, in its order, on the migrated
+                // config. The probe's folders are a scratch copy: no
+                // telemetry from it, and the keyring sweep would read every
+                // real entry as an orphan. Neither does a bench run, nor
+                // does it register the scheme or run the maintenance.
                 let quiet = probing || bench_build;
                 if !quiet {
                     backend.start_telemetry();
@@ -248,6 +258,7 @@ fn main() {
                         ctx,
                         Arc::clone(&backend),
                         legacy.map(|read| read.storage),
+                        early,
                     ))),
                     scenes,
                 );
@@ -288,6 +299,11 @@ fn main() {
     )
     .map_err(|err| err.to_string());
 
+    // The model's jobs were joined with it; the boot ran on its own thread
+    // and may still be migrating the config.
+    if let Some(thread) = session_thread {
+        let _ = thread.join();
+    }
     if let Err(err) = result {
         eprintln!("{err}");
         std::process::exit(1);

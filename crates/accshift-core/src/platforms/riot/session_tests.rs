@@ -516,7 +516,7 @@ fn the_setup_launch_does_not_touch_the_client_without_the_lock() {
     let ran = std::thread::scope(|s| {
         s.spawn(|| {
             let mut ran = false;
-            run_riot_setup_launch(&ctx, &profile_id, Duration::from_millis(150), || {
+            run_riot_setup_launch(&ctx, &profile_id, "", Duration::from_millis(150), || {
                 ran = true;
                 Ok(())
             });
@@ -543,15 +543,15 @@ fn the_setup_launch_records_success_and_failure() {
     let ok_id = format!("riot-profile-{}", Uuid::new_v4());
     save_pending_setup(&ctx, &ok_id);
     set_setup_launch(&ok_id, SetupLaunch::Running);
-    run_riot_setup_launch(&ctx, &ok_id, Duration::from_millis(500), || Ok(()));
+    run_riot_setup_launch(&ctx, &ok_id, "", Duration::from_millis(500), || Ok(()));
     assert_eq!(setup_launch(&ok_id), Some(SetupLaunch::Launched));
     forget_setup_launch(&ok_id);
 
     let failed_id = format!("riot-profile-{}", Uuid::new_v4());
     save_pending_setup(&ctx, &failed_id);
     set_setup_launch(&failed_id, SetupLaunch::Running);
-    run_riot_setup_launch(&ctx, &failed_id, Duration::from_millis(500), || {
-        Err("Could not remove file".into())
+    run_riot_setup_launch(&ctx, &failed_id, "", Duration::from_millis(500), || {
+        Err(CloseError::AfterClose("Could not remove file".into()))
     });
     assert_eq!(
         setup_launch(&failed_id),
@@ -570,7 +570,7 @@ fn a_setup_cancelled_before_its_launch_ran_is_left_alone() {
     config::save_config(&ctx, &config_with(Vec::new(), "")).unwrap();
 
     let mut ran = false;
-    run_riot_setup_launch(&ctx, &profile_id, Duration::from_millis(500), || {
+    run_riot_setup_launch(&ctx, &profile_id, "", Duration::from_millis(500), || {
         ran = true;
         Ok(())
     });
@@ -643,7 +643,7 @@ fn a_failed_setup_capture_reopens_the_client_and_leaves_the_setup_cancellable() 
         &mut cfg,
         &profile_id,
         "setup_pending",
-        "backup failed".into(),
+        CloseError::AfterClose("backup failed".into()),
         || {
             launched += 1;
             Err("launch failed".into())
@@ -815,7 +815,13 @@ fn reselect_closed(
     product: &str,
     answers: Vec<Option<RiotDetectedIdentity>>,
 ) -> (Result<(), String>, Vec<String>) {
-    reselect_closed_as(fx, profile(id, "ready", "puuid-a"), product, answers)
+    reselect_closed_as(
+        fx,
+        profile(id, "ready", "puuid-a"),
+        product,
+        answers,
+        Ok(()),
+    )
 }
 
 /// `reselect_closed` for a given current profile.
@@ -824,6 +830,7 @@ fn reselect_closed_as(
     current: RiotProfileConfig,
     product: &str,
     answers: Vec<Option<RiotDetectedIdentity>>,
+    quit_result: Result<(), CloseError>,
 ) -> (Result<(), String>, Vec<String>) {
     let id = current.id.clone();
     let mut cfg = config_with(vec![current], &id);
@@ -842,7 +849,7 @@ fn reselect_closed_as(
     };
     let quit = || {
         events.borrow_mut().push("quit".to_string());
-        Ok(())
+        quit_result.clone()
     };
     let identity = || {
         let index = polls.get().min(answers.len() - 1);
@@ -901,6 +908,42 @@ fn another_confirmed_account_is_quit_and_the_profile_restored_before_the_game() 
         fx.snapshot(id).contains("token-t0"),
         "the other account's session was saved into the profile"
     );
+}
+
+#[test]
+fn a_refused_second_quit_relaunches_only_after_a_partial_close() {
+    let id = "riot-profile-current";
+    let message = league_phase_guard_error(Some("ChampSelect"), "closing Riot Client").unwrap_err();
+    for (label, error, expected) in [
+        (
+            "refused",
+            CloseError::Refused(message.clone()),
+            vec!["launch riot-client on t1", "quit"],
+        ),
+        (
+            "partly-closed",
+            CloseError::AfterClose(message.clone()),
+            vec![
+                "launch riot-client on t1",
+                "quit",
+                "launch riot-client on t1",
+            ],
+        ),
+    ] {
+        let fx = SwitchFixture::new(label, id);
+        let (result, events) = reselect_closed_as(
+            &fx,
+            profile(id, "ready", "puuid-a"),
+            "valorant",
+            vec![Some(live("puuid-b"))],
+            Err(error),
+        );
+
+        assert_eq!(result, Err(message.clone()));
+        assert_eq!(events, expected, "{label}");
+        assert!(fx.live().contains("token-t1"));
+        assert!(fx.snapshot(id).contains("token-t0"));
+    }
 }
 
 #[test]
@@ -998,6 +1041,7 @@ fn a_ready_profile_without_an_account_is_refused_once_the_client_answers() {
         profile(id, "ready", ""),
         "valorant",
         vec![None, Some(live("puuid-b"))],
+        Ok(()),
     );
 
     let error = result.expect_err("the game started on the signed-in account");
