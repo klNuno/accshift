@@ -12,6 +12,7 @@
 //! together.
 
 mod app;
+mod backup;
 mod boot;
 mod context;
 mod descriptors;
@@ -242,6 +243,8 @@ impl Backend for RealBackend {
     fn platform_dry_run(&self, platform_id: &str, account_id: &str) -> BackendResult<DryRunPlan> {
         platform::dry_run(self, platform_id, account_id)
     }
+    /// A folder or file that cannot be read is in the answer
+    /// (`incomplete`), not an error: the platforms that did read stay usable.
     fn reload_user_platforms(&self) -> BackendResult<UserPlatformReport> {
         Ok(descriptors::reload(&self.ctx))
     }
@@ -266,6 +269,23 @@ impl Backend for RealBackend {
     }
     fn open_descriptors_folder(&self) -> BackendResult<()> {
         descriptors::open_folder(&self.ctx)
+    }
+    /// The save dialog: same thread rule as [`Self::descriptor_select_file`].
+    fn backup_select_export_path(&self, title: &str, all_files: &str) -> BackendResult<String> {
+        backup::select_export_path(title, all_files)
+    }
+    fn backup_export(&self, path: &str) -> BackendResult<BackupReport> {
+        backup::export(&self.ctx, path)
+    }
+    /// The file picker: same thread rule as [`Self::descriptor_select_file`].
+    fn backup_select_import_file(&self, title: &str, all_files: &str) -> BackendResult<String> {
+        backup::select_import_file(title, all_files)
+    }
+    fn backup_preview(&self, path: &str) -> BackendResult<BackupPreview> {
+        backup::preview(path)
+    }
+    fn backup_restore(&self, path: &str, digest: &str) -> Result<BackupReport, RestoreError> {
+        backup::restore(&self.ctx, path, digest)
     }
     fn open_url(&self, url: &str) -> BackendResult<()> {
         utility::open_url(url)
@@ -411,6 +431,9 @@ impl Backend for RealBackend {
     }
     fn list_custom_themes(&self) -> BackendResult<Vec<CustomTheme>> {
         utility::list_themes(&self.ctx)
+    }
+    fn read_custom_themes(&self) -> BackendResult<CustomThemeList> {
+        utility::read_themes(&self.ctx)
     }
     fn save_custom_theme(&self, theme: &CustomTheme) -> BackendResult<()> {
         utility::save_theme(&self.ctx, theme)

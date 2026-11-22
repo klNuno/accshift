@@ -170,6 +170,54 @@ impl Backend for MockBackend {
     fn open_descriptors_folder(&self) -> BackendResult<()> {
         self.call("open_descriptors_folder", json!({}))
     }
+    fn backup_select_export_path(&self, title: &str, all_files: &str) -> BackendResult<String> {
+        self.call(
+            "backup_select_export_path",
+            json!({ "title": title, "allFiles": all_files }),
+        )
+    }
+    fn backup_export(&self, path: &str) -> BackendResult<BackupReport> {
+        self.call("backup_export", json!({ "path": path }))
+    }
+    fn backup_select_import_file(&self, title: &str, all_files: &str) -> BackendResult<String> {
+        self.call(
+            "backup_select_import_file",
+            json!({ "title": title, "allFiles": all_files }),
+        )
+    }
+    fn backup_preview(&self, path: &str) -> BackendResult<BackupPreview> {
+        self.call("backup_preview", json!({ "path": path }))
+    }
+    /// As the real restore, refused with nothing written when `digest` is
+    /// not the one the preview of `path` answered, when it answered one.
+    fn backup_restore(&self, path: &str, digest: &str) -> Result<BackupReport, RestoreError> {
+        let answer = self.call("backup_restore", json!({ "path": path }));
+        let previewed = self
+            .recorded_for("backup_preview", &json!({ "path": path }))
+            .and_then(Result::ok)
+            .and_then(|preview| {
+                preview
+                    .get("digest")
+                    .and_then(Value::as_str)
+                    .map(String::from)
+            })
+            .filter(|previewed| !previewed.is_empty());
+        if previewed.is_some_and(|previewed| previewed != digest) {
+            return Err(RestoreError {
+                message: format!(
+                    "{path} changed since its preview: open it again to see what it holds"
+                ),
+                left_restored: false,
+            });
+        }
+        if let Some(message) = self.lock().restore_left.clone() {
+            return Err(RestoreError {
+                message,
+                left_restored: true,
+            });
+        }
+        answer.map_err(RestoreError::from)
+    }
     fn open_url(&self, url: &str) -> BackendResult<()> {
         self.call("open_url", json!({ "url": url }))
     }
@@ -316,7 +364,19 @@ impl Backend for MockBackend {
         self.call("roblox_check_sessions", json!({}))
     }
     fn list_custom_themes(&self) -> BackendResult<Vec<CustomTheme>> {
-        self.call("list_custom_themes", json!({}))
+        self.read_custom_themes().map(|list| list.themes)
+    }
+    /// One read of the locked themes for the list and its `complete` flag:
+    /// a theme locked between two reads would be left out of a list that
+    /// says it is whole.
+    fn read_custom_themes(&self) -> BackendResult<CustomThemeList> {
+        let mut themes: Vec<CustomTheme> = self.call("list_custom_themes", json!({}))?;
+        let locked = self.lock().locked_themes.clone();
+        themes.retain(|theme| !locked.contains(&theme.id));
+        Ok(CustomThemeList {
+            themes,
+            complete: locked.is_empty(),
+        })
     }
     fn save_custom_theme(&self, theme: &CustomTheme) -> BackendResult<()> {
         self.call("save_custom_theme", json!({ "theme": theme }))

@@ -329,6 +329,41 @@ impl Backend for Scripted {
         }
         self.inner.reload_user_platforms()
     }
+    fn backup_select_export_path(&self, title: &str, all_files: &str) -> BackendResult<String> {
+        self.record("backup_select_export_path", format!("{title}|{all_files}"));
+        if let Some(answer) = self.next("backup_select_export_path") {
+            return answer;
+        }
+        self.inner.backup_select_export_path(title, all_files)
+    }
+    fn backup_export(&self, path: &str) -> BackendResult<BackupReport> {
+        self.record("backup_export", format!("{:?}", (&path,)));
+        if let Some(answer) = self.next("backup_export") {
+            return answer;
+        }
+        self.inner.backup_export(path)
+    }
+    fn backup_select_import_file(&self, title: &str, all_files: &str) -> BackendResult<String> {
+        self.record("backup_select_import_file", format!("{title}|{all_files}"));
+        if let Some(answer) = self.next("backup_select_import_file") {
+            return answer;
+        }
+        self.inner.backup_select_import_file(title, all_files)
+    }
+    fn backup_preview(&self, path: &str) -> BackendResult<BackupPreview> {
+        self.record("backup_preview", format!("{:?}", (&path,)));
+        if let Some(answer) = self.next("backup_preview") {
+            return answer;
+        }
+        self.inner.backup_preview(path)
+    }
+    fn backup_restore(&self, path: &str, digest: &str) -> Result<BackupReport, RestoreError> {
+        self.record("backup_restore", format!("{:?}", (&path, &digest)));
+        if let Some(answer) = self.next("backup_restore") {
+            return answer.map_err(RestoreError::from);
+        }
+        self.inner.backup_restore(path, digest)
+    }
     fn descriptor_select_file(&self) -> BackendResult<String> {
         self.record("descriptor_select_file", String::new());
         if let Some(answer) = self.next("descriptor_select_file") {
@@ -638,6 +673,18 @@ impl Backend for Scripted {
             return answer;
         }
         self.inner.list_custom_themes()
+    }
+    /// A list queued for `list_custom_themes` is the whole list; otherwise
+    /// the inner mock answers, with its `complete` flag.
+    fn read_custom_themes(&self) -> BackendResult<CustomThemeList> {
+        self.record("list_custom_themes", String::new());
+        if let Some(answer) = self.next::<Vec<CustomTheme>>("list_custom_themes") {
+            return answer.map(|themes| CustomThemeList {
+                themes,
+                complete: true,
+            });
+        }
+        self.inner.read_custom_themes()
     }
     fn save_custom_theme(&self, theme: &CustomTheme) -> BackendResult<()> {
         self.record("save_custom_theme", format!("{:?}", (&theme,)));

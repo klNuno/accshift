@@ -104,6 +104,32 @@ impl SettingsPanel {
         }
     }
 
+    /// A restore replaced the stored settings with `stored`: the draft takes
+    /// them whole and its pending save goes, so an edit made during the
+    /// restore never lands over it, a PIN being set or removed included.
+    /// The API key and the platform paths, which a backup does not carry,
+    /// keep their pending save.
+    pub(in crate::app) fn take_restored(&mut self, stored: &AppSettings) {
+        self.seen_store = stored.clone();
+        self.persisted = stored.clone();
+        self.draft = stored.clone();
+        self.pin_code_input.clear();
+        self.pin_setup_pending = false;
+        self.pin_disable_pending = false;
+        self.refresh_numeric();
+        let mut saved: Value =
+            serde_json::from_str(&self.last_persisted_snapshot).unwrap_or(Value::Null);
+        if let Some(saved_map) = saved.as_object_mut() {
+            saved_map.insert("settings".into(), stored.to_value());
+            self.last_persisted_snapshot = saved.to_string();
+        }
+        self.last_platform_snapshot = platform_snapshot(&self.draft);
+        self.last_tracked = self.tracked();
+        if self.persist_snapshot(&self.draft) == self.last_persisted_snapshot {
+            self.save_at = None;
+        }
+    }
+
     /// Pushes a typed Steam API key; false when the backend refused it. A
     /// blank key is dropped, the stored one stays.
     fn save_api_key(&mut self, backend: &dyn Backend) -> bool {
@@ -190,7 +216,7 @@ fn autostart_change(previous: &Value, draft: &AppSettings) -> Option<bool> {
 
 /// The enabled platforms changed: a tab that is no longer enabled falls
 /// back to the first one the settings allow.
-fn keep_active_tab_enabled(b: &mut Booted) {
+pub(super) fn keep_active_tab_enabled(b: &mut Booted) {
     let s = b.stores.settings();
     if !s.enabled_platforms.contains(&b.nav.active_tab) {
         b.nav.active_tab = platforms::initial_tab(
@@ -221,7 +247,8 @@ impl AppModel {
         if !panel.hydrated {
             return;
         }
-        normalize(&mut panel.draft, &b.platforms, b.runtime_os);
+        let waiting = platforms::waiting(&b.platforms, &b.stores.context().platform_ids);
+        normalize(&mut panel.draft, &b.platforms, &waiting, b.runtime_os);
         let pin_committed = panel.commit_pin_code();
         let snapshot = panel.persist_snapshot(&panel.draft);
         if snapshot == panel.last_persisted_snapshot {

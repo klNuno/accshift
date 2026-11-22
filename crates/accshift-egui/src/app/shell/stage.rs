@@ -65,7 +65,19 @@ pub(super) struct Stage<'a> {
     pub(super) palette_commands: Option<PaletteCommands>,
     pub(super) submenus: &'a [(SubmenuLoader, SubmenuLoad)],
     pub(super) open_id: u64,
+    /// The restart a restore needs, over everything in the stage.
+    pub(super) restart: Option<RestartModal>,
     pub(super) actions: Vec<Action>,
+}
+
+/// The restart modal of a restore whose stores could not be read back,
+/// its texts resolved.
+pub(in crate::app) struct RestartModal {
+    pub(in crate::app) title: String,
+    pub(in crate::app) message: String,
+    /// Why the last restart attempt failed.
+    pub(in crate::app) error: Option<String>,
+    pub(in crate::app) button: String,
 }
 
 impl Stage<'_> {
@@ -104,6 +116,32 @@ impl Stage<'_> {
         }
         self.palette(ui);
         self.context_menu(ui);
+        self.restart_modal(ui, panel);
+    }
+
+    /// The restart modal, last: over the panel, under the title bar, whose
+    /// window buttons stay in reach.
+    fn restart_modal(&mut self, ui: &mut Ui, panel: Rect) {
+        let Some(modal) = &self.restart else {
+            return;
+        };
+        let fv = self.fv;
+        let props = dialog::DialogProps {
+            viewport: panel,
+            ..fv.dialog_props(0)
+        };
+        let notice = dialog::Notice {
+            title: &modal.title,
+            message: &modal.message,
+            error: modal.error.as_deref(),
+            button_label: &modal.button,
+            button_bg: fv.vars.accent,
+            button_fg: fv.accent_fg,
+        };
+        let pressed = dialog::notice_dialog(ui, &props, &notice);
+        if pressed {
+            self.actions.push(Action::RestartAfterRestore);
+        }
     }
 
     /// The shell's background colour and image, then Liquid Glass under

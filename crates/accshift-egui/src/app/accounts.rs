@@ -192,8 +192,8 @@ fn add_flow_view<'a>(navigation: &'a FolderNavigation, tab: &'a str) -> AddFlowV
 }
 
 impl Accounts {
-    /// Removes an account: drop it from the loader,
-    /// sync the folders with the accounts left, refresh the items.
+    /// Removes a forgotten account: drop it from the loader and from its
+    /// folder, refresh the items.
     pub fn remove_account(
         &mut self,
         stores: &mut ClientStores,
@@ -201,14 +201,7 @@ impl Accounts {
         account_id: &str,
     ) {
         self.loading.loader.remove_account(account_id);
-        let ids: Vec<String> = self
-            .loading
-            .loader
-            .accounts()
-            .iter()
-            .map(|account| account.id.clone())
-            .collect();
-        stores.sync_accounts(&ids, active_tab);
+        stores.forget_account(account_id, active_tab);
         self.navigation.refresh_current_items(stores, active_tab);
     }
 
@@ -380,6 +373,16 @@ impl Accounts {
         self.load(jobs, stores, tab, load_options(true, false));
         self.set_search("", Instant::now());
         self.pipeline.clear_collapsed_sections();
+    }
+
+    /// The active tab's platform now reads its accounts from another source
+    /// (a restored descriptor of the same id): the old source's accounts
+    /// and everything in flight for them go, and the tab loads again,
+    /// silently.
+    pub fn reload_source(&mut self, jobs: &Jobs, stores: &mut ClientStores, tab: &str) {
+        self.loading.switch_tab(&self.registry, tab);
+        self.navigation.refresh_current_items(stores, tab);
+        self.load(jobs, stores, tab, load_options(true, false));
     }
 
     /// The refresh button: the active tab again, not silent, with the

@@ -106,8 +106,14 @@ pub(super) fn toggle_flag(d: &mut AppSettings, flag: SettingFlag) {
 /// Brings the settings back in range: the numbers clamped, the launch
 /// options trimmed, a PIN hash only while the PIN is on, at least one
 /// enabled platform, and a startup platform that exists, is enabled and,
-/// when an enabled one is usable here, is usable.
-pub fn normalize(s: &mut AppSettings, platforms: &[PlatformDef], os: RuntimeOs) {
+/// when an enabled one is usable here, is usable. A `waiting` id (its
+/// descriptor locked for now) counts as a known, usable platform.
+pub fn normalize(
+    s: &mut AppSettings,
+    platforms: &[PlatformDef],
+    waiting: &[String],
+    os: RuntimeOs,
+) {
     let clamp = |v: i64, min, max, fallback| clamp_int(Some(v as f64), min, max, fallback);
     s.background_opacity = clamp(s.background_opacity, 0, 100, 100);
     s.ui_scale_percent = clamp(s.ui_scale_percent, 75, 150, 100);
@@ -120,10 +126,10 @@ pub fn normalize(s: &mut AppSettings, platforms: &[PlatformDef], os: RuntimeOs) 
         s.pin_hash.clear();
     }
     // Every platform of the registry is implemented, user ones included.
-    if !platforms.iter().any(|p| p.id == s.default_platform_id) {
+    let known = |id: &String| platforms.iter().any(|p| p.id == *id) || waiting.contains(id);
+    if !known(&s.default_platform_id) {
         s.default_platform_id = "steam".to_string();
     }
-    let known = |id: &String| platforms.iter().any(|p| p.id == *id);
     if !s.enabled_platforms.iter().any(known) {
         s.enabled_platforms.push("steam".to_string());
     }
@@ -138,7 +144,7 @@ pub fn normalize(s: &mut AppSettings, platforms: &[PlatformDef], os: RuntimeOs) 
     let selectable: Vec<&String> = s
         .enabled_platforms
         .iter()
-        .filter(|id| platforms::usable(platforms, id, os))
+        .filter(|id| platforms::usable(platforms, id, os) || waiting.contains(id))
         .collect();
     if let Some(first) = selectable.first() {
         if !selectable.contains(&&s.default_platform_id) {
@@ -175,7 +181,7 @@ mod tests {
                     &accshift_app::stores::StoreContext::default(),
                 )
             };
-            normalize(&mut settings, &defs, RuntimeOs::Windows);
+            normalize(&mut settings, &defs, &[], RuntimeOs::Windows);
             assert_eq!(settings.default_platform_id, expected);
             assert_eq!(settings.enabled_platforms, saved);
         }

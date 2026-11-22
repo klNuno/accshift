@@ -109,6 +109,27 @@ pub trait Backend: Send + Sync {
     fn descriptor_remove(&self, platform_id: &str) -> BackendResult<UserPlatformReport>;
     fn open_descriptors_folder(&self) -> BackendResult<()>;
 
+    // ---------------------------------------------------------------- backup
+
+    /// Opens a save dialog titled `title` on `accshift-backup-<date>.json`;
+    /// `all_files` names the filter that shows every file. Cancelling is an
+    /// error. Same thread rule as [`Self::descriptor_select_file`].
+    fn backup_select_export_path(&self, title: &str, all_files: &str) -> BackendResult<String>;
+    /// Writes the backup of the current setup to `path`.
+    fn backup_export(&self, path: &str) -> BackendResult<BackupReport>;
+    /// Opens a file picker titled `title`, as the save dialog. Cancelling is
+    /// an error.
+    fn backup_select_import_file(&self, title: &str, all_files: &str) -> BackendResult<String>;
+    /// What the backup at `path` holds; refused for a newer format or a file
+    /// that does not read. Writes nothing.
+    fn backup_preview(&self, path: &str) -> BackendResult<BackupPreview>;
+    /// Copies the current files to `user/backups/pre-restore-<timestamp>/`,
+    /// then replaces the stores with the backup's. Refused, with nothing
+    /// written, when the file is no longer the one whose preview answered
+    /// `digest`. A failure says whether it left restored files it could not
+    /// put back.
+    fn backup_restore(&self, path: &str, digest: &str) -> Result<BackupReport, RestoreError>;
+
     // ---------------------------------------------------------------- utility
 
     fn open_url(&self, url: &str) -> BackendResult<()>;
@@ -201,7 +222,19 @@ pub trait Backend: Send + Sync {
 
     // ---------------------------------------------------------------- themes
 
+    /// Every usable theme file. One that is there but cannot be read is
+    /// left out; only a folder that cannot be listed is an error.
     fn list_custom_themes(&self) -> BackendResult<Vec<CustomTheme>>;
+    /// [`Self::list_custom_themes`], saying whether a theme file was left
+    /// out because it could not be read: a reader that keeps such a list
+    /// reads the folder again later. Not a command of its own; the answer of
+    /// a backend that cannot tell is the whole list.
+    fn read_custom_themes(&self) -> BackendResult<CustomThemeList> {
+        Ok(CustomThemeList {
+            themes: self.list_custom_themes()?,
+            complete: true,
+        })
+    }
     fn save_custom_theme(&self, theme: &CustomTheme) -> BackendResult<()>;
     fn delete_custom_theme(&self, theme_id: &str) -> BackendResult<()>;
 

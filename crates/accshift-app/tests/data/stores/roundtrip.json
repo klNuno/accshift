@@ -1249,7 +1249,7 @@
     "storeId": "client.settings",
     "input": {
       "language": "de",
-      "themeId": "nope",
+      "themeId": "../nope",
       "backgroundOpacity": 140.5,
       "uiScalePercent": "abc",
       "animations": "ON",
@@ -2799,6 +2799,10 @@
           {
             "type": "folder",
             "id": "old"
+          },
+          {
+            "type": "account",
+            "id": "in-smurfs"
           }
         ],
         "old": [

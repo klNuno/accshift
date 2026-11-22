@@ -2,7 +2,7 @@
 //! streaming detection.
 
 use crate::error::BackendResult;
-use crate::types::CustomTheme;
+use crate::types::{CustomTheme, CustomThemeList};
 use accshift_core::error::PlatformError;
 use accshift_core::{os, storage, themes, AppContext};
 
@@ -29,6 +29,11 @@ pub(super) fn streaming_software_running() -> bool {
 /// Backs `Backend::list_custom_themes`.
 pub(super) fn list_themes(c: &dyn AppContext) -> BackendResult<Vec<CustomTheme>> {
     Ok(themes::list_custom_themes(c)?)
+}
+
+/// Backs `Backend::read_custom_themes`.
+pub(super) fn read_themes(c: &dyn AppContext) -> BackendResult<CustomThemeList> {
+    Ok(themes::read_custom_themes(c)?)
 }
 
 /// Backs `Backend::save_custom_theme`.

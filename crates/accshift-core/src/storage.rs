@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
 mod atomic;
+mod backup;
 mod manifest;
 mod migrate;
 mod paths;
@@ -16,6 +17,8 @@ mod stores;
 
 #[allow(unused_imports)]
 pub use self::atomic::*;
+#[allow(unused_imports)]
+pub use self::backup::*;
 #[allow(unused_imports)]
 pub use self::manifest::*;
 #[allow(unused_imports)]

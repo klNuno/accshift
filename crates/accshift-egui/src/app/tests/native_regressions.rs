@@ -118,6 +118,16 @@ fn pump_until(app: &mut AppModel, ctx: &Context, condition: impl Fn(&AppModel) -
     }
 }
 
+/// Frames until no external refresh runs, accounts it reloads included.
+fn wait_refresh_over(app: &mut AppModel, ctx: &Context) {
+    let deadline = Instant::now() + std::time::Duration::from_secs(10);
+    while app.external_refresh.running() {
+        assert!(Instant::now() < deadline, "the refresh never ended");
+        frame(app, ctx, true, false);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 #[test]
 fn native_external_storage_on_focus_refreshes_stores_and_accounts() {
     let ctx = Context::default();
@@ -252,6 +262,163 @@ fn native_external_theme_read_failure_does_not_discard_other_store_changes() {
     assert_eq!(
         app.booted().unwrap().stores.account_card_note("external"),
         "external note"
+    );
+}
+
+#[test]
+fn native_external_themes_read_in_part_are_read_again_on_the_next_focus() {
+    // Regression: the selected theme read without its locked custom base
+    // took the new themes fingerprint as seen, and with the theme loaded
+    // no focus read `base` again.
+    let ctx = Context::default();
+    let (mut app, mock) = external_app_with(&ctx, |fixture| {
+        let snapshot = &mut fixture["commands"]["load_client_storage_snapshot"][0]["result"];
+        snapshot["stores"]["client.settings"]["themeId"] = json!("child");
+        snapshot["manifest"]["stores"]["app.themes"] = json!("theme-2");
+        fixture["commands"]["get_storage_manifest"][0]["result"] = snapshot["manifest"].clone();
+        fixture["commands"]["list_custom_themes"][0]["result"] = json!([
+            {"schemaVersion": 1, "id": "base", "name": "Base", "colorScheme": "dark", "tokens": {"bgCard": "#112233"}},
+            {"schemaVersion": 1, "id": "child", "name": "Child", "colorScheme": "dark", "extends": "base", "tokens": {}}
+        ]);
+    });
+    assert!(mock.lock_theme("base", true));
+    frame(&mut app, &ctx, true, false);
+    frame(&mut app, &ctx, false, false);
+    frame(&mut app, &ctx, true, false);
+    pump_until(&mut app, &ctx, |a| {
+        a.booted().unwrap().registry.document("child").is_some()
+    });
+    wait_refresh_over(&mut app, &ctx);
+    let b = app.booted().unwrap();
+    assert_eq!(b.stores.settings().theme_id, "child");
+    assert!(b.registry.document("base").is_none());
+    let unbased = b.theme.vars.bg_card;
+
+    assert!(mock.lock_theme("base", false));
+    let reads = mock.seen("list_custom_themes");
+    frame(&mut app, &ctx, false, false);
+    frame(&mut app, &ctx, true, false);
+    pump_until(&mut app, &ctx, |a| {
+        a.booted().unwrap().registry.document("base").is_some()
+    });
+    let b = app.booted().unwrap();
+    assert!(
+        mock.seen("list_custom_themes") > reads,
+        "a partial read taken for the whole folder"
+    );
+    assert!(b.registry.document("base").is_some());
+    assert_ne!(b.theme.vars.bg_card, unbased);
+}
+
+#[test]
+fn native_external_themes_are_read_again_after_the_stores_fail_to_read() {
+    // Regression (EXTERNAL_SNAPSHOT_UNLOCK): the stores read failed before
+    // the themes were read, with the new themes fingerprint already taken
+    // as seen: the edited theme stayed stale on every later focus.
+    let ctx = Context::default();
+    let old = json!({"schemaVersion": 1, "id": "external", "name": "External", "colorScheme": "dark", "tokens": {"bgCard": "#112233"}});
+    let (mut app, mock) = external_app_with(&ctx, |fixture| {
+        let boot = &mut fixture["commands"]["get_boot_payload"][0]["result"];
+        boot["customThemes"] = json!([old.clone()]);
+        boot["storageSnapshot"]["stores"]["client.settings"]["themeId"] = json!("external");
+        let snapshot = &mut fixture["commands"]["load_client_storage_snapshot"][0]["result"];
+        snapshot["stores"]["client.settings"]["themeId"] = json!("external");
+        snapshot["manifest"]["stores"]["app.themes"] = json!("theme-2");
+        fixture["commands"]["get_storage_manifest"][0]["result"] = snapshot["manifest"].clone();
+        let mut next = old;
+        next["tokens"]["bgCard"] = json!("#445566");
+        fixture["commands"]["list_custom_themes"][0]["result"] = json!([next]);
+    });
+    let before = app.booted().unwrap().theme.vars.bg_card;
+    mock.fail("load_client_storage_snapshot", Some("settings locked"));
+    frame(&mut app, &ctx, true, false);
+    frame(&mut app, &ctx, false, false);
+    frame(&mut app, &ctx, true, false);
+    pump_until(&mut app, &ctx, |_| {
+        mock.seen("load_client_storage_snapshot") > 0
+    });
+    wait_refresh_over(&mut app, &ctx);
+    assert_eq!(app.booted().unwrap().theme.vars.bg_card, before);
+
+    mock.fail("load_client_storage_snapshot", None);
+    frame(&mut app, &ctx, false, false);
+    frame(&mut app, &ctx, true, false);
+    pump_until(&mut app, &ctx, |a| {
+        a.booted().unwrap().theme.vars.bg_card != before
+    });
+    wait_refresh_over(&mut app, &ctx);
+    let b = app.booted().unwrap();
+    assert!(
+        mock.seen("list_custom_themes") > 0,
+        "the themes were never read"
+    );
+    assert_ne!(b.theme.vars.bg_card, before);
+    assert_eq!(b.stores.view_mode(), ViewMode::List);
+}
+
+#[test]
+fn native_external_themes_that_fail_to_read_are_read_again_on_the_next_focus() {
+    // Regression (EXTERNAL_THEME_UNLOCK): the refresh took the new themes
+    // fingerprint before the list failed, so no later focus read them, and
+    // the settings naming the theme were sanitized to the default theme.
+    let ctx = Context::default();
+    let (mut app, mock) = external_app_with(&ctx, |fixture| {
+        let snapshot = &mut fixture["commands"]["load_client_storage_snapshot"][0]["result"];
+        snapshot["stores"]["client.settings"]["themeId"] = json!("external");
+        snapshot["manifest"]["stores"]["app.themes"] = json!("theme-2");
+        fixture["commands"]["get_storage_manifest"][0]["result"] = snapshot["manifest"].clone();
+        fixture["commands"]["list_custom_themes"][0]["result"] = json!([{
+            "schemaVersion": 1, "id": "external", "name": "External",
+            "colorScheme": "dark", "tokens": {"bgCard": "#112233"}
+        }]);
+    });
+    let before = app.booted().unwrap().theme.vars.bg_card;
+    mock.fail("list_custom_themes", Some("one file locked"));
+    frame(&mut app, &ctx, true, false);
+    frame(&mut app, &ctx, false, false);
+    frame(&mut app, &ctx, true, false);
+    pump_until(&mut app, &ctx, |a| {
+        a.booted().unwrap().stores.view_mode() == ViewMode::List
+    });
+    let b = app.booted().unwrap();
+    assert_eq!(b.stores.view_mode(), ViewMode::List);
+    assert_eq!(b.stores.settings().theme_id, "external");
+    assert!(b.registry.document("external").is_none());
+    assert_ne!(
+        b.stores
+            .storage()
+            .manifest()
+            .stores
+            .get("app.themes")
+            .map(String::as_str),
+        Some("theme-2"),
+        "themes never read taken as seen"
+    );
+
+    // The refresh whose read failed is over before the failure is lifted:
+    // a focus while it runs starts nothing, and a read still in flight
+    // would answer with the failure lifted.
+    wait_refresh_over(&mut app, &ctx);
+    mock.fail("list_custom_themes", None);
+    let reads = mock.seen("list_custom_themes");
+    frame(&mut app, &ctx, false, false);
+    frame(&mut app, &ctx, true, false);
+    pump_until(&mut app, &ctx, |a| {
+        a.booted().unwrap().registry.document("external").is_some()
+    });
+    let b = app.booted().unwrap();
+    assert!(mock.seen("list_custom_themes") > reads);
+    assert!(b.registry.document("external").is_some());
+    assert_eq!(b.stores.settings().theme_id, "external");
+    assert_ne!(b.theme.vars.bg_card, before);
+    assert_eq!(
+        b.stores
+            .storage()
+            .manifest()
+            .stores
+            .get("app.themes")
+            .map(String::as_str),
+        Some("theme-2")
     );
 }
 

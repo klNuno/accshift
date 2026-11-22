@@ -15,6 +15,8 @@ pub mod secrets;
 pub mod snapshot_crypto;
 pub mod storage;
 pub mod telemetry;
+#[cfg(test)]
+pub(crate) mod test_fs;
 pub mod themes;
 
 pub use context::{AppContext, AppCtx};

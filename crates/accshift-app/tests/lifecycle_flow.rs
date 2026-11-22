@@ -317,6 +317,24 @@ fn a_dev_build_never_checks() {
 }
 
 #[test]
+fn the_scripted_backend_says_a_theme_list_missing_a_locked_file_is_partial() {
+    // Regression (SCRIPTED_THEMES): with no answer queued, the trait default
+    // marked the inner mock's list whole, a locked theme left out.
+    use accshift_app::backend::Backend;
+    let backend = support::scripted("dev");
+    assert!(backend.inner.lock_theme("base", true));
+    let list = backend.read_custom_themes().unwrap();
+    assert!(
+        !list.complete,
+        "SCRIPTED_THEMES: a list missing a locked theme said it was whole"
+    );
+    // A list queued for the command is the whole list, as before.
+    backend.push("list_custom_themes", Ok(json!([])));
+    assert!(backend.read_custom_themes().unwrap().complete);
+    assert_eq!(backend.calls("list_custom_themes").len(), 2);
+}
+
+#[test]
 fn update_telemetry_reaches_the_backend() {
     let backend = support::scripted("demo");
     track_update(&backend, "failed", None, Some("check_failed"));
