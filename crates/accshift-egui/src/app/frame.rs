@@ -98,12 +98,16 @@ impl AppModel {
     /// (mouse focus), a press on nothing focusable (the background) leaves
     /// it.
     fn track_focus_modality(&mut self, ctx: &Context) {
-        let on_focusable = ctx.viewport(|vp| {
-            vp.hits
-                .contains_pointer
-                .iter()
-                .any(|w| w.sense.senses_click() || w.sense.is_focusable())
-        });
+        let hits_focusable = |c: &Context| {
+            c.viewport(|vp| {
+                vp.hits
+                    .contains_pointer
+                    .iter()
+                    .any(|w| w.sense.senses_click() || w.sense.is_focusable())
+            })
+        };
+        let on_focusable =
+            hits_focusable(ctx) || (self.overlay_active && hits_focusable(&self.overlay_ctx));
         let modality = ctx.input(|i| {
             i.events.iter().fold(None, |m, e| match e {
                 Event::Key {

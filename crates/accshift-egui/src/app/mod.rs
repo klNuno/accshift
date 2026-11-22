@@ -336,11 +336,51 @@ pub struct AppModel {
     updates: updates::Updates,
     /// The Liquid Glass wallpaper backdrop.
     liquid: wallpaper::Liquid,
+    /// Unscaled context for overlays outside the stage (onboarding, AFK,
+    /// streamer mode, PIN lock): always lays out at 100% UI scale.
+    overlay_ctx: Context,
+    /// Whether CJK fonts were installed on `overlay_ctx` (`None` until first use).
+    overlay_fonts_cjk: Option<bool>,
+    /// The overlay pass's output for this frame, taken by the runner.
+    overlay_output: Option<egui::FullOutput>,
+    /// Whether the overlay pass painted shapes last frame (keeps fade-outs running).
+    overlay_active: bool,
+    /// Whether an overlay takes all the input this frame (PIN lock,
+    /// streamer mode): its IME and focus win over the stage's.
+    overlay_captures: bool,
+    /// The overlay's nodes in the window's AccessKit tree and the actions
+    /// routed to them.
+    overlay_a11y: crate::overlay_output::OverlayA11y,
+}
+
+impl Drop for AppModel {
+    fn drop(&mut self) {
+        if let Some(out) = &mut self.overlay_output {
+            out.textures_delta.clear();
+        }
+    }
 }
 
 impl AppModel {
     pub fn backend(&self) -> &Arc<dyn Backend> {
         &self.backend
+    }
+
+    /// Takes the unscaled overlay pass's context and output from the last frame.
+    pub fn take_overlay(&mut self) -> Option<(Context, egui::FullOutput)> {
+        let out = self.overlay_output.take()?;
+        Some((self.overlay_ctx.clone(), out))
+    }
+
+    /// Before the stage's pass: the screen reader's actions on the
+    /// overlay's nodes go to the overlay pass.
+    pub fn route_overlay_actions(&mut self, events: &mut Vec<egui::Event>) {
+        self.overlay_a11y.route(events);
+    }
+
+    /// Whether an overlay takes the input this frame.
+    pub fn overlay_captures(&self) -> bool {
+        self.overlay_captures
     }
 
     pub fn booted(&self) -> Option<&Booted> {

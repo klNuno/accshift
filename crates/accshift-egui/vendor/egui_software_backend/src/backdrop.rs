@@ -478,6 +478,17 @@ pub fn land_span(
 
 #[inline]
 fn land_pixel(d: &mut [u8; 4], s: &[u8; 4], op: u32) {
+    // What the blend below gives for an opaque or an empty pixel at full
+    // opacity, without the per-channel arithmetic.
+    if op == 255 {
+        if s[3] == 255 {
+            *d = *s;
+            return;
+        }
+        if *s == [0; 4] {
+            return;
+        }
+    }
     let s = if op == 255 {
         *s
     } else {
@@ -506,6 +517,33 @@ pub fn backdrop_of(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn landing_an_opaque_or_empty_pixel_matches_the_blend() {
+        let blend = |d: [u8; 4], s: [u8; 4]| -> [u8; 4] {
+            let inv = 255 - s[3] as u32;
+            core::array::from_fn(|c| (s[c] as u32 + (d[c] as u32 * inv + 127) / 255).min(255) as u8)
+        };
+        let dsts = [
+            [0, 0, 0, 0],
+            [12, 200, 77, 255],
+            [255, 255, 255, 255],
+            [3, 9, 1, 40],
+        ];
+        let srcs = [
+            [0, 0, 0, 0],
+            [90, 20, 250, 255],
+            [0, 0, 0, 255],
+            [255, 255, 255, 255],
+        ];
+        for d in dsts {
+            for s in srcs {
+                let mut out = d;
+                land_pixel(&mut out, &s, 255);
+                assert_eq!(out, blend(d, s), "{s:?} over {d:?}");
+            }
+        }
+    }
 
     #[test]
     fn a_flat_image_stays_flat() {

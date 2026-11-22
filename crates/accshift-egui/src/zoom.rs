@@ -19,8 +19,11 @@ use egui::{Context, Event, Id, RawInput};
 
 const BASE: &str = "accshift-zoom/base";
 const UI: &str = "accshift-zoom/ui";
-const FRAME: &str = "accshift-zoom/frame";
+const STAGE: &str = "accshift-zoom/stage";
+const FRAME_INPUT: &str = "accshift-zoom/frame-input";
+const WINDOW: &str = "accshift-zoom/window";
 const UPSCALE: &str = "accshift-zoom/upscale";
+const CLEAR_HOVER: &str = "accshift-zoom/clear-hover";
 
 /// The factor the window itself needs, before the UI zoom.
 pub fn set_base(ctx: &Context, base: f32) {
@@ -41,7 +44,20 @@ pub fn clear_ui(ctx: &Context) {
     ctx.data_mut(|d| {
         d.remove_temp::<f32>(Id::unique(UI));
         d.remove_temp::<bool>(Id::unique(UPSCALE));
+        d.remove_temp::<bool>(Id::unique(CLEAR_HOVER));
     });
+}
+
+/// Asks the next frame to drop any stale pointer hover after a zoom change
+/// (unless a fresh pointer move arrives on that frame).
+pub fn request_hover_clear(ctx: &Context) {
+    ctx.data_mut(|d| d.insert_temp(Id::unique(CLEAR_HOVER), true));
+}
+
+/// Takes the pending hover-clear request, if any.
+pub fn take_hover_clear(ctx: &Context) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(Id::unique(CLEAR_HOVER)))
+        .unwrap_or(false)
 }
 
 /// Whether the software runner scales the rendered stage (the boot
@@ -53,7 +69,9 @@ pub fn upscaled(ctx: &Context) -> bool {
             .unwrap_or(false)
 }
 
-fn base(ctx: &Context) -> f32 {
+/// The window's own zoom factor (scene device scale over native), before the
+/// UI zoom.
+pub fn base(ctx: &Context) -> f32 {
     ctx.data(|d| d.get_temp::<f32>(Id::unique(BASE)))
         .unwrap_or(1.0)
 }
@@ -65,23 +83,55 @@ pub fn ui(ctx: &Context) -> f32 {
 }
 
 /// Before a software frame: `stage` is the zoom the runner scales the
-/// frame by, 1 when egui's zoom factor carries it.
-pub fn begin_frame(ctx: &Context, stage: f32) {
-    let zoom = stage * ctx.zoom_factor() / base(ctx);
-    ctx.data_mut(|d| d.insert_temp(Id::unique(FRAME), zoom));
+/// frame by, 1 when egui's zoom factor carries it, and `raw` the frame's
+/// input once in the stage's points ([`stage_input`]). Call it before the
+/// pass starts: the zoom factor in force now is the one the frame's events
+/// and screen were converted with ([`input_frame`]).
+pub fn begin_frame(ctx: &Context, stage: f32, raw: &RawInput) {
+    let input = stage * ctx.zoom_factor() / base(ctx);
+    let window = raw.screen_rect.map(|r| r.size() * input);
+    ctx.data_mut(|d| {
+        d.insert_temp(Id::unique(STAGE), stage);
+        d.insert_temp(Id::unique(FRAME_INPUT), input);
+        // `None` is egui's "same as last frame" (`InputState::begin_pass`
+        // keeps its rect; egui-winit sends it while minimized): the window
+        // kept its size, in base points whatever the zoom. Dropping it would
+        // fall back to `content_rect`, which a pending zoom has rescaled.
+        if let Some(window) = window {
+            d.insert_temp(Id::unique(WINDOW), window);
+        }
+    });
 }
 
-/// The zoom this frame lays out at: the screen is the window divided by
-/// it.
-pub fn frame(ctx: &Context) -> f32 {
-    ctx.data(|d| d.get_temp::<f32>(Id::unique(FRAME)))
+fn stage(ctx: &Context) -> f32 {
+    ctx.data(|d| d.get_temp::<f32>(Id::unique(STAGE)))
         .unwrap_or(1.0)
 }
 
+/// The zoom this frame lays out at: the screen is the window divided by
+/// it. It reads the zoom factor egui applied to the pass, so on the first
+/// frame of a zoom change (egui switches factors as the pass begins) the
+/// geometry already follows the new one.
+pub fn frame(ctx: &Context) -> f32 {
+    stage(ctx) * ctx.zoom_factor() / base(ctx)
+}
+
+/// The zoom this frame's input events are in: the factor in force when
+/// they were received, before the pass applied a pending zoom change
+/// (egui rescales the screen then, not the events).
+pub fn input_frame(ctx: &Context) -> f32 {
+    ctx.data(|d| d.get_temp::<f32>(Id::unique(FRAME_INPUT)))
+        .unwrap_or_else(|| frame(ctx))
+}
+
 /// `100vw` by `100vh` in the stage's points: the window's CSS size, which
-/// the stage's transform leaves alone.
+/// the stage's transform leaves alone. It comes from the window's own
+/// size ([`begin_frame`]): on the first frame of a zoom change egui
+/// derives its screen from the last frame's, which the boot raster had
+/// already divided by its zoom.
 pub fn viewport(ctx: &Context) -> egui::Vec2 {
-    ctx.content_rect().size() * frame(ctx)
+    ctx.data(|d| d.get_temp::<egui::Vec2>(Id::unique(WINDOW)))
+        .unwrap_or_else(|| ctx.content_rect().size() * frame(ctx))
 }
 
 /// `.app-stage` in the stage's points. It is `flex: 1` in the column
@@ -109,6 +159,58 @@ pub fn apply(ctx: &Context) {
         ctx.set_zoom_factor(want);
         ctx.request_repaint();
     }
+}
+
+/// Maps `events` by `scale` (stage points back into unscaled window CSS
+/// points for the overlay pass).
+pub fn scale_events(events: &[Event], scale: f32) -> Vec<Event> {
+    if (scale - 1.0).abs() < 1e-6 {
+        return events.to_vec();
+    }
+    events
+        .iter()
+        .map(|e| match e {
+            Event::PointerMoved(p) => Event::PointerMoved((p.to_vec2() * scale).to_pos2()),
+            Event::PointerButton {
+                pos,
+                button,
+                pressed,
+                modifiers,
+            } => Event::PointerButton {
+                pos: (pos.to_vec2() * scale).to_pos2(),
+                button: *button,
+                pressed: *pressed,
+                modifiers: *modifiers,
+            },
+            Event::Touch {
+                device_id,
+                id,
+                phase,
+                pos,
+                force,
+            } => Event::Touch {
+                device_id: *device_id,
+                id: *id,
+                phase: *phase,
+                pos: (pos.to_vec2() * scale).to_pos2(),
+                force: *force,
+            },
+            Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta,
+                modifiers,
+                phase,
+                source,
+            } => Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: *delta * scale,
+                modifiers: *modifiers,
+                phase: *phase,
+                source: *source,
+            },
+            other => other.clone(),
+        })
+        .collect()
 }
 
 /// The window's input in the stage's points: the screen is `1 / zoom` as
@@ -188,6 +290,19 @@ pub fn resample(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_frame_without_a_screen_rect_keeps_the_window_size() {
+        let ctx = Context::default();
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 680.0));
+        let sized = RawInput {
+            screen_rect: Some(rect),
+            ..Default::default()
+        };
+        begin_frame(&ctx, 1.0, &sized);
+        begin_frame(&ctx, 1.0, &RawInput::default());
+        assert_eq!(viewport(&ctx), egui::vec2(1000.0, 680.0));
+    }
 
     #[test]
     fn stage_size_rounds_up() {

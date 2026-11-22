@@ -58,7 +58,7 @@ impl AppModel {
     }
 
     /// The zoom in, zoom out and reset shortcuts.
-    pub(super) fn zoom_key(&mut self, key: ZoomKey, now: Instant) {
+    pub(super) fn zoom_key(&mut self, ctx: &Context, key: ZoomKey, now: Instant) {
         let Some(current) = self.ui_scale_percent() else {
             return;
         };
@@ -69,6 +69,9 @@ impl AppModel {
         };
         if next.is_some() {
             self.ui_scale_live = next;
+            crate::zoom::request_hover_clear(ctx);
+            self.publish_ui_scale(ctx, now);
+            ctx.request_repaint();
         }
     }
 
@@ -119,20 +122,27 @@ impl AppModel {
             );
             if next.is_some() {
                 self.ui_scale_live = next;
+                crate::zoom::request_hover_clear(ctx);
             }
         }
-        let Some(b) = self.booted.as_mut() else {
+        if let Some(b) = self.booted.as_mut() {
+            if let Some(value) = self.ui_scale.take_due(now) {
+                // Saved only when the store differs.
+                if b.stores.settings().ui_scale_percent != value {
+                    let mut next = b.stores.settings().clone();
+                    next.ui_scale_percent = value;
+                    b.stores.save_settings(&next);
+                }
+            }
+        }
+        self.publish_ui_scale(ctx, now);
+    }
+
+    fn publish_ui_scale(&mut self, ctx: &Context, now: Instant) {
+        let Some(b) = self.booted.as_ref() else {
             return;
         };
         let motion = b.theme.motion;
-        if let Some(value) = self.ui_scale.take_due(now) {
-            // Saved only when the store differs.
-            if b.stores.settings().ui_scale_percent != value {
-                let mut next = b.stores.settings().clone();
-                next.ui_scale_percent = value;
-                b.stores.save_settings(&next);
-            }
-        }
         let stored = b.stores.settings().ui_scale_percent;
         match self.ui_scale.next_persist() {
             Some(at) => ctx.request_repaint_after(at.saturating_duration_since(now)),

@@ -375,7 +375,10 @@ impl AppModel {
         let events = ctx.input(|i| i.events.clone());
         let mut taken = vec![false; events.len()];
         for (index, event) in events.iter().enumerate() {
-            let Some(key) = key_event(event, focus::text_field_focused(ctx)) else {
+            // Per key: the one before may have moved focus (Escape).
+            let editable = focus::text_field_focused(ctx)
+                || (self.overlay_active && focus::text_field_focused(&self.overlay_ctx));
+            let Some(key) = key_event(event, editable) else {
                 continue;
             };
             let Some(mut host) = self.key_host(ctx) else {
@@ -635,9 +638,9 @@ impl AppModel {
             KeyAction::OpenPersonas => self.apply_one(ctx, Action::OpenPersonas),
             KeyAction::ToggleViewMode => self.toggle_view_mode(ctx),
             KeyAction::ChangeTab(tab) => self.apply_one(ctx, Action::TabChange(tab)),
-            KeyAction::ZoomIn => self.zoom_key(ZoomKey::In, Instant::now()),
-            KeyAction::ZoomOut => self.zoom_key(ZoomKey::Out, Instant::now()),
-            KeyAction::ResetZoom => self.zoom_key(ZoomKey::Reset, Instant::now()),
+            KeyAction::ZoomIn => self.zoom_key(ctx, ZoomKey::In, Instant::now()),
+            KeyAction::ZoomOut => self.zoom_key(ctx, ZoomKey::Out, Instant::now()),
+            KeyAction::ResetZoom => self.zoom_key(ctx, ZoomKey::Reset, Instant::now()),
             KeyAction::NavigateBack => self.apply_one(ctx, Action::NavigateBack),
             KeyAction::ToggleBulkEditAccount(id) => {
                 if let Some(b) = self.booted.as_mut() {

@@ -7,6 +7,7 @@ pub mod bench;
 pub mod clipboard;
 pub mod harness;
 pub mod icons;
+pub mod overlay_output;
 pub mod screens;
 #[cfg(feature = "software")]
 pub mod soft;
@@ -232,9 +233,37 @@ impl Shell {
         if let Some(run) = &mut self.scenes {
             run.feed(ctx, raw_input, self.screen.ready());
         }
+        if zoom::take_hover_clear(ctx)
+            && !raw_input
+                .events
+                .iter()
+                .any(|e| matches!(e, egui::Event::PointerMoved(_)))
+        {
+            raw_input.events.insert(0, egui::Event::PointerGone);
+        }
+        if let Screen::App(app) = &mut self.screen {
+            app.route_overlay_actions(&mut raw_input.events);
+        }
         zoom::stage_input(raw_input, stage);
         if sequence_input(&mut self.held, &mut raw_input.events) {
             ctx.request_repaint();
+        }
+    }
+
+    /// Takes the unscaled overlay pass's context and output from the last frame.
+    pub fn take_overlay(&mut self) -> Option<(egui::Context, egui::FullOutput)> {
+        match &mut self.screen {
+            Screen::App(app) => app.take_overlay(),
+            _ => None,
+        }
+    }
+
+    /// Whether an overlay takes the input this frame: its IME and its
+    /// AccessKit focus win over the stage's.
+    pub fn overlay_captures(&self) -> bool {
+        match &self.screen {
+            Screen::App(app) => app.overlay_captures(),
+            _ => false,
         }
     }
 

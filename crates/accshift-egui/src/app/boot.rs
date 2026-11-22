@@ -244,6 +244,8 @@ impl AppModel {
         crate::ui::text::install(ctx, zh);
         // A click hits exactly what is under the pointer: no 5 px slop.
         ctx.all_styles_mut(|style| style.interaction.interact_radius = 0.0);
+        let overlay_ctx = Context::default();
+        overlay_ctx.all_styles_mut(|style| style.interaction.interact_radius = 0.0);
         AppModel {
             backend,
             #[cfg(any(test, feature = "harness"))]
@@ -295,6 +297,12 @@ impl AppModel {
             shortcuts: shortcuts::Shortcuts::default(),
             updates: updates::Updates::off(),
             liquid: wallpaper::Liquid::default(),
+            overlay_ctx,
+            overlay_fonts_cjk: None,
+            overlay_output: None,
+            overlay_active: false,
+            overlay_captures: false,
+            overlay_a11y: Default::default(),
         }
     }
 

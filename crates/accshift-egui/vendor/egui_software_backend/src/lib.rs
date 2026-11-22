@@ -95,8 +95,28 @@ pub struct EguiSoftwareRender {
     /// Reads backdrop operations out of paint callbacks (`with_backdrop`).
     backdrop_classifier: Option<BackdropClassifier>,
     backdrop: Backdrop,
+    /// `render_overlay`'s blurred layer backdrops, by layer.
+    overlay_blurs: Vec<Option<OverlayBlur>>,
+    /// How many layer backdrops `render_overlay` has blurred.
+    overlay_blur_runs: usize,
     #[cfg(feature = "raster_stats")]
     pub stats: RasterStats,
+}
+
+/// A hash of `pixels`, to tell an unchanged backdrop.
+fn pixels_hash(pixels: &[[u8; 4]]) -> u64 {
+    use core::hash::Hasher;
+    let mut h = ahash::AHasher::default();
+    h.write(pixels.as_flattened());
+    h.finish()
+}
+
+/// A `render_overlay` layer's blurred backdrop, kept while what lies under
+/// it and its filter stay the same.
+struct OverlayBlur {
+    /// Size, filter and a hash of the source pixels.
+    key: (usize, usize, backdrop::BeginKey, u64),
+    pixels: Vec<[u8; 4]>,
 }
 
 /// A backdrop layer: its `Begin` job, its `End` job (or the frame's end)
@@ -260,6 +280,14 @@ struct Backdrop {
     filtered: Vec<[u8; 4]>,
     /// Size, filter bits and root of `filtered`.
     filter_key: Option<FilterKey>,
+    /// Index of the last `BackdropOp::Root` in the frame's base jobs, so an
+    /// overlay pass (`render_overlay`) can blur only what lies above the root.
+    last_root: Option<usize>,
+    /// The frame from that root on as it rendered, when a filter or a layer
+    /// came after it: the cached primitives alone miss both.
+    root_frame: Option<Vec<[u8; 4]>>,
+    /// The filtered element alone, before it landed (same key as `filtered`).
+    root_filtered: Vec<[u8; 4]>,
 }
 
 type FilterKey = (usize, usize, [u32; 3], Option<usize>);
@@ -273,7 +301,15 @@ impl EguiSoftwareRender {
         let big = sizes.clone().filter(|&b| b >= 1 << 20).count();
         let textures = self.textures.values().map(EguiTexture::bytes).sum();
         let b = &self.backdrop;
-        let backdrop = (b.out.capacity() + b.blurred.capacity() + b.filtered.capacity()) * 4;
+        let overlay: usize = self
+            .overlay_blurs
+            .iter()
+            .flatten()
+            .map(|o| o.pixels.capacity())
+            .sum();
+        let backdrop = (b.out.capacity() + b.blurred.capacity() + b.filtered.capacity() + overlay)
+            * 4
+            + (b.root_filtered.capacity() + b.root_frame.as_ref().map_or(0, Vec::capacity)) * 4;
         [
             self.cached_primitives.len(),
             sizes.sum(),
@@ -304,6 +340,8 @@ impl EguiSoftwareRender {
             glyph_atlas: None,
             backdrop_classifier: None,
             backdrop: Backdrop::default(),
+            overlay_blurs: Vec::new(),
+            overlay_blur_runs: 0,
             #[cfg(feature = "raster_stats")]
             stats: Default::default(),
         }
@@ -499,6 +537,12 @@ impl EguiSoftwareRender {
             self.update_canvas_from_cached();
         }
 
+        self.backdrop.last_root = ops
+            .iter()
+            .filter(|&&(i, op)| i < base_end && op == BackdropOp::Root)
+            .map(|&(i, _)| i)
+            .next_back();
+        self.backdrop.root_frame = None;
         let was_shown = self.backdrop.shown;
         self.backdrop.active = false;
         if let Some((
@@ -547,10 +591,150 @@ impl EguiSoftwareRender {
             self.backdrop.out = Vec::new();
             self.backdrop.blurred = Vec::new();
             self.backdrop.filtered = Vec::new();
+            self.backdrop.root_filtered = Vec::new();
             self.backdrop.key = None;
             self.backdrop.filter_key = None;
         }
 
+        self.free_textures(textures_delta);
+    }
+
+    /// The pixels painted after the frame's `BackdropOp::Root`, if one was
+    /// present, as they rendered: filter and layers included (used by an
+    /// unscaled overlay pass so a stand-in desktop stays sharp under the
+    /// overlay's backdrop blur, which must see the shell the stage showed).
+    pub fn root_pixels(&self) -> Option<Vec<[u8; 4]>> {
+        match &self.backdrop.root_frame {
+            Some(frame) => Some(frame.clone()),
+            None => self.backdrop.last_root.map(|r| self.composite_after(r)),
+        }
+    }
+
+    /// Drops the blurs `render_overlay` kept, once no overlay shows.
+    pub fn forget_overlay_backdrops(&mut self) {
+        self.overlay_blurs = Vec::new();
+    }
+
+    /// Composites an overlay pass (`paint_jobs` at `pixels_per_point`) directly
+    /// over `base` (`width` x `height` premultiplied pixels), honouring
+    /// `BackdropOp::Begin`/`Group`/`End` layers (with `backdrop_root` as the
+    /// blur source when present so anything below `Mark::Root` stays sharp).
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_overlay(
+        &mut self,
+        base: &mut [[u8; 4]],
+        backdrop_root: Option<&[[u8; 4]]>,
+        width: usize,
+        height: usize,
+        paint_jobs: &[egui::ClippedPrimitive],
+        textures_delta: &egui::TexturesDelta,
+        pixels_per_point: f32,
+    ) {
+        assert!(width > 0);
+        assert!(height > 0);
+        assert!(pixels_per_point > 0.0);
+        assert_eq!(base.len(), width * height);
+        self.target_size = vec2(width as f32, height as f32);
+        self.set_textures(textures_delta);
+        self.ensure_glyph_classes(paint_jobs);
+
+        let ops: Vec<(usize, BackdropOp)> = match &self.backdrop_classifier {
+            Some(classify) => paint_jobs
+                .iter()
+                .enumerate()
+                .filter_map(|(i, job)| match &job.primitive {
+                    egui::epaint::Primitive::Callback(cb) => classify(cb).map(|op| (i, op)),
+                    egui::epaint::Primitive::Mesh(_) => None,
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        let layers = backdrop_layers(&ops, paint_jobs.len());
+        // A layer's blur is kept while its backdrop and filter stay: a
+        // still overlay (the tour's welcome) blurs once, not every frame.
+        self.overlay_blurs.resize_with(layers.len(), || None);
+        if layers.is_empty() {
+            self.draw_jobs_direct(
+                &mut BufferMutRef::new(base, width, height),
+                paint_jobs,
+                pixels_per_point,
+            );
+        } else {
+            let mut under = backdrop_root.map(|r| r.to_vec());
+            let mut at = 0;
+            for (n, layer) in layers.iter().enumerate() {
+                let before = &paint_jobs[at..layer.begin];
+                self.draw_jobs_direct(
+                    &mut BufferMutRef::new(base, width, height),
+                    before,
+                    pixels_per_point,
+                );
+                if let Some(u) = under.as_mut() {
+                    self.draw_jobs_direct(
+                        &mut BufferMutRef::new(u, width, height),
+                        before,
+                        pixels_per_point,
+                    );
+                }
+                let jobs = paint_jobs.get(layer.begin + 1..layer.end).unwrap_or(&[]);
+                let (mut pixels, opacity, span) = match layer.op {
+                    BackdropOp::Group { opacity } => (
+                        vec![[0u8; 4]; width * height],
+                        opacity,
+                        group_span(jobs, pixels_per_point, width, height),
+                    ),
+                    BackdropOp::Begin {
+                        sigma,
+                        opacity,
+                        saturate,
+                        clip,
+                    } => {
+                        let source = under.as_deref().unwrap_or(&*base);
+                        let key = (
+                            width,
+                            height,
+                            backdrop::begin_key(sigma, saturate, clip),
+                            pixels_hash(source),
+                        );
+                        let pixels = match &self.overlay_blurs[n] {
+                            Some(kept) if kept.key == key => kept.pixels.clone(),
+                            _ => {
+                                self.overlay_blur_runs += 1;
+                                let pixels = backdrop::backdrop_of(
+                                    source, width, height, clip, sigma, saturate,
+                                );
+                                self.overlay_blurs[n] = Some(OverlayBlur {
+                                    key,
+                                    pixels: pixels.clone(),
+                                });
+                                pixels
+                            }
+                        };
+                        (
+                            pixels,
+                            opacity,
+                            layer_span(clip, jobs, pixels_per_point, width, height),
+                        )
+                    }
+                    _ => {
+                        at = (layer.end + 1).min(paint_jobs.len());
+                        continue;
+                    }
+                };
+                self.draw_jobs_layered(&mut pixels, width, height, jobs, pixels_per_point);
+                backdrop::land_span(base, &pixels, opacity, width, span.clone());
+                if let Some(u) = under.as_mut().filter(|_| n + 1 < layers.len()) {
+                    backdrop::land_span(u, &pixels, opacity, width, span);
+                }
+                at = (layer.end + 1).min(paint_jobs.len());
+            }
+            let after = &paint_jobs[at..];
+            self.draw_jobs_direct(
+                &mut BufferMutRef::new(base, width, height),
+                after,
+                pixels_per_point,
+            );
+        }
         self.free_textures(textures_delta);
     }
 
@@ -572,12 +756,10 @@ impl EguiSoftwareRender {
         let mut out = core::mem::take(&mut self.backdrop.out);
         out.clear();
         out.extend_from_slice(&self.canvas.data);
-        // A later layer's backdrop: the root's pixels with what came since
-        // landed on them. The frame itself serves when there is no root.
-        let mut under = match root {
-            Some(r) if layers.len() > 1 => Some(self.composite_after(r)),
-            _ => None,
-        };
+        // A later layer's backdrop, and the root's frame for an overlay:
+        // the root's pixels with what came since landed on them. The frame
+        // itself serves when there is no root.
+        let mut under = root.map(|r| self.composite_after(r));
         for (n, layer) in layers.iter().enumerate() {
             let jobs = paint_jobs.get(layer.begin + 1..layer.end).unwrap_or(&[]);
             let (pixels, opacity, span) = match layer.op {
@@ -628,7 +810,7 @@ impl EguiSoftwareRender {
             backdrop::land_span(&mut out, &pixels, opacity, width, span.clone());
             let next = layers.get(n + 1).map_or(paint_jobs.len(), |l| l.begin);
             let after = paint_jobs.get(layer.end + 1..next).unwrap_or(&[]);
-            if let Some(under) = under.as_mut().filter(|_| n + 1 < layers.len()) {
+            if let Some(under) = under.as_mut() {
                 backdrop::land_span(under, &pixels, opacity, width, span);
                 self.draw_jobs_direct(
                     &mut BufferMutRef::new(under, width, height),
@@ -643,6 +825,7 @@ impl EguiSoftwareRender {
             );
         }
         self.backdrop.out = out;
+        self.backdrop.root_frame = under;
     }
 
     /// Draws `jobs` on `buffer`, a layer nested in them as its own: it
@@ -727,11 +910,15 @@ impl EguiSoftwareRender {
                     let filtered =
                         backdrop::filter(&element, width, height, sigma, saturate, scale);
                     backdrop::land(&mut under, &filtered, 1.0);
+                    self.backdrop.root_filtered = filtered;
                     under
                 }
                 // Landing on transparent at full opacity is the layer itself.
                 None => backdrop::filter(&self.canvas.data, width, height, sigma, saturate, scale),
             };
+            if root.is_none() {
+                self.backdrop.root_filtered = Vec::new();
+            }
             self.backdrop.filtered = filtered;
             self.backdrop.filter_key = Some(key);
         }
@@ -745,6 +932,15 @@ impl EguiSoftwareRender {
             pixels_per_point,
         );
         self.backdrop.out = out;
+        if root.is_some() {
+            let mut frame = self.backdrop.root_filtered.clone();
+            self.draw_jobs_direct(
+                &mut BufferMutRef::new(&mut frame, width, height),
+                after,
+                pixels_per_point,
+            );
+            self.backdrop.root_frame = Some(frame);
+        }
     }
 
     /// The cached primitives painted after `after`, over transparent.
@@ -1965,5 +2161,189 @@ mod layer_tests {
         };
         assert_eq!(layer_span(Some(clip), &[job], 2.0, 100, 50), [6..24, 2..40]);
         assert_eq!(layer_span(None, &[], 2.0, 100, 50), [0..100, 0..50]);
+    }
+
+    #[test]
+    fn render_overlay_composites_over_buffer_and_backdrop_layers() {
+        let mut render =
+            EguiSoftwareRender::new(ColorFieldOrder::Rgba).with_backdrop(alloc::boxed::Box::new(
+                |cb: &egui::PaintCallback| cb.callback.downcast_ref::<BackdropOp>().copied(),
+            ));
+        let (w, h) = (16, 16);
+        let mut buf = vec![[20u8, 40, 60, 255]; w * h];
+        let mut mesh = Mesh::default();
+        mesh.add_colored_rect(
+            egui::Rect::from_min_max(egui::pos2(4.0, 4.0), egui::pos2(12.0, 12.0)),
+            Color32::from_rgba_unmultiplied(200, 100, 50, 255),
+        );
+        let rect_job = egui::ClippedPrimitive {
+            clip_rect: egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(16.0, 16.0)),
+            primitive: egui::epaint::Primitive::Mesh(mesh),
+        };
+        let mut tex_delta = egui::TexturesDelta::default();
+        tex_delta.set.insert(
+            egui::TextureId::Managed(0),
+            [egui::epaint::ImageDelta::full(
+                egui::ImageData::Color(alloc::sync::Arc::new(egui::ColorImage::filled(
+                    [1, 1],
+                    Color32::WHITE,
+                ))),
+                egui::TextureOptions::NEAREST,
+            )]
+            .into_iter()
+            .collect(),
+        );
+        render.render_overlay(
+            &mut buf,
+            None,
+            w,
+            h,
+            core::slice::from_ref(&rect_job),
+            &tex_delta,
+            1.0,
+        );
+        tex_delta.clear();
+        // Outside overlay stays untouched; inside takes overlay color.
+        assert_eq!(buf[0], [20, 40, 60, 255]);
+        assert_eq!(buf[8 * w + 8], [200, 100, 50, 255]);
+
+        // With BackdropOp::Begin/End at half opacity over a fresh buffer.
+        let mut buf2 = vec![[20u8, 40, 60, 255]; w * h];
+        let full = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(16.0, 16.0));
+        let cb = |op: BackdropOp| egui::ClippedPrimitive {
+            clip_rect: full,
+            primitive: egui::epaint::Primitive::Callback(egui::PaintCallback {
+                rect: full,
+                callback: alloc::sync::Arc::new(op),
+            }),
+        };
+        let jobs = [cb(begin(0.5)), rect_job, cb(BackdropOp::End)];
+        render.render_overlay(&mut buf2, None, w, h, &jobs, &tex_delta, 1.0);
+        assert_eq!(buf2[0], [20, 40, 60, 255]);
+        // Half opacity blends [200, 100, 50] over [20, 40, 60] -> ~[110, 70, 55].
+        let center = buf2[8 * w + 8];
+        assert!((center[0] as i32 - 110).abs() <= 2, "got {center:?}");
+        assert!((center[1] as i32 - 70).abs() <= 2, "got {center:?}");
+        assert!((center[2] as i32 - 55).abs() <= 2, "got {center:?}");
+    }
+
+    #[test]
+    fn root_pixels_hold_the_stage_as_it_rendered() {
+        let mut render =
+            EguiSoftwareRender::new(ColorFieldOrder::Rgba).with_backdrop(alloc::boxed::Box::new(
+                |cb: &egui::PaintCallback| cb.callback.downcast_ref::<BackdropOp>().copied(),
+            ));
+        let (w, h) = (16, 16);
+        let full = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(16.0, 16.0));
+        let cb = |op: BackdropOp| egui::ClippedPrimitive {
+            clip_rect: full,
+            primitive: egui::epaint::Primitive::Callback(egui::PaintCallback {
+                rect: full,
+                callback: alloc::sync::Arc::new(op),
+            }),
+        };
+        let red = || {
+            let mut mesh = Mesh::default();
+            mesh.add_colored_rect(full, Color32::from_rgb(200, 0, 0));
+            egui::ClippedPrimitive {
+                clip_rect: full,
+                primitive: egui::epaint::Primitive::Mesh(mesh),
+            }
+        };
+        let mut tex_delta = egui::TexturesDelta::default();
+        tex_delta.set.insert(
+            egui::TextureId::Managed(0),
+            [egui::epaint::ImageDelta::full(
+                egui::ImageData::Color(alloc::sync::Arc::new(egui::ColorImage::filled(
+                    [1, 1],
+                    Color32::WHITE,
+                ))),
+                egui::TextureOptions::NEAREST,
+            )]
+            .into_iter()
+            .collect(),
+        );
+        // The obscured shell's filter grays what lies above the root.
+        let gray = BackdropOp::Filter {
+            sigma: 0.0,
+            saturate: 0.0,
+            scale: 1.0,
+        };
+        render.render_to_canvas(
+            w,
+            h,
+            &[cb(BackdropOp::Root), red(), cb(gray)],
+            &tex_delta,
+            1.0,
+        );
+        tex_delta.clear();
+        let p = render.root_pixels().unwrap()[8 * w + 8];
+        let spread = p[..3].iter().max().unwrap() - p[..3].iter().min().unwrap();
+        assert!(spread <= 2, "an overlay blurs the shell filtered: {p:?}");
+        // A group above the root lands at its opacity.
+        let jobs = [
+            cb(BackdropOp::Root),
+            cb(BackdropOp::Group { opacity: 0.5 }),
+            red(),
+            cb(BackdropOp::End),
+        ];
+        render.render_to_canvas(w, h, &jobs, &tex_delta, 1.0);
+        let p = render.root_pixels().unwrap()[8 * w + 8];
+        assert!((126..=129).contains(&p[3]), "and its layers landed: {p:?}");
+    }
+
+    #[test]
+    fn render_overlay_reuses_the_blur_while_its_backdrop_stays() {
+        let mut render =
+            EguiSoftwareRender::new(ColorFieldOrder::Rgba).with_backdrop(alloc::boxed::Box::new(
+                |cb: &egui::PaintCallback| cb.callback.downcast_ref::<BackdropOp>().copied(),
+            ));
+        let (w, h) = (16, 16);
+        let full = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(16.0, 16.0));
+        let cb = |op: BackdropOp| egui::ClippedPrimitive {
+            clip_rect: full,
+            primitive: egui::epaint::Primitive::Callback(egui::PaintCallback {
+                rect: full,
+                callback: alloc::sync::Arc::new(op),
+            }),
+        };
+        let blur = |sigma| BackdropOp::Begin {
+            sigma,
+            opacity: 1.0,
+            saturate: 1.0,
+            clip: None,
+        };
+        let striped = |shift: usize| -> Vec<[u8; 4]> {
+            (0..w * h)
+                .map(|i| {
+                    if (i + shift).is_multiple_of(3) {
+                        [250, 10, 10, 255]
+                    } else {
+                        [10, 10, 250, 255]
+                    }
+                })
+                .collect()
+        };
+        let tex = egui::TexturesDelta::default();
+        let frame = |render: &mut EguiSoftwareRender, root: &[[u8; 4]], sigma: f32| {
+            let mut buf = root.to_vec();
+            let jobs = [cb(blur(sigma)), cb(BackdropOp::End)];
+            render.render_overlay(&mut buf, Some(root), w, h, &jobs, &tex, 1.0);
+            buf
+        };
+        let root = striped(0);
+        let first = frame(&mut render, &root, 2.0);
+        assert_ne!(first, root, "the layer blurs its backdrop");
+        let second = frame(&mut render, &root, 2.0);
+        assert_eq!(second, first, "the same frame again");
+        assert_eq!(
+            render.overlay_blur_runs, 1,
+            "an unchanged backdrop is not blurred again"
+        );
+        let moved = frame(&mut render, &striped(1), 2.0);
+        assert_eq!(render.overlay_blur_runs, 2, "a changed backdrop is");
+        assert_ne!(moved, first);
+        frame(&mut render, &striped(1), 3.0);
+        assert_eq!(render.overlay_blur_runs, 3, "so is a changed filter");
     }
 }
