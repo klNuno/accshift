@@ -216,6 +216,9 @@ pub(super) struct CardsDrawn {
     /// The back card on screen.
     pub back: Option<Rect>,
     pub ghosts: GhostSources,
+    /// The lowest open extension's bottom in layout px: a setup panel taller
+    /// than its card can pass the grid's last row.
+    pub extension_bottom: Option<f32>,
 }
 
 /// Mounts, senses and paints every laid out box in order, pushing what
@@ -259,6 +262,7 @@ pub(super) fn draw_cards(
             card_ids: HashMap::new(),
             back: None,
             ghosts: GhostSources::default(),
+            extension_bottom: None,
         },
     };
     for p in &laid.placed {
@@ -369,7 +373,7 @@ impl CardPass<'_> {
             }
             Node::Header(h) => self.draw_header(&mut child, screen, id, h),
             Node::Folder(folder) => self.draw_folder(&mut child, screen, id, folder),
-            Node::Account(a) => self.draw_account(&mut child, screen, id, a, avatar),
+            Node::Account(a) => self.draw_account(&mut child, screen, p.rect, id, a, avatar),
         };
         actions.extend(events.into_iter().map(card_action));
     }
@@ -578,6 +582,7 @@ impl CardPass<'_> {
         &mut self,
         ui: &mut Ui,
         screen: Rect,
+        laid: Rect,
         id: Id,
         a: &AccountCardItem,
         avatar: Option<AvatarContent>,
@@ -639,6 +644,11 @@ impl CardPass<'_> {
             raised: out.raised,
         });
         self.chips.extend(out.chips);
+        if let Some(height) = out.extension_height {
+            let bottom = laid.top() + height;
+            let lowest = self.out.extension_bottom.get_or_insert(bottom);
+            *lowest = lowest.max(bottom);
+        }
         out.events
             .into_iter()
             .map(|event| match event {

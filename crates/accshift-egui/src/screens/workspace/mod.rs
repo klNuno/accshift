@@ -120,6 +120,9 @@ pub struct Workspace {
     /// reads them.
     #[cfg(test)]
     pub layout: Vec<(String, Rect)>,
+    /// The last frame's lowest open extension bottom, layout px.
+    #[cfg(test)]
+    pub extension_bottom: Option<f32>,
     /// The scrollable height of the content in layout px.
     pub content_height: f32,
     /// The system time zone, read once (relative and absolute dates).
@@ -611,7 +614,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
             }
         }
     }
-    let content_h = PAD_TOP + y + PAD_BOTTOM;
+    let mut content_h = PAD_TOP + y + PAD_BOTTOM;
     ws.content_height = content_h;
     ws.animate_flips(
         &ctx,
@@ -631,7 +634,18 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         card_ids,
         back,
         ghosts,
+        extension_bottom,
     } = cards::draw_cards(ui, ws, &f, cards_input, &laid, &mut actions);
+    #[cfg(test)]
+    {
+        ws.extension_bottom = extension_bottom;
+    }
+    // An open setup panel taller than its card scrolls into view like the
+    // grid's last row.
+    if let Some(bottom) = extension_bottom {
+        content_h = content_h.max(PAD_TOP + bottom + PAD_BOTTOM);
+        ws.content_height = content_h;
+    }
     ws.publish(&f, &laid, card_ids, back, list_mode);
     ws.sections_mode = lists.sections.is_some() && (list_mode || !laid.placed.is_empty());
     ghost::draw_ghosts(ui, ws, &f, &laid.placed, cs2, ghosts);

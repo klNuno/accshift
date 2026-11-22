@@ -17,6 +17,8 @@ pub(super) struct Run {
     start: Instant,
     events: Vec<Event>,
     scale: f32,
+    /// The scene's window, in points.
+    size: egui::Vec2,
 }
 
 impl Run {
@@ -25,6 +27,7 @@ impl Run {
             .join("parity/scenes")
             .join(format!("{scene}.json"));
         let scene = harness::load(&path).unwrap();
+        let size = vec2(scene.viewport.width, scene.viewport.height);
         let ctx = Context::default();
         let screen = Screen::for_scene(&ctx, &scene).unwrap();
         let mut run = Run {
@@ -33,6 +36,7 @@ impl Run {
             start: Instant::now(),
             events: Vec::new(),
             scale,
+            size,
         };
         run.frame();
         run
@@ -40,7 +44,7 @@ impl Run {
 
     pub fn input(&mut self) -> RawInput {
         let mut input = RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(860.0, 440.0))),
+            screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, self.size)),
             time: Some(self.start.elapsed().as_secs_f64()),
             events: std::mem::take(&mut self.events),
             ..Default::default()
@@ -1192,4 +1196,50 @@ fn the_settings_rail_reveals_a_focused_tab() {
     );
     wait(&mut run, 300);
     assert!(crate::screens::settings::rail_offset(&run.ctx) > 0.0);
+}
+
+/// A Riot setup panel taller than its card, on the grid's last row of a
+/// short window, stayed cut at the bottom even scrolled all the way down:
+/// the scroll stopped at the grid's height.
+#[test]
+fn a_setup_panel_past_the_last_row_scrolls_into_view() {
+    let mut run = Run::new("add-riot-bottom-pt-500", 1.0);
+    run.settle();
+    run.click(pos2(284.0, 18.0));
+    run.click(pos2(55.0, 18.0));
+    // The mock walks the setup to its last state, a detected account under
+    // the stay-signed-in hint, one step per poll.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let card_h = 136.0;
+    loop {
+        assert!(Instant::now() < deadline, "the setup panel never grew");
+        run.send(Event::PointerMoved(pos2(250.0, 18.0)));
+        run.frame();
+        let ws = run.workspace();
+        let card_top = ws.layout.last().map(|(_, r)| r.top());
+        if let (Some(bottom), Some(top)) = (ws.extension_bottom, card_top) {
+            if bottom - top > card_h + 40.0 {
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    run.send(Event::PointerMoved(pos2(250.0, 200.0)));
+    run.send(Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, -2000.0),
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+        modifiers: Modifiers::NONE,
+    });
+    run.frame();
+    run.settle();
+    let ws = run.workspace();
+    let bottom = ws.extension_bottom.expect("the setup panel is open");
+    // The content box starts 36 px down, under the title bar.
+    let on_screen = bottom + 36.0 + super::PAD_TOP - ws.scroll();
+    assert!(
+        on_screen <= 300.0 - super::PAD_BOTTOM,
+        "the panel ends at {on_screen}, past the 300 px window"
+    );
 }

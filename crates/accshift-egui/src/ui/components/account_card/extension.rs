@@ -46,16 +46,17 @@ impl Extension {
     }
 
     /// Paints the surface under the face. Returns the range of its shapes
-    /// in the ui's layer, when it showed, and its clickable chips.
+    /// in the ui's layer, when it showed, its clickable chips, and its
+    /// height while it is open (it can be taller than the card).
     pub fn paint(
         self,
         ui: &mut Ui,
         card: &Card,
         st: &State,
         hovered: bool,
-    ) -> (Option<Range<usize>>, Vec<ChipHit>) {
+    ) -> (Option<Range<usize>>, Vec<ChipHit>, Option<f32>) {
         if !self.has {
-            return (None, Vec::new());
+            return (None, Vec::new(), None);
         }
         let props = card.props;
         let item = card.item();
@@ -84,6 +85,7 @@ impl Extension {
             },
         );
         let surface = painted.shown.then(|| start..next());
-        (surface, painted.chips)
+        let height = (painted.shown && self.visible).then(|| painted.rect.height());
+        (surface, painted.chips, height)
     }
 }

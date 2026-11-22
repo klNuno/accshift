@@ -257,7 +257,7 @@ pub(super) fn spawn_riot_setup_launch(
             || {
                 let started = std::time::Instant::now();
                 let prepared = prepare_clean_riot_launch(client_path.parent());
-                let quit_ms = started.elapsed().as_millis();
+                let prepare_ms = started.elapsed().as_millis();
                 // Relaunch even when the clear stopped halfway, so the client
                 // is not left closed. The failure still fails the setup.
                 let launched = relaunch_after_quit(prepared, || launch_riot_client(&client_path));
@@ -268,7 +268,7 @@ pub(super) fn spawn_riot_setup_launch(
                     "riot.setup_launch",
                     "Riot setup launch",
                     format!(
-                        "quit_ms={quit_ms} total_ms={} ok={}",
+                        "prepare_ms={prepare_ms} total_ms={} ok={}",
                         started.elapsed().as_millis(),
                         launched.is_ok()
                     ),

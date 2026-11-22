@@ -143,6 +143,8 @@ pub struct CardOutput {
     /// The clickable chips the extension showed, for the workspace to sense
     /// over every card.
     pub chips: Vec<ChipHit>,
+    /// The open extension's height, which can pass the card's bottom.
+    pub extension_height: Option<f32>,
 }
 
 /// What the card reports.
@@ -341,7 +343,7 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
         .pose
         .place(ui, props.id, props.vars, card.layout(), item.dragged);
 
-    let (surface, chips) = extension.paint(ui, &card, &st, hover.hovered);
+    let (surface, chips, extension_height) = extension.paint(ui, &card, &st, hover.hovered);
     st.chips = chips.iter().map(|hit| hit.id).collect();
     look::paint_box(ui, &card, &look, extension.visible, hover.lift);
 
@@ -361,5 +363,6 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
         surface,
         raised: extension.visible,
         chips,
+        extension_height,
     }
 }
