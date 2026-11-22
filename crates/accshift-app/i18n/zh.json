@@ -120,6 +120,8 @@
   "settings.shortcutsTaken": "其他应用已占用此组合键。",
   "settings.shortcutsDuplicate": "{name} 也在使用此组合键。",
   "settings.shortcutsFailed": "系统拒绝了此组合键。",
+  "settings.shortcutsPending": "正在等待系统确认。",
+  "settings.shortcutsBoundTo": "系统已将其绑定到 {trigger}。",
   "settings.shortcutsUnusable": "请加上 Ctrl、Alt 或 Super，或使用功能键。",
   "settings.shortcutsCancelHint": "按 Esc 取消。",
   "settings.shortcutsItems": "账户和角色",

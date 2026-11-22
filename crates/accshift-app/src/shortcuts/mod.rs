@@ -16,7 +16,7 @@ pub mod service;
 
 pub use combo::{Combo, Key, Os};
 pub use service::{
-    Availability, FakeRegistrar, RegisterError, Registrar, RowStatus, ShortcutService,
+    Availability, FakeRegistrar, Outcome, RegisterError, Registrar, RowStatus, ShortcutService,
 };
 
 use crate::js;

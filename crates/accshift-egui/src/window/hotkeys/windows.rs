@@ -3,7 +3,7 @@
 //! window's `WM_HOTKEY` included, whether the app window shows or sits
 //! hidden in the tray. No new crate: `windows-sys` already binds both.
 
-use accshift_app::shortcuts::{Availability, Combo, RegisterError, Registrar};
+use accshift_app::shortcuts::{Availability, Combo, RegisterError, Registrar, ShortcutTarget};
 use windows_sys::Win32::Foundation::{GetLastError, HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -83,7 +83,12 @@ impl Registrar for WindowsRegistrar {
         Availability::Available
     }
 
-    fn register(&mut self, id: u32, combo: &Combo) -> Result<(), RegisterError> {
+    fn register(
+        &mut self,
+        id: u32,
+        _target: &ShortcutTarget,
+        combo: &Combo,
+    ) -> Result<(), RegisterError> {
         if self.hwnd.is_null() {
             return Err(RegisterError::Failed("no message window".into()));
         }
@@ -132,7 +137,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
     if msg == WM_HOTKEY {
         let deliver = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Deliver;
         if !deliver.is_null() {
-            ((*deliver).as_ref())(wparam as u32);
+            ((*deliver).as_ref())(super::Signal::pressed(wparam as u32));
         }
         return 0;
     }
@@ -155,7 +160,11 @@ fn recorder() -> (Deliver, std::sync::Arc<std::sync::Mutex<Vec<u32>>>) {
     use std::sync::Arc;
     let fired = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = Arc::clone(&fired);
-    let deliver: Deliver = Arc::new(move |id| sink.lock().unwrap().push(id));
+    let deliver: Deliver = Arc::new(move |signal| {
+        if let super::Signal::Pressed { id, .. } = signal {
+            sink.lock().unwrap().push(id);
+        }
+    });
     (deliver, fired)
 }
 
@@ -189,10 +198,19 @@ mod tests {
         let (deliver, _) = recorder();
         let mut first = WindowsRegistrar::new(Arc::clone(&deliver));
         let mut second = WindowsRegistrar::new(deliver);
-        assert_eq!(first.register(7, &rare()), Ok(()));
-        assert_eq!(second.register(8, &rare()), Err(RegisterError::Taken));
+        assert_eq!(
+            first.register(7, &ShortcutTarget::OpenPalette, &rare()),
+            Ok(())
+        );
+        assert_eq!(
+            second.register(8, &ShortcutTarget::OpenPalette, &rare()),
+            Err(RegisterError::Taken)
+        );
         first.unregister(7);
-        assert_eq!(second.register(8, &rare()), Ok(()));
+        assert_eq!(
+            second.register(8, &ShortcutTarget::OpenPalette, &rare()),
+            Ok(())
+        );
     }
 
     #[test]
@@ -218,7 +236,9 @@ mod tests {
         let (deliver, fired) = recorder();
         let mut registrar = WindowsRegistrar::new(deliver);
         let combo = Combo::parse("Ctrl+Alt+Shift+F23").unwrap();
-        registrar.register(5, &combo).expect("register");
+        registrar
+            .register(5, &ShortcutTarget::OpenPalette, &combo)
+            .expect("register");
         let key = |vk: u16, up: bool| INPUT {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {

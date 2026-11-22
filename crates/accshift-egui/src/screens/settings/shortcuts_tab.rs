@@ -77,6 +77,8 @@ pub struct ShortcutRow {
     pub platform: Option<String>,
     /// The combination as this OS writes it, `None` when unset.
     pub combo: Option<String>,
+    /// The trigger the system bound instead, when it differs (the portal).
+    pub trigger: Option<String>,
     pub status: Option<RowStatus>,
     pub duplicate: Option<DuplicateOf>,
     pub listening: bool,
@@ -182,7 +184,17 @@ fn note(c: &Ctx, row: &ShortcutRow) -> Option<(String, bool)> {
                 &[("name", TranslationValue::from(name))],
             )
         }
-        RowStatus::Active | RowStatus::Unavailable | RowStatus::Paused => return None,
+        RowStatus::Pending => return Some((tr(l, "settings.shortcutsPending"), false)),
+        RowStatus::Active => {
+            let trigger = row.trigger.as_ref()?;
+            let text = translate_with(
+                l,
+                "settings.shortcutsBoundTo",
+                &[("trigger", TranslationValue::from(trigger.clone()))],
+            );
+            return Some((text, false));
+        }
+        RowStatus::Unavailable | RowStatus::Paused => return None,
     };
     Some((text, true))
 }

@@ -449,3 +449,47 @@ fn a_combination_another_app_holds_shows_taken() {
         Some(RowStatus::Active)
     );
 }
+
+/// A layer that confirms later (the Wayland portal): the row waits and the
+/// press does nothing until it answers; once it binds another trigger, the
+/// row names it and the press runs.
+#[test]
+fn a_binding_fires_and_shows_active_only_once_the_portal_bound_it() {
+    use accshift_app::shortcuts::{Outcome, RowStatus};
+    let ctx = Context::default();
+    let (mut app, _) = app_with(&ctx, bound(json!({ "openPalette": "Ctrl+Alt+K" })), "");
+    let combo = Combo::parse("Ctrl+Alt+K").unwrap();
+    app.fake_registrar()
+        .unwrap()
+        .answer(combo, Outcome::Pending);
+    settle(&mut app, &ctx);
+    app.open_shortcut_capture(ShortcutTarget::OpenPalette);
+    app.shortcuts.capture = None;
+    frame(&mut app, &ctx);
+    let row = |app: &AppModel| {
+        app.shortcuts_view()
+            .rows
+            .into_iter()
+            .find(|r| r.target == ShortcutTarget::OpenPalette)
+            .unwrap()
+    };
+    assert_eq!(row(&app).status, Some(RowStatus::Pending));
+    let id = id_of(&app, "Ctrl+Alt+K");
+    assert_eq!(app.hotkey(&ctx, id), WindowOp::None);
+    frame(&mut app, &ctx);
+    assert!(app.palette.is_none());
+    app.fake_registrar()
+        .unwrap()
+        .answer(combo, Outcome::Active(Some("Meta+K".into())));
+    app.hotkeys_changed(&ctx);
+    assert_eq!(row(&app).status, Some(RowStatus::Active));
+    assert_eq!(row(&app).trigger.as_deref(), Some("Meta+K"));
+    // The same combination in the portal's own words is no news.
+    app.fake_registrar()
+        .unwrap()
+        .answer(combo, Outcome::Active(Some("CTRL+ALT+k".into())));
+    assert_eq!(row(&app).trigger, None);
+    assert_eq!(app.hotkey(&ctx, id), WindowOp::Reveal);
+    frame(&mut app, &ctx);
+    assert!(app.palette.is_some());
+}

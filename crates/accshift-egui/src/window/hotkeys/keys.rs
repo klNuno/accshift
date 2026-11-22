@@ -1,6 +1,6 @@
 //! Pure translations of a [`Combo`] for the OS layers, tested everywhere.
 
-use accshift_app::shortcuts::{Combo, Key};
+use accshift_app::shortcuts::{Combo, Key, ShortcutTarget};
 
 /// `MOD_ALT`, `MOD_CONTROL`, `MOD_SHIFT`, `MOD_WIN` and `MOD_NOREPEAT`.
 pub const MOD_ALT: u32 = 0x0001;
@@ -113,13 +113,32 @@ pub fn portal_trigger(combo: &Combo) -> String {
     parts.join("+")
 }
 
-/// The portal shortcut id of a registration id, and back.
-pub fn portal_id(id: u32) -> String {
-    format!("accshift-{id}")
-}
-
-pub fn parse_portal_id(text: &str) -> Option<u32> {
-    text.strip_prefix("accshift-")?.parse().ok()
+/// The portal shortcut id of an action: built from the action alone, so it
+/// stays the same across sessions and when other rows come or go (KDE
+/// restores a trigger the user changed by this id). Letters and digits stay,
+/// any other character is written `_` and its hex code, so two actions
+/// never share an id.
+pub fn portal_key(target: &ShortcutTarget) -> String {
+    fn part(text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        for c in text.chars() {
+            if c.is_ascii_alphanumeric() {
+                out.push(c);
+            } else {
+                out.push_str(&format!("_{:x}_", u32::from(c)));
+            }
+        }
+        out
+    }
+    match target {
+        ShortcutTarget::OpenPalette => "palette".to_string(),
+        ShortcutTarget::ToggleWindow => "window".to_string(),
+        ShortcutTarget::Account {
+            platform_id,
+            account_id,
+        } => format!("account-{}-{}", part(platform_id), part(account_id)),
+        ShortcutTarget::Persona { persona_id } => format!("persona-{}", part(persona_id)),
+    }
 }
 
 #[cfg(test)]
@@ -159,9 +178,35 @@ mod tests {
         assert_eq!(portal_trigger(&combo("Ctrl+7")), "CTRL+7");
     }
 
+    fn account(platform: &str, id: &str) -> ShortcutTarget {
+        ShortcutTarget::Account {
+            platform_id: platform.into(),
+            account_id: id.into(),
+        }
+    }
+
     #[test]
-    fn portal_ids_round_trip() {
-        assert_eq!(parse_portal_id(&portal_id(42)), Some(42));
-        assert_eq!(parse_portal_id("other-1"), None);
+    fn portal_keys_name_the_action_not_the_row() {
+        assert_eq!(portal_key(&ShortcutTarget::OpenPalette), "palette");
+        assert_eq!(portal_key(&ShortcutTarget::ToggleWindow), "window");
+        assert_eq!(
+            portal_key(&account("steam", "76561198100000001")),
+            "account-steam-76561198100000001"
+        );
+        assert_eq!(
+            portal_key(&ShortcutTarget::Persona {
+                persona_id: "p-1".into()
+            }),
+            "persona-p_2d_1"
+        );
+        // The separators cannot make two actions meet.
+        assert_ne!(
+            portal_key(&account("a-b", "c")),
+            portal_key(&account("a", "b-c"))
+        );
+        assert_ne!(
+            portal_key(&account("a", "_2d_")),
+            portal_key(&account("a", "-"))
+        );
     }
 }

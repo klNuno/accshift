@@ -7,6 +7,10 @@
 //! combination are a conflict: the first keeps the registration, both rows
 //! show it. A combination the OS refuses because another app holds it is
 //! [`RowStatus::Taken`], and is tried again on the next sync.
+//!
+//! A layer that answers later (the Wayland portal, which may ask the user,
+//! bind another trigger or bind nothing) reports each registration's
+//! [`Outcome`]: a row shows it, and only an id it bound fires.
 
 use super::{Combo, ShortcutTarget};
 use std::sync::{Arc, Mutex};
@@ -28,25 +32,50 @@ pub enum RegisterError {
     Failed(String),
 }
 
+/// What became of a registration the layer took.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
+    /// Asked, not answered yet.
+    Pending,
+    /// Bound, with the trigger the OS shows when it names one.
+    Active(Option<String>),
+    /// The OS or the user declined it.
+    Refused,
+}
+
 /// The highest id handed to a [`Registrar`]: Windows takes hotkey ids up to
 /// `0xBFFF` from an app.
 pub const MAX_ID: u32 = 0xBFFF;
 
 /// The OS layer: one registration per id, in `1..=`[`MAX_ID`]. An id is
-/// never reused while it is registered.
+/// never reused while it is registered. `target` names the action for a
+/// layer that keys its bindings by action (the portal), not by id.
 pub trait Registrar {
     fn availability(&self) -> Availability;
-    fn register(&mut self, id: u32, combo: &Combo) -> Result<(), RegisterError>;
+    fn register(
+        &mut self,
+        id: u32,
+        target: &ShortcutTarget,
+        combo: &Combo,
+    ) -> Result<(), RegisterError>;
     fn unregister(&mut self, id: u32);
     /// Called after each sync's registrations, for a layer that binds them
     /// as one batch (the portal).
     fn commit(&mut self) {}
+    /// What became of the registration `id`: a layer that answers at once
+    /// has bound it.
+    fn outcome(&self, _id: u32) -> Outcome {
+        Outcome::Active(None)
+    }
 }
 
 /// What a row of the settings shows next to its combination.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RowStatus {
     Active,
+    /// Asked, the OS has not answered yet (the portal may be asking the
+    /// user).
+    Pending,
     /// Another app holds the combination.
     Taken,
     /// Another accshift row uses the same combination.
@@ -107,20 +136,52 @@ impl ShortcutService {
         }
     }
 
-    /// The target a delivered id runs.
+    /// The layer's state changed on its own (the portal answered, or
+    /// found its bus): statuses and registrations follow it.
+    pub fn refresh(&mut self) {
+        self.apply();
+    }
+
+    /// The target a delivered id runs: only a registration the layer bound.
     pub fn target(&self, id: u32) -> Option<&ShortcutTarget> {
         self.registered
             .iter()
             .find(|entry| entry.id == id)
+            .filter(|entry| matches!(self.registrar.outcome(entry.id), Outcome::Active(_)))
             .map(|entry| &entry.target)
     }
 
     /// The status of a bound row, `None` for a row with no binding.
     pub fn status(&self, target: &ShortcutTarget) -> Option<RowStatus> {
-        self.statuses
+        let status = self
+            .statuses
             .iter()
             .find(|(row, _)| row == target)
-            .map(|(_, status)| status.clone())
+            .map(|(_, status)| status.clone())?;
+        if status != RowStatus::Active {
+            return Some(status);
+        }
+        Some(match self.outcome_of(target) {
+            Some(Outcome::Pending) => RowStatus::Pending,
+            Some(Outcome::Refused) => RowStatus::Failed,
+            _ => RowStatus::Active,
+        })
+    }
+
+    /// The trigger the OS bound a row to, when it names one: the portal
+    /// may bind another combination than the one asked for.
+    pub fn trigger(&self, target: &ShortcutTarget) -> Option<String> {
+        match self.outcome_of(target)? {
+            Outcome::Active(trigger) => trigger,
+            _ => None,
+        }
+    }
+
+    fn outcome_of(&self, target: &ShortcutTarget) -> Option<Outcome> {
+        self.registered
+            .iter()
+            .find(|entry| entry.target == *target)
+            .map(|entry| self.registrar.outcome(entry.id))
     }
 
     /// For each binding, the other row sharing its combination: the next
@@ -192,7 +253,7 @@ impl ShortcutService {
                 continue;
             }
             let id = self.take_id();
-            match self.registrar.register(id, &combo) {
+            match self.registrar.register(id, &target, &combo) {
                 Ok(()) => self.registered.push(Registered { id, target, combo }),
                 Err(RegisterError::Taken) => refused.push((target, RowStatus::Taken)),
                 Err(RegisterError::Failed(_)) => refused.push((target, RowStatus::Failed)),
@@ -226,6 +287,8 @@ struct FakeState {
     unavailable: bool,
     taken: Vec<Combo>,
     registered: Vec<(u32, Combo)>,
+    /// Answers set by [`FakeRegistrar::answer`]; bound otherwise.
+    outcomes: Vec<(Combo, Outcome)>,
 }
 
 /// A registrar that registers nothing on the OS: the mock backend's and the
@@ -249,6 +312,12 @@ impl FakeRegistrar {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
+    /// The session gains or loses global shortcuts, as the portal's late
+    /// probe decides.
+    pub fn set_available(&self, available: bool) {
+        self.lock().unavailable = !available;
+    }
+
     /// Another app holds `combo` from now on.
     pub fn take(&self, combo: Combo) {
         self.lock().taken.push(combo);
@@ -257,6 +326,14 @@ impl FakeRegistrar {
     /// The other app let `combo` go.
     pub fn release(&self, combo: Combo) {
         self.lock().taken.retain(|taken| *taken != combo);
+    }
+
+    /// From now on the layer answers `outcome` for `combo`, as the portal
+    /// does once it replies.
+    pub fn answer(&self, combo: Combo, outcome: Outcome) {
+        let mut state = self.lock();
+        state.outcomes.retain(|(c, _)| *c != combo);
+        state.outcomes.push((combo, outcome));
     }
 
     /// What is registered, in registration order.
@@ -283,7 +360,12 @@ impl Registrar for FakeRegistrar {
         }
     }
 
-    fn register(&mut self, id: u32, combo: &Combo) -> Result<(), RegisterError> {
+    fn register(
+        &mut self,
+        id: u32,
+        _target: &ShortcutTarget,
+        combo: &Combo,
+    ) -> Result<(), RegisterError> {
         let mut state = self.lock();
         if state.taken.contains(combo) || state.registered.iter().any(|(_, c)| c == combo) {
             return Err(RegisterError::Taken);
@@ -296,5 +378,15 @@ impl Registrar for FakeRegistrar {
         self.lock()
             .registered
             .retain(|(registered, _)| *registered != id);
+    }
+
+    fn outcome(&self, id: u32) -> Outcome {
+        let state = self.lock();
+        state
+            .registered
+            .iter()
+            .find(|(registered, _)| *registered == id)
+            .and_then(|(_, combo)| state.outcomes.iter().find(|(c, _)| c == combo))
+            .map_or(Outcome::Active(None), |(_, outcome)| outcome.clone())
     }
 }

@@ -92,6 +92,12 @@ softbuffer = { version = "0.4", optional = true, default-features = false, featu
 # zbus 5 accshift-app already links.
 global-hotkey = "0.10"
 zbus = "5.9"
+# Raising the window on Wayland with the portal's activation token
+# (window/wayland.rs): the Wayland client crates winit already builds, with
+# its features (libwayland opened at run time).
+wayland-client = "0.31"
+wayland-backend = { version = "0.3", default-features = false, features = ["client_system", "dlopen"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Global shortcuts (window/hotkeys): Carbon hotkeys through `global-hotkey`.

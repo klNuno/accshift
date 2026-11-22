@@ -28,7 +28,7 @@ use accshift_app::jobs::{Pending, Poll};
 use accshift_app::lifecycle::deep_link::DeepLinkSwitchRequest;
 use accshift_app::platforms::PlatformAccount;
 use accshift_app::shortcuts::{
-    self, Combo, FakeRegistrar, GlobalShortcuts, Key as ComboKey, Registrar, RowStatus,
+    self, Combo, FakeRegistrar, GlobalShortcuts, Key as ComboKey, Outcome, Registrar, RowStatus,
     ShortcutService, ShortcutTarget,
 };
 use accshift_app::stores::ClientStores;
@@ -99,8 +99,18 @@ impl Shortcuts {
         } else {
             FakeRegistrar::default()
         };
-        for combo in message.unwrap_or("").split(',').filter_map(Combo::parse) {
-            fake.take(combo);
+        // `Combo`: another app holds it; `?Combo`: the layer has not
+        // answered; `Combo=Trigger`: it bound another trigger (a portal).
+        for entry in message.unwrap_or("").split(',') {
+            if let Some(combo) = entry.strip_prefix('?').and_then(Combo::parse) {
+                fake.answer(combo, Outcome::Pending);
+            } else if let Some((combo, trigger)) = entry.split_once('=') {
+                if let Some(combo) = Combo::parse(combo) {
+                    fake.answer(combo, Outcome::Active(Some(trigger.to_string())));
+                }
+            } else if let Some(combo) = Combo::parse(entry) {
+                fake.take(combo);
+            }
         }
         let registrar = fake.clone();
         Self {
@@ -165,6 +175,24 @@ pub(super) fn edit_shortcuts(
     if edit(&mut next.global_shortcuts) {
         stores.save_settings(&next);
     }
+}
+
+/// Whether the trigger a portal describes is the combination asked for:
+/// it writes its own names (`Ctrl+Alt+K`, `CTRL+ALT+k`, `Meta+K`).
+fn same_trigger(asked: &str, bound: &str) -> bool {
+    let norm = |text: &str| -> Vec<String> {
+        let mut parts: Vec<String> = text
+            .split('+')
+            .map(|part| match part.trim().to_ascii_lowercase().as_str() {
+                "control" => "ctrl".to_string(),
+                "meta" | "logo" | "win" | "cmd" => "super".to_string(),
+                other => other.to_string(),
+            })
+            .collect();
+        parts.sort();
+        parts
+    };
+    norm(asked) == norm(bound)
 }
 
 /// The combination key of an egui key; `None` for Escape and the keys a
@@ -289,6 +317,15 @@ impl AppModel {
     /// The mock run's registrar, to refuse a combination or read the ids.
     pub fn fake_registrar(&self) -> Option<&FakeRegistrar> {
         self.shortcuts.fake.as_ref()
+    }
+
+    /// The registrar changed on its own (the portal answered, or found its
+    /// bus): the rows and registrations follow it.
+    pub fn hotkeys_changed(&mut self, ctx: &Context) {
+        if let Some(service) = self.shortcuts.service.as_mut() {
+            service.refresh();
+        }
+        ctx.request_repaint();
     }
 
     /// A delivered shortcut: what the window does now; the action runs on
@@ -639,11 +676,23 @@ impl AppModel {
                     }),
                     _ => None,
                 };
+                let combo = saved.get(target).map(|c| c.label_for(os_of(b.runtime_os)));
+                // The portal may bind another trigger than the one asked.
+                let trigger = s
+                    .service
+                    .as_ref()
+                    .and_then(|service| service.trigger(target))
+                    .filter(|bound| {
+                        combo
+                            .as_deref()
+                            .is_none_or(|asked| !same_trigger(asked, bound))
+                    });
                 ShortcutRow {
                     target: target.clone(),
                     name,
                     platform,
-                    combo: saved.get(target).map(|c| c.label_for(os_of(b.runtime_os))),
+                    combo,
+                    trigger,
                     status,
                     duplicate,
                     listening: s.capture.as_ref().is_some_and(|c| c.target == *target),

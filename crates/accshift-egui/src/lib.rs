@@ -62,6 +62,13 @@ impl Shell {
         self.hotkeys = Some(deliver);
     }
 
+    /// The shortcut registrar changed on its own (the portal answered).
+    pub fn hotkeys_changed(&mut self, ctx: &egui::Context) {
+        if let Screen::App(app) = &mut self.screen {
+            app.hotkeys_changed(ctx);
+        }
+    }
+
     /// A global shortcut fired: what the window does now.
     pub fn hotkey(&mut self, ctx: &egui::Context, id: u32) -> app::shortcuts::WindowOp {
         match &mut self.screen {

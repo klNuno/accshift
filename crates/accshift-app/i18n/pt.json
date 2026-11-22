@@ -120,6 +120,8 @@
   "settings.shortcutsTaken": "Outra app já usa esta combinação.",
   "settings.shortcutsDuplicate": "Também usada por {name}.",
   "settings.shortcutsFailed": "O sistema recusou esta combinação.",
+  "settings.shortcutsPending": "À espera da confirmação do sistema.",
+  "settings.shortcutsBoundTo": "O sistema associou-o a {trigger}.",
   "settings.shortcutsUnusable": "Adicione Ctrl, Alt ou Super, ou use uma tecla de função.",
   "settings.shortcutsCancelHint": "Esc cancela.",
   "settings.shortcutsItems": "Contas e personas",

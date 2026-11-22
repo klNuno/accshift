@@ -120,6 +120,8 @@
   "settings.shortcutsTaken": "Это сочетание уже занято другим приложением.",
   "settings.shortcutsDuplicate": "Также используется: {name}.",
   "settings.shortcutsFailed": "Система отклонила это сочетание.",
+  "settings.shortcutsPending": "Ожидание подтверждения системы.",
+  "settings.shortcutsBoundTo": "Система назначила сочетание {trigger}.",
   "settings.shortcutsUnusable": "Добавьте Ctrl, Alt или Super либо используйте функциональную клавишу.",
   "settings.shortcutsCancelHint": "Esc отменяет.",
   "settings.shortcutsItems": "Аккаунты и персоны",

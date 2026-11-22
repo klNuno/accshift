@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use accshift_app::shortcuts::{Availability, Combo, Key, RegisterError, Registrar};
+use accshift_app::shortcuts::{Availability, Combo, Key, RegisterError, Registrar, ShortcutTarget};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 
@@ -30,7 +30,7 @@ impl NativeRegistrar {
                 }
                 let id = map.lock().ok().and_then(|m| m.get(&event.id).copied());
                 if let Some(id) = id {
-                    deliver(id);
+                    deliver(super::Signal::pressed(id));
                 }
             }));
         }
@@ -51,7 +51,12 @@ impl Registrar for NativeRegistrar {
         }
     }
 
-    fn register(&mut self, id: u32, combo: &Combo) -> Result<(), RegisterError> {
+    fn register(
+        &mut self,
+        id: u32,
+        _target: &ShortcutTarget,
+        combo: &Combo,
+    ) -> Result<(), RegisterError> {
         let Some(manager) = &self.manager else {
             return Err(RegisterError::Failed("no hotkey manager".into()));
         };

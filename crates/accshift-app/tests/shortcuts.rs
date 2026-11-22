@@ -5,7 +5,7 @@
 use accshift_app::settings::sanitize_settings;
 use accshift_app::shortcuts::{
     account_menu_id, bindings, parse_account_menu_id, Combo, FakeRegistrar, GlobalShortcuts, Key,
-    RowStatus, ShortcutService, ShortcutTarget,
+    Outcome, RowStatus, ShortcutService, ShortcutTarget,
 };
 use accshift_app::stores::StoreContext;
 use serde_json::json;
@@ -402,4 +402,67 @@ fn account_menu_id_names_its_account_and_parses_back() {
     );
     assert_eq!(parse_account_menu_id("account.rename"), None);
     assert_eq!(parse_account_menu_id("account.shortcut:steam"), None);
+}
+
+/// A layer that answers later (the Wayland portal): a row is pending until
+/// it answers, shows a refusal, shows the trigger it bound, and only a bound
+/// id fires.
+#[test]
+fn service_follows_what_a_late_layer_answers() {
+    let fake = FakeRegistrar::default();
+    fake.answer(combo("Ctrl+Alt+K"), Outcome::Pending);
+    fake.answer(combo("Ctrl+Alt+H"), Outcome::Refused);
+    let mut service = ShortcutService::new(Box::new(fake.clone()));
+    service.sync(&bindings(&three_bindings()));
+    let palette = fake.id_of(&combo("Ctrl+Alt+K")).unwrap();
+    let window = fake.id_of(&combo("Ctrl+Alt+H")).unwrap();
+    assert_eq!(
+        service.status(&ShortcutTarget::OpenPalette),
+        Some(RowStatus::Pending)
+    );
+    assert_eq!(service.target(palette), None);
+    assert_eq!(
+        service.status(&ShortcutTarget::ToggleWindow),
+        Some(RowStatus::Failed)
+    );
+    assert_eq!(service.target(window), None);
+    fake.answer(combo("Ctrl+Alt+K"), Outcome::Active(Some("Meta+K".into())));
+    service.refresh();
+    assert_eq!(
+        service.status(&ShortcutTarget::OpenPalette),
+        Some(RowStatus::Active)
+    );
+    assert_eq!(
+        service.trigger(&ShortcutTarget::OpenPalette).as_deref(),
+        Some("Meta+K")
+    );
+    assert_eq!(service.target(palette), Some(&ShortcutTarget::OpenPalette));
+}
+
+/// A probe that answers after the first sync (the portal's, in the
+/// background): a refresh follows it either way, nothing stays stuck.
+#[test]
+fn service_follows_a_layer_whose_availability_settles_late() {
+    let fake = FakeRegistrar::unavailable();
+    let mut service = ShortcutService::new(Box::new(fake.clone()));
+    service.sync(&bindings(&three_bindings()));
+    assert_eq!(
+        service.status(&ShortcutTarget::OpenPalette),
+        Some(RowStatus::Unavailable)
+    );
+    fake.set_available(true);
+    service.refresh();
+    assert!(service.available());
+    assert_eq!(fake.registered().len(), 3);
+    assert_eq!(
+        service.status(&ShortcutTarget::OpenPalette),
+        Some(RowStatus::Active)
+    );
+    fake.set_available(false);
+    service.refresh();
+    assert!(fake.registered().is_empty());
+    assert_eq!(
+        service.status(&ShortcutTarget::OpenPalette),
+        Some(RowStatus::Unavailable)
+    );
 }
