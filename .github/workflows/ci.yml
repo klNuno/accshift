@@ -100,3 +100,9 @@ jobs:
       - name: Stream Deck plugin tests
         working-directory: integrations/streamdeck
         run: node --test "test/*.test.mjs"
+
+      # Same validate and pack as the release job, so a manifest or icon the
+      # Elgato CLI refuses fails here and not on the release tag.
+      - name: Stream Deck plugin pack
+        working-directory: integrations/streamdeck
+        run: node scripts/package.mjs

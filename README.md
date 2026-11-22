@@ -80,8 +80,9 @@ dry run are in [docs/platform-descriptors.md](./docs/platform-descriptors.md).
   switch them all at once.
 - **Streamer mode** blurs account names and avatars while OBS, Streamlabs,
   XSplit, Wirecast or Twitch Studio is running.
-- **CLI and deep links** (`accshift://`) for scripts, Stream Deck and
-  automation.
+- **CLI and deep links** (`accshift://`) for scripts and automation.
+- **Stream Deck plugin** (Windows): one key per account, attached to each
+  release ([details](integrations/streamdeck/README.md)).
 - Optional **PIN lock**, on launch and after a period of inactivity.
 - **7 languages**: English, Spanish, French, Portuguese, Brazilian Portuguese,
   Russian and Simplified Chinese.
