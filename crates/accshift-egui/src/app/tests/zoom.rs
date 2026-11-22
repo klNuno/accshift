@@ -745,3 +745,62 @@ fn streamer_overlay_nodes_reach_the_screen_reader() {
         "the overlay's button takes the focus"
     );
 }
+
+#[test]
+fn the_stage_gets_no_keyboard_under_the_onboarding() {
+    let ctx = Context::default();
+    let mut shell = demo_shell(&ctx, json!({ "animations": "off" }), false, true);
+    let size = [1000.0, 680.0];
+    let mut t = 1.0;
+    for _ in 0..8 {
+        t += 0.3;
+        step_shell(&mut shell, &ctx, size, t, Vec::new());
+    }
+    assert!(
+        app_ref(&shell).onboarding.view.is_some(),
+        "the tour is open"
+    );
+    // A stage field that has focus behind the tour (the overlay keeps its
+    // own focus, so the stage's survives).
+    let search = egui::Id::unique(crate::app::keys::SEARCH_ID);
+    ctx.memory_mut(|m| m.request_focus(search));
+    t += 0.05;
+    step_shell(&mut shell, &ctx, size, t, Vec::new());
+    assert!(ctx.memory(|m| m.has_focus(search)), "the search has focus");
+    t += 0.05;
+    step_shell(&mut shell, &ctx, size, t, vec![Event::Text("abc".into())]);
+    let query = app_ref(&shell)
+        .booted()
+        .unwrap()
+        .accounts
+        .navigation
+        .search_query()
+        .to_string();
+    assert_eq!(query, "", "typing under the tour stays out of the stage");
+    // egui moves focus on Tab as the pass begins, before the shell takes
+    // the keys: the stage's focus stays put, the tour's moves.
+    let overlay = app_ref(&shell).overlay_ctx.clone();
+    let before = overlay.memory(|m| m.focused());
+    t += 0.05;
+    step_shell(&mut shell, &ctx, size, t, vec![tab_key()]);
+    assert_eq!(
+        ctx.memory(|m| m.focused()),
+        Some(search),
+        "Tab under the tour leaves the stage's focus alone"
+    );
+    assert_ne!(
+        overlay.memory(|m| m.focused()),
+        before,
+        "Tab moves the tour's focus"
+    );
+}
+
+fn tab_key() -> Event {
+    Event::Key {
+        key: Key::Tab,
+        physical_key: Some(Key::Tab),
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    }
+}

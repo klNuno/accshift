@@ -294,9 +294,25 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     else {
         return Vec::new();
     };
-    // The shell takes no input under the lock or streamer mode.
-    let held = (secure.pin.is_some() || streaming)
-        .then(|| ctx.input_mut(|i| std::mem::take(&mut i.events)));
+    // The shell takes no input under the lock or streamer mode, and no
+    // keyboard under the tour: it runs on its own context, with its own
+    // focus, and the stage's focus would see the same keys. The pointer
+    // still reaches the title bar the tour leaves live.
+    let held = if secure.pin.is_some() || streaming {
+        Some(ctx.input_mut(|i| std::mem::take(&mut i.events)))
+    } else if tour_open {
+        Some(ctx.input_mut(|i| {
+            let all = i.events.clone();
+            i.events.retain(|e| !is_keyboard(e));
+            all
+        }))
+    } else {
+        None
+    };
+    if held.is_some() {
+        // egui read Tab and the arrows as the pass began: cancel the move.
+        ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
+    }
     let mut stage_layers = Stage {
         fv: &fv,
         title_bar: &title_bar_props,
@@ -405,6 +421,19 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         crate::ui::components::secure_overlays::seed_hidden(&app.overlay_ctx);
     }
     actions
+}
+
+/// What a focused widget reads from the keyboard.
+fn is_keyboard(event: &egui::Event) -> bool {
+    matches!(
+        event,
+        egui::Event::Key { .. }
+            | egui::Event::Text(_)
+            | egui::Event::Copy
+            | egui::Event::Cut
+            | egui::Event::Paste(_)
+            | egui::Event::Ime(_)
+    )
 }
 
 /// The recorder's stand-in desktop of a scene run, under everything.
