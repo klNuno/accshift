@@ -62,6 +62,14 @@ pub fn secrets_index_path(app_handle: &dyn AppContext) -> Result<PathBuf, String
         .join("secret-entries.txt"))
 }
 
+/// Origin ledger recording accounts imported from TcNo Account Switcher so
+/// re-runs deduplicate cleanly.
+pub fn tcno_import_origins_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
+    Ok(app_data_root(app_handle)?
+        .join("state")
+        .join("tcno-import.json"))
+}
+
 /// Where a Riot restore stages the encrypted copy of the live session it may
 /// have to put back. It sits in the state directory next to the local config,
 /// because like it, it describes this machine and never moves with the user's
