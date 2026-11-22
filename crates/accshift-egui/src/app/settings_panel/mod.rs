@@ -55,7 +55,9 @@ pub use cs2::{Cs2Form, Cs2Status};
 pub use draft::{clamp_int, js_number, normalize, NumericField, NumericInput};
 pub(in crate::app) use jobs::apply_report;
 pub use state::{visible_tabs, SettingsPanel, TabDef};
-pub use tcno::{tcno_confirm, tcno_nothing, tcno_preview_is_empty, tcno_report, TcnoState};
+pub use tcno::{
+    tcno_confirm, tcno_nothing, tcno_preview_is_empty, tcno_recovery, tcno_report, TcnoState,
+};
 pub use update::{update_row, version_line, UpdateRow, UpdateStatus};
 
 /// Digits in a PIN code.

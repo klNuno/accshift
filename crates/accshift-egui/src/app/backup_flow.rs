@@ -46,9 +46,9 @@ use accshift_app::types::{
 };
 use egui::Context;
 
-use super::external_refresh::{read_themes, ThemesRead};
+use super::external_refresh::{descriptor_of, read_themes, ThemesRead};
 use super::settings_panel::{apply_report, restore_confirm, BackupState};
-use super::tcno_flow::{import_job, TcnoFlow, TcnoImported};
+use super::tcno_flow::{import_job, tcno_restart_message, TcnoFlow, TcnoImported};
 use super::write_gate::account_writes_running;
 pub(super) use super::write_gate::WriteGate;
 use super::AppModel;
@@ -132,7 +132,8 @@ pub(super) enum RestartWhy {
     /// which ones, and where the copy of the old files is.
     Incomplete { error: String },
     /// The TcNo import ran; this session could not read the stores back.
-    Imported { error: Option<String> },
+    /// `detail`: why it failed, or where it left sessions it could not put back.
+    Imported { detail: Option<String> },
 }
 
 /// The backup card's jobs and the boundary's stage.
@@ -199,13 +200,7 @@ impl BackupFlow {
                 "error",
                 error.clone(),
             ),
-            RestartWhy::Imported { error } => {
-                let restart = translate(locale, "settings.tcnoRestartNeeded");
-                match error {
-                    Some(error) => format!("{error}\n{restart}"),
-                    None => restart,
-                }
-            }
+            RestartWhy::Imported { detail } => tcno_restart_message(detail.as_deref(), locale),
         })
     }
 
@@ -552,7 +547,7 @@ impl AppModel {
             Poll::Gone => {
                 let text = translate(self.backup_locale(), "settings.tcnoRestartNeeded");
                 self.backup.tcno.set_notice(text, true);
-                self.keep_restored_files(RestartWhy::Imported { error: None });
+                self.keep_restored_files(RestartWhy::Imported { detail: None });
                 ctx.request_repaint();
                 return;
             }
@@ -642,7 +637,7 @@ impl AppModel {
             Stage::Importing(job) => match job.wait() {
                 Some(imported) => Some(imported.into_snapshot()),
                 None => {
-                    self.keep_restored_files(RestartWhy::Imported { error: None });
+                    self.keep_restored_files(RestartWhy::Imported { detail: None });
                     return;
                 }
             },
@@ -792,14 +787,4 @@ impl AppModel {
         }
         b.accounts.reload_source(&self.jobs, &mut b.stores, tab);
     }
-}
-
-/// The descriptor `report` loaded for the platform `id`, as JSON, to tell a
-/// changed one apart; `None` for a platform no descriptor declares.
-fn descriptor_of(report: Option<&UserPlatformReport>, id: &str) -> Option<serde_json::Value> {
-    report?
-        .loaded
-        .iter()
-        .find(|descriptor| descriptor.id == id)
-        .and_then(|descriptor| serde_json::to_value(descriptor).ok())
 }

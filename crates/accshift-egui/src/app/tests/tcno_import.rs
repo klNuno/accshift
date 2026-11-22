@@ -4,7 +4,9 @@
 
 use super::super::settings_panel::SettingsAction;
 use super::*;
-use accshift_app::types::{TcNoImportReport, TcNoPreview};
+use accshift_app::i18n::{Locale, TranslationValue};
+use accshift_app::text::Text;
+use accshift_app::types::{TcNoImportReport, TcNoPreview, TcNoWarning, TcNoWarningKind};
 use serde_json::json;
 
 const SAVE: &str = "save_client_storage_store";
@@ -67,7 +69,10 @@ fn tcno_app_with(
     commands["load_client_storage_snapshot"] = json!([{ "args": {}, "result": imported }]);
     commands["tcno_select_folder"] = json!([{ "args": {}, "result": "C:/TcNo" }]);
     commands["tcno_preview"] = json!([{ "args": {"path": "C:/TcNo"}, "result": preview }]);
-    commands[IMPORT] = json!([{ "args": {"path": "C:/TcNo"}, "result": report }]);
+    // A test that configured its own import answer keeps it.
+    if commands[IMPORT].is_null() {
+        commands[IMPORT] = json!([{ "args": {"path": "C:/TcNo"}, "result": report }]);
+    }
     commands[ROBLOX_ADD] = json!([{ "args": {}, "result": {
         "userId": "77", "username": "builder", "displayName": "Builder", "lastLoginAt": null
     } }]);
@@ -297,4 +302,44 @@ fn a_setup_poll_holds_the_tcno_import_and_none_is_sent_during_it() {
     assert_eq!(imported_early, 0, "the import ran while a setup poll did");
     assert_eq!(polled_during, 0, "a setup poll ran during the import");
     assert!(app.booted().unwrap().accounts.add_flow.is_active());
+}
+
+#[test]
+fn a_restart_after_the_import_keeps_where_the_old_session_is() {
+    let ctx = Context::default();
+    let recovery = "data/dev/platforms/.tcno-previous-1234";
+    let (mut app, mock) = tcno_app_with(&ctx, |fixture| {
+        let report = TcNoImportReport {
+            path: "C:/TcNo".into(),
+            accounts_imported: 1,
+            to_capture: 1,
+            warnings: vec![TcNoWarning {
+                platform: "ubisoft".into(),
+                kind: TcNoWarningKind::SnapshotRecoveryRequired,
+                detail: recovery.into(),
+            }],
+            ..TcNoImportReport::default()
+        };
+        fixture["commands"][IMPORT] = json!([{ "args": {"path": "C:/TcNo"}, "result": report }]);
+    });
+    frame(&mut app, &ctx);
+    // The import went through; reading its stores back did not.
+    assert!(mock.fail("load_client_storage_snapshot", Some("read back failed")));
+    app.start_tcno_import("C:/TcNo".into());
+    pump_until(&mut app, &ctx, |a| a.backup.restart_needed());
+
+    let message = app.backup.restart_message(Locale::En).unwrap();
+    let line = Text::with(
+        "settings.tcnoSnapshotRecovery",
+        [("path", TranslationValue::Str(recovery.into()))],
+    )
+    .resolve(Locale::En);
+    assert!(message.contains(&line), "{message}");
+    assert!(
+        message.contains(&accshift_app::i18n::translate(
+            Locale::En,
+            "settings.tcnoRestartNeeded"
+        )),
+        "{message}"
+    );
 }

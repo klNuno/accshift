@@ -138,19 +138,30 @@ pub fn tcno_report(report: &TcNoImportReport, locale: Locale) -> String {
         ],
     )
     .resolve(locale);
-    let mut text = with_warnings(text, &report.warnings, locale, true);
-    for warning in &report.warnings {
-        if warning.kind == TcNoWarningKind::SnapshotRecoveryRequired {
-            let message = Text::with(
+    let text = with_warnings(text, &report.warnings, locale, true);
+    match tcno_recovery(report, locale) {
+        Some(recovery) => format!("{text}\n{recovery}"),
+        None => text,
+    }
+}
+
+/// Where each session the import could not put back was left, one line per
+/// session, relative to the accshift local data folder. `None` when every
+/// session is in place.
+pub fn tcno_recovery(report: &TcNoImportReport, locale: Locale) -> Option<String> {
+    let lines: Vec<String> = report
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind == TcNoWarningKind::SnapshotRecoveryRequired)
+        .map(|warning| {
+            Text::with(
                 "settings.tcnoSnapshotRecovery",
                 [("path", TranslationValue::Str(warning.detail.clone()))],
             )
-            .resolve(locale);
-            text.push('\n');
-            text.push_str(&message);
-        }
-    }
-    text
+            .resolve(locale)
+        })
+        .collect();
+    (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
 #[cfg(test)]

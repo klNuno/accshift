@@ -23,7 +23,7 @@ use egui::Context;
 use super::backup_flow::{picker_cancelled, with_one, Purpose, RestartWhy};
 use super::platforms::RuntimeOs;
 use super::settings_panel::{
-    tcno_confirm, tcno_nothing, tcno_preview_is_empty, tcno_report, TcnoState,
+    tcno_confirm, tcno_nothing, tcno_preview_is_empty, tcno_recovery, tcno_report, TcnoState,
 };
 use super::AppModel;
 
@@ -73,6 +73,17 @@ pub(super) fn import_job(b: &dyn Backend, path: &str) -> TcnoImported {
     TcnoImported {
         result,
         read_back: b.load_client_storage_snapshot(),
+    }
+}
+
+/// The restart modal after an import whose stores could not be read back:
+/// `detail` first (why it failed, or where sessions were left), then the
+/// restart.
+pub(super) fn tcno_restart_message(detail: Option<&str>, locale: Locale) -> String {
+    let restart = translate(locale, "settings.tcnoRestartNeeded");
+    match detail {
+        Some(detail) => format!("{detail}\n{restart}"),
+        None => restart,
     }
 }
 
@@ -183,9 +194,13 @@ impl AppModel {
         let snapshot = match imported.read_back {
             Ok(snapshot) => snapshot,
             Err(_) => {
-                self.keep_restored_files(RestartWhy::Imported {
-                    error: error.then_some(text),
-                });
+                // The restart dialog is all that is left to say what the
+                // import could not put back.
+                let detail = match &imported.result {
+                    Ok(report) => tcno_recovery(report, locale),
+                    Err(_) => Some(text),
+                };
+                self.keep_restored_files(RestartWhy::Imported { detail });
                 let notice = self.backup.restart_message(locale).unwrap_or_default();
                 self.backup.tcno.set_notice(notice, error);
                 ctx.request_repaint();
