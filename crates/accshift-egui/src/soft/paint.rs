@@ -230,21 +230,20 @@ impl Runner {
                 let has_backdrop = overlay_prims
                     .iter()
                     .any(|p| matches!(p.primitive, egui::epaint::Primitive::Callback(_)));
-                let backdrop_root = has_backdrop
-                    .then(|| live.render.root_pixels())
-                    .flatten()
-                    .map(|root| {
-                        if zoomed {
-                            let mut scaled = vec![[0u8; 4]; window_px[0] * window_px[1]];
-                            crate::zoom::resample(&root, canvas_px, &mut scaled, window_px, zoom);
-                            scaled
-                        } else {
-                            root
-                        }
-                    });
+                let root = has_backdrop.then(|| live.render.root_pixels()).flatten();
+                let backdrop_root = match root.as_deref() {
+                    Some(root) if zoomed => {
+                        // Kept across frames: it only reallocates on a resize.
+                        let scaled = &mut live.overlay_backdrop;
+                        scaled.resize(window_px[0] * window_px[1], [0; 4]);
+                        crate::zoom::resample(root, canvas_px, scaled, window_px, zoom);
+                        Some(&scaled[..])
+                    }
+                    root => root,
+                };
                 live.overlay_render.render_overlay(
                     pixels,
-                    backdrop_root.as_deref(),
+                    backdrop_root,
                     window_px[0],
                     window_px[1],
                     overlay_prims,
@@ -258,6 +257,7 @@ impl Runner {
             }
             if live.overlay_shown && !overlay_active {
                 live.overlay_render.forget_overlay_backdrops();
+                live.overlay_backdrop = Vec::new();
             }
             live.overlay_shown = overlay_active;
             let damage: Vec<softbuffer::Rect> = tiles

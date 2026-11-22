@@ -126,6 +126,9 @@ struct Live {
     /// zoom before the resample ([`crate::zoom`]).
     stage_zoom: f32,
     stage: Vec<[u8; 4]>,
+    /// The stage's root pixels scaled into the window, an overlay's blur
+    /// source while one shows on a zoomed stage.
+    overlay_backdrop: Vec<[u8; 4]>,
     /// The held modifiers, for the keys egui-winit drops.
     modifiers: egui::Modifiers,
     /// winit's held modifiers, for a shortcut capture's presses.

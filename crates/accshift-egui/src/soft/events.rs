@@ -134,6 +134,7 @@ impl ApplicationHandler<UserEvent> for Runner {
             full_present: true,
             stage_zoom: 1.0,
             stage: Vec::new(),
+            overlay_backdrop: Vec::new(),
             modifiers: egui::Modifiers::NONE,
             held: winit::keyboard::ModifiersState::empty(),
             #[cfg(target_os = "linux")]
