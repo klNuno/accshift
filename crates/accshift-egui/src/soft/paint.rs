@@ -256,6 +256,9 @@ impl Runner {
                     tiles = vec![[0, 0, window_px[0], window_px[1]]];
                 }
             }
+            if live.overlay_shown && !overlay_active {
+                live.overlay_render.forget_overlay_backdrops();
+            }
             live.overlay_shown = overlay_active;
             let damage: Vec<softbuffer::Rect> = tiles
                 .into_iter()
