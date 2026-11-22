@@ -1,5 +1,5 @@
-//! The cards of the Privacy tab: privacy, security (the PIN lock), backup,
-//! the TcNo import and telemetry.
+//! The cards of the Privacy tab: privacy, security (the PIN lock) and
+//! telemetry.
 
 use accshift_app::i18n::Locale;
 use accshift_app::settings::StreamerMode;
@@ -51,7 +51,6 @@ pub(super) fn cards(panel: &SettingsPanel, l: Locale) -> Vec<CardSpec> {
         },
         backup(panel, l),
     ];
-    cards.extend(tcno(panel, l));
     cards.extend(telemetry(panel, l));
     cards
 }
@@ -126,28 +125,6 @@ fn backup(panel: &SettingsPanel, l: Locale) -> CardSpec {
         items.push(Item::Hint(panel.backup.notice.clone(), panel.backup.error));
     }
     CardSpec { wide: false, items }
-}
-
-/// The TcNo import card, on Windows only: what it adds and leaves alone,
-/// the folder picker, then the last outcome.
-fn tcno(panel: &SettingsPanel, l: Locale) -> Option<CardSpec> {
-    if !panel.tcno.available {
-        return None;
-    }
-    let t = |k: &str| tr(l, k);
-    let mut items = vec![
-        Item::Title(t("settings.tcno")),
-        Item::Hint(t("settings.tcnoHint"), false),
-        Item::Button {
-            label: t("settings.tcnoImport"),
-            enabled: !panel.tcno.busy,
-            action: SettingsAction::ImportTcno,
-        },
-    ];
-    if !panel.tcno.notice.is_empty() {
-        items.push(Item::Hint(panel.tcno.notice.clone(), panel.tcno.error));
-    }
-    Some(CardSpec { wide: false, items })
 }
 
 /// The telemetry card, two columns wide: its modes once loaded, a retry

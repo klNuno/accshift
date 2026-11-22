@@ -102,8 +102,6 @@ pub struct SettingsPanel {
     pub theme_import: Option<ThemeImport>,
     /// The Privacy tab's backup card.
     pub backup: super::BackupState,
-    /// The Privacy tab's TcNo import card.
-    pub tcno: super::TcnoState,
     /// The General tab's about card: where the update flow stands.
     pub update: super::UpdateStatus,
     /// The scroll offset of the tab's content.
@@ -268,7 +266,6 @@ impl SettingsPanel {
             preview_path: String::new(),
             pending_removal: None,
             backup: super::BackupState::default(),
-            tcno: super::TcnoState::default(),
             update: super::UpdateStatus::default(),
             scroll: 0.0,
             reveal_listening: false,
