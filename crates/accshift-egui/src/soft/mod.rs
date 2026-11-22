@@ -115,6 +115,11 @@ struct Live {
     render: EguiSoftwareRender,
     /// Texture changes not rasterized yet (a minimized window has no pixels).
     textures: egui::TexturesDelta,
+    /// Unscaled overlay pass renderer (onboarding, AFK, streamer, PIN lock).
+    overlay_render: EguiSoftwareRender,
+    overlay_textures: egui::TexturesDelta,
+    /// Whether the overlay pass drew onto the window buffer last frame.
+    overlay_shown: bool,
     actions: Vec<egui_winit::ActionRequested>,
     full_present: bool,
     /// The UI zoom of the last frame, and the stage it rendered at that
@@ -145,6 +150,7 @@ impl Drop for Live {
     fn drop(&mut self) {
         // Deltas of frames a minimized or closing window never drew.
         self.textures.clear();
+        self.overlay_textures.clear();
     }
 }
 

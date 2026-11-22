@@ -70,6 +70,28 @@ impl Runner {
             }
         });
         let ui_done = Instant::now();
+        let mut overlay_continuous = false;
+        let overlay_draw = live.shell.take_overlay().map(|(overlay_ctx, overlay_out)| {
+            let overlay_hits = overlay_ctx.viewport(|vp| !vp.hits.contains_pointer.is_empty());
+            if overlay_hits || overlay_out.platform_output.cursor_icon != egui::CursorIcon::Default
+            {
+                out.platform_output.cursor_icon = overlay_out.platform_output.cursor_icon;
+            }
+            out.platform_output
+                .commands
+                .extend(overlay_out.platform_output.commands);
+            overlay_continuous = overlay_out
+                .viewport_output
+                .get(&ViewportId::ROOT)
+                .is_some_and(|v| v.repaint_delay.is_zero());
+            live.overlay_textures.append(overlay_out.textures_delta);
+            let prims = overlay_ctx.tessellate(overlay_out.shapes, overlay_out.pixels_per_point);
+            (
+                prims,
+                overlay_out.pixels_per_point,
+                overlay_out.platform_output.ime,
+            )
+        });
         #[cfg(target_os = "linux")]
         if let Some(edge) = resize_edge(live) {
             out.platform_output.cursor_icon = edge.cursor();
@@ -78,6 +100,15 @@ impl Runner {
             // Back from the stage's points to the window's.
             ime.rect = ime.rect * zoom;
             ime.cursor_rect = ime.cursor_rect * zoom;
+        }
+        if let Some((_, overlay_ppp, Some(ime))) = &overlay_draw {
+            // Convert from overlay points into stage ctx points so egui-winit's
+            // `pixels_per_point` multiplier lands on the overlay's physical pixels.
+            let ratio = *overlay_ppp / out.pixels_per_point;
+            let mut ime = *ime;
+            ime.rect = ime.rect * ratio;
+            ime.cursor_rect = ime.cursor_rect * ratio;
+            out.platform_output.ime = Some(ime);
         }
         live.state.handle_platform_output_with_event_loop(
             &live.window,
@@ -91,11 +122,13 @@ impl Runner {
         live.textures.append(out.textures_delta);
         let viewport_output = out.viewport_output.remove(&ViewportId::ROOT);
         // An animation or a scroll asked for the next frame right away.
-        let continuous = viewport_output
-            .as_ref()
-            .is_some_and(|v| v.repaint_delay.is_zero());
+        let continuous = overlay_continuous
+            || viewport_output
+                .as_ref()
+                .is_some_and(|v| v.repaint_delay.is_zero());
         let commands = viewport_output.map(|v| v.commands).unwrap_or_default();
         let prims = ctx.tessellate(out.shapes, out.pixels_per_point);
+        let overlay_active = overlay_draw.as_ref().is_some_and(|(p, _, _)| !p.is_empty());
         let tessellated = Instant::now();
         let rasterized;
         let mut damaged_px = 0usize;
@@ -126,11 +159,13 @@ impl Runner {
         };
         if let Some((w, h, mut buffer)) = frame {
             // A buffer that still holds the last frame only needs the tiles
-            // that changed; a new one (first frame, resize) or a repaint the
-            // OS asked for gets everything.
+            // that changed; a new one (first frame, resize), an active or
+            // departing overlay, or a repaint the OS asked for gets everything.
             let full = std::mem::take(&mut live.full_present)
                 || healing
                 || show
+                || overlay_active
+                || live.overlay_shown
                 || buffer.age() == 0
                 || os_wants_full_paint(&live.window);
             // SAFETY: [u8; 4] has the size of u32 and a weaker alignment.
@@ -170,12 +205,44 @@ impl Runner {
             // Windows may have invalidated the window while this frame
             // rendered. The present validates all of it, so it carries all
             // of it; checked last to leave no frame in between.
-            let tiles = if !full && !zoomed && os_wants_full_paint(&live.window) {
+            let mut tiles = if !full && !zoomed && os_wants_full_paint(&live.window) {
                 let mut target = BufferMutRef::new(pixels, window_px[0], window_px[1]);
                 live.render.copy_canvas_to_buffer(&mut target, true)
             } else {
                 tiles
             };
+            if let Some((overlay_prims, overlay_ppp, _)) = &overlay_draw {
+                let mut overlay_textures = std::mem::take(&mut live.overlay_textures);
+                let has_backdrop = overlay_prims
+                    .iter()
+                    .any(|p| matches!(p.primitive, egui::epaint::Primitive::Callback(_)));
+                let backdrop_root = has_backdrop
+                    .then(|| live.render.root_pixels())
+                    .flatten()
+                    .map(|root| {
+                        if zoomed {
+                            let mut scaled = vec![[0u8; 4]; window_px[0] * window_px[1]];
+                            crate::zoom::resample(&root, canvas_px, &mut scaled, window_px, zoom);
+                            scaled
+                        } else {
+                            root
+                        }
+                    });
+                live.overlay_render.render_overlay(
+                    pixels,
+                    backdrop_root.as_deref(),
+                    window_px[0],
+                    window_px[1],
+                    overlay_prims,
+                    &overlay_textures,
+                    *overlay_ppp,
+                );
+                overlay_textures.clear();
+                if overlay_active {
+                    tiles = vec![[0, 0, window_px[0], window_px[1]]];
+                }
+            }
+            live.overlay_shown = overlay_active;
             let damage: Vec<softbuffer::Rect> = tiles
                 .into_iter()
                 .filter_map(|[x, y, width, height]| {

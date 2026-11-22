@@ -252,6 +252,27 @@ fn wave_clock(ctx: &Context, id: Id, active: bool, delay: f64) -> Option<f64> {
     }
 }
 
+/// Seeds the hidden-state transitions for AFK and streamer overlays when the
+/// overlay pass is skipped while idle, so their first appearance fades in
+/// instead of snapping to full opacity.
+pub fn seed_hidden(ctx: &Context) {
+    let afk = Id::unique("afk");
+    let streamer = Id::unique("streamer");
+    let ids = [
+        afk.with("overlay"),
+        afk.with("text"),
+        afk.with("strip"),
+        streamer.with("visible"),
+    ];
+    ctx.data_mut(|d| {
+        for id in ids {
+            if d.get_temp::<anim::TransitionState<f32>>(id).is_none() {
+                d.insert_temp(id, anim::TransitionState::settled(0.0f32));
+            }
+        }
+    });
+}
+
 /// The AFK cover and the version strip over `stage`.
 pub fn afk_overlay(ui: &Ui, stage: Rect, props: &AfkProps) {
     let ctx = ui.ctx();

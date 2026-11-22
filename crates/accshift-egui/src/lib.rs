@@ -238,6 +238,14 @@ impl Shell {
         }
     }
 
+    /// Takes the unscaled overlay pass's context and output from the last frame.
+    pub fn take_overlay(&mut self) -> Option<(egui::Context, egui::FullOutput)> {
+        match &mut self.screen {
+            Screen::App(app) => app.take_overlay(),
+            _ => None,
+        }
+    }
+
     pub fn frame(&mut self, ui: &mut egui::Ui) {
         if let Some(run) = &mut self.scenes {
             run.collect();

@@ -260,6 +260,9 @@ struct Backdrop {
     filtered: Vec<[u8; 4]>,
     /// Size, filter bits and root of `filtered`.
     filter_key: Option<FilterKey>,
+    /// Index of the last `BackdropOp::Root` in the frame's base jobs, so an
+    /// overlay pass (`render_overlay`) can blur only what lies above the root.
+    last_root: Option<usize>,
 }
 
 type FilterKey = (usize, usize, [u32; 3], Option<usize>);
@@ -499,6 +502,11 @@ impl EguiSoftwareRender {
             self.update_canvas_from_cached();
         }
 
+        self.backdrop.last_root = ops
+            .iter()
+            .filter(|&&(i, op)| i < base_end && op == BackdropOp::Root)
+            .map(|&(i, _)| i)
+            .next_back();
         let was_shown = self.backdrop.shown;
         self.backdrop.active = false;
         if let Some((
@@ -551,6 +559,113 @@ impl EguiSoftwareRender {
             self.backdrop.filter_key = None;
         }
 
+        self.free_textures(textures_delta);
+    }
+
+    /// The cached pixels painted after the frame's `BackdropOp::Root`, if one
+    /// was present (used by an unscaled overlay pass so a stand-in desktop
+    /// stays sharp under the overlay's backdrop blur).
+    pub fn root_pixels(&self) -> Option<Vec<[u8; 4]>> {
+        self.backdrop.last_root.map(|r| self.composite_after(r))
+    }
+
+    /// Composites an overlay pass (`paint_jobs` at `pixels_per_point`) directly
+    /// over `base` (`width` x `height` premultiplied pixels), honouring
+    /// `BackdropOp::Begin`/`Group`/`End` layers (with `backdrop_root` as the
+    /// blur source when present so anything below `Mark::Root` stays sharp).
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_overlay(
+        &mut self,
+        base: &mut [[u8; 4]],
+        backdrop_root: Option<&[[u8; 4]]>,
+        width: usize,
+        height: usize,
+        paint_jobs: &[egui::ClippedPrimitive],
+        textures_delta: &egui::TexturesDelta,
+        pixels_per_point: f32,
+    ) {
+        assert!(width > 0);
+        assert!(height > 0);
+        assert!(pixels_per_point > 0.0);
+        assert_eq!(base.len(), width * height);
+        self.target_size = vec2(width as f32, height as f32);
+        self.set_textures(textures_delta);
+        self.ensure_glyph_classes(paint_jobs);
+
+        let ops: Vec<(usize, BackdropOp)> = match &self.backdrop_classifier {
+            Some(classify) => paint_jobs
+                .iter()
+                .enumerate()
+                .filter_map(|(i, job)| match &job.primitive {
+                    egui::epaint::Primitive::Callback(cb) => classify(cb).map(|op| (i, op)),
+                    egui::epaint::Primitive::Mesh(_) => None,
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        let layers = backdrop_layers(&ops, paint_jobs.len());
+        if layers.is_empty() {
+            self.draw_jobs_direct(
+                &mut BufferMutRef::new(base, width, height),
+                paint_jobs,
+                pixels_per_point,
+            );
+        } else {
+            let mut under = backdrop_root.map(|r| r.to_vec());
+            let mut at = 0;
+            for (n, layer) in layers.iter().enumerate() {
+                let before = &paint_jobs[at..layer.begin];
+                self.draw_jobs_direct(
+                    &mut BufferMutRef::new(base, width, height),
+                    before,
+                    pixels_per_point,
+                );
+                if let Some(u) = under.as_mut() {
+                    self.draw_jobs_direct(
+                        &mut BufferMutRef::new(u, width, height),
+                        before,
+                        pixels_per_point,
+                    );
+                }
+                let jobs = paint_jobs.get(layer.begin + 1..layer.end).unwrap_or(&[]);
+                let (mut pixels, opacity, span) = match layer.op {
+                    BackdropOp::Group { opacity } => (
+                        vec![[0u8; 4]; width * height],
+                        opacity,
+                        group_span(jobs, pixels_per_point, width, height),
+                    ),
+                    BackdropOp::Begin {
+                        sigma,
+                        opacity,
+                        saturate,
+                        clip,
+                    } => {
+                        let source = under.as_deref().unwrap_or(&*base);
+                        (
+                            backdrop::backdrop_of(source, width, height, clip, sigma, saturate),
+                            opacity,
+                            layer_span(clip, jobs, pixels_per_point, width, height),
+                        )
+                    }
+                    _ => {
+                        at = (layer.end + 1).min(paint_jobs.len());
+                        continue;
+                    }
+                };
+                self.draw_jobs_layered(&mut pixels, width, height, jobs, pixels_per_point);
+                backdrop::land_span(base, &pixels, opacity, width, span.clone());
+                if let Some(u) = under.as_mut().filter(|_| n + 1 < layers.len()) {
+                    backdrop::land_span(u, &pixels, opacity, width, span);
+                }
+                at = (layer.end + 1).min(paint_jobs.len());
+            }
+            let after = &paint_jobs[at..];
+            self.draw_jobs_direct(
+                &mut BufferMutRef::new(base, width, height),
+                after,
+                pixels_per_point,
+            );
+        }
         self.free_textures(textures_delta);
     }
 
@@ -1965,5 +2080,69 @@ mod layer_tests {
         };
         assert_eq!(layer_span(Some(clip), &[job], 2.0, 100, 50), [6..24, 2..40]);
         assert_eq!(layer_span(None, &[], 2.0, 100, 50), [0..100, 0..50]);
+    }
+
+    #[test]
+    fn render_overlay_composites_over_buffer_and_backdrop_layers() {
+        let mut render =
+            EguiSoftwareRender::new(ColorFieldOrder::Rgba).with_backdrop(alloc::boxed::Box::new(
+                |cb: &egui::PaintCallback| cb.callback.downcast_ref::<BackdropOp>().copied(),
+            ));
+        let (w, h) = (16, 16);
+        let mut buf = vec![[20u8, 40, 60, 255]; w * h];
+        let mut mesh = Mesh::default();
+        mesh.add_colored_rect(
+            egui::Rect::from_min_max(egui::pos2(4.0, 4.0), egui::pos2(12.0, 12.0)),
+            Color32::from_rgba_unmultiplied(200, 100, 50, 255),
+        );
+        let rect_job = egui::ClippedPrimitive {
+            clip_rect: egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(16.0, 16.0)),
+            primitive: egui::epaint::Primitive::Mesh(mesh),
+        };
+        let mut tex_delta = egui::TexturesDelta::default();
+        tex_delta.set.insert(
+            egui::TextureId::Managed(0),
+            [egui::epaint::ImageDelta::full(
+                egui::ImageData::Color(alloc::sync::Arc::new(egui::ColorImage::filled(
+                    [1, 1],
+                    Color32::WHITE,
+                ))),
+                egui::TextureOptions::NEAREST,
+            )]
+            .into_iter()
+            .collect(),
+        );
+        render.render_overlay(
+            &mut buf,
+            None,
+            w,
+            h,
+            core::slice::from_ref(&rect_job),
+            &tex_delta,
+            1.0,
+        );
+        tex_delta.clear();
+        // Outside overlay stays untouched; inside takes overlay color.
+        assert_eq!(buf[0], [20, 40, 60, 255]);
+        assert_eq!(buf[8 * w + 8], [200, 100, 50, 255]);
+
+        // With BackdropOp::Begin/End at half opacity over a fresh buffer.
+        let mut buf2 = vec![[20u8, 40, 60, 255]; w * h];
+        let full = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(16.0, 16.0));
+        let cb = |op: BackdropOp| egui::ClippedPrimitive {
+            clip_rect: full,
+            primitive: egui::epaint::Primitive::Callback(egui::PaintCallback {
+                rect: full,
+                callback: alloc::sync::Arc::new(op),
+            }),
+        };
+        let jobs = [cb(begin(0.5)), rect_job, cb(BackdropOp::End)];
+        render.render_overlay(&mut buf2, None, w, h, &jobs, &tex_delta, 1.0);
+        assert_eq!(buf2[0], [20, 40, 60, 255]);
+        // Half opacity blends [200, 100, 50] over [20, 40, 60] -> ~[110, 70, 55].
+        let center = buf2[8 * w + 8];
+        assert!((center[0] as i32 - 110).abs() <= 2, "got {center:?}");
+        assert!((center[1] as i32 - 70).abs() <= 2, "got {center:?}");
+        assert!((center[2] as i32 - 55).abs() <= 2, "got {center:?}");
     }
 }

@@ -125,6 +125,11 @@ impl ApplicationHandler<UserEvent> for Runner {
                 .with_glyph_coverage(crate::ui::text::coverage_tables())
                 .with_backdrop(Box::new(backdrop_op)),
             textures: Default::default(),
+            overlay_render: EguiSoftwareRender::new(ColorFieldOrder::Bgra)
+                .with_glyph_coverage(crate::ui::text::coverage_tables())
+                .with_backdrop(Box::new(backdrop_op)),
+            overlay_textures: Default::default(),
+            overlay_shown: false,
             actions: Vec::new(),
             full_present: true,
             stage_zoom: 1.0,

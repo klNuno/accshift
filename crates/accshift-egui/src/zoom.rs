@@ -53,7 +53,9 @@ pub fn upscaled(ctx: &Context) -> bool {
             .unwrap_or(false)
 }
 
-fn base(ctx: &Context) -> f32 {
+/// The window's own zoom factor (scene device scale over native), before the
+/// UI zoom.
+pub fn base(ctx: &Context) -> f32 {
     ctx.data(|d| d.get_temp::<f32>(Id::unique(BASE)))
         .unwrap_or(1.0)
 }
@@ -75,7 +77,7 @@ pub fn begin_frame(ctx: &Context, stage: f32) {
 /// it.
 pub fn frame(ctx: &Context) -> f32 {
     ctx.data(|d| d.get_temp::<f32>(Id::unique(FRAME)))
-        .unwrap_or(1.0)
+        .unwrap_or_else(|| ctx.zoom_factor() / base(ctx))
 }
 
 /// `100vw` by `100vh` in the stage's points: the window's CSS size, which
@@ -109,6 +111,58 @@ pub fn apply(ctx: &Context) {
         ctx.set_zoom_factor(want);
         ctx.request_repaint();
     }
+}
+
+/// Maps `events` by `scale` (stage points back into unscaled window CSS
+/// points for the overlay pass).
+pub fn scale_events(events: &[Event], scale: f32) -> Vec<Event> {
+    if (scale - 1.0).abs() < 1e-6 {
+        return events.to_vec();
+    }
+    events
+        .iter()
+        .map(|e| match e {
+            Event::PointerMoved(p) => Event::PointerMoved((p.to_vec2() * scale).to_pos2()),
+            Event::PointerButton {
+                pos,
+                button,
+                pressed,
+                modifiers,
+            } => Event::PointerButton {
+                pos: (pos.to_vec2() * scale).to_pos2(),
+                button: *button,
+                pressed: *pressed,
+                modifiers: *modifiers,
+            },
+            Event::Touch {
+                device_id,
+                id,
+                phase,
+                pos,
+                force,
+            } => Event::Touch {
+                device_id: *device_id,
+                id: *id,
+                phase: *phase,
+                pos: (pos.to_vec2() * scale).to_pos2(),
+                force: *force,
+            },
+            Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta,
+                modifiers,
+                phase,
+                source,
+            } => Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: *delta * scale,
+                modifiers: *modifiers,
+                phase: *phase,
+                source: *source,
+            },
+            other => other.clone(),
+        })
+        .collect()
 }
 
 /// The window's input in the stage's points: the screen is `1 / zoom` as

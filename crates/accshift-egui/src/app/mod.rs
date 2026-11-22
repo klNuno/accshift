@@ -336,11 +336,34 @@ pub struct AppModel {
     updates: updates::Updates,
     /// The Liquid Glass wallpaper backdrop.
     liquid: wallpaper::Liquid,
+    /// Unscaled context for overlays outside the stage (onboarding, AFK,
+    /// streamer mode, PIN lock): always lays out at 100% UI scale.
+    overlay_ctx: Context,
+    /// Whether CJK fonts were installed on `overlay_ctx` (`None` until first use).
+    overlay_fonts_cjk: Option<bool>,
+    /// The overlay pass's output for this frame, taken by the runner.
+    overlay_output: Option<egui::FullOutput>,
+    /// Whether the overlay pass painted shapes last frame (keeps fade-outs running).
+    overlay_active: bool,
+}
+
+impl Drop for AppModel {
+    fn drop(&mut self) {
+        if let Some(out) = &mut self.overlay_output {
+            out.textures_delta.clear();
+        }
+    }
 }
 
 impl AppModel {
     pub fn backend(&self) -> &Arc<dyn Backend> {
         &self.backend
+    }
+
+    /// Takes the unscaled overlay pass's context and output from the last frame.
+    pub fn take_overlay(&mut self) -> Option<(Context, egui::FullOutput)> {
+        let out = self.overlay_output.take()?;
+        Some((self.overlay_ctx.clone(), out))
     }
 
     pub fn booted(&self) -> Option<&Booted> {

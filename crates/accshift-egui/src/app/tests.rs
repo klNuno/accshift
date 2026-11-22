@@ -18,6 +18,7 @@ mod real_unreadable;
 mod shortcuts;
 mod tcno_import;
 mod updates;
+mod zoom;
 
 struct Scratch {
     root: PathBuf,

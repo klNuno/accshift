@@ -77,6 +77,26 @@ pub struct TourTargets {
     pub platforms: Option<Rect>,
 }
 
+impl TourTargets {
+    /// Maps recorded stage rects into unscaled window CSS points.
+    pub fn scale(self, factor: f32) -> Self {
+        if (factor - 1.0).abs() < 1e-6 {
+            return self;
+        }
+        let s = |r: Rect| {
+            Rect::from_min_max(
+                (r.min.to_vec2() * factor).to_pos2(),
+                (r.max.to_vec2() * factor).to_pos2(),
+            )
+        };
+        Self {
+            add_account: self.add_account.map(s),
+            account_card: self.account_card.map(s),
+            platforms: self.platforms.map(s),
+        }
+    }
+}
+
 fn targets_id() -> Id {
     Id::unique("accshift::tour-targets")
 }
@@ -85,6 +105,11 @@ fn targets_id() -> Id {
 /// as they draw.
 pub fn reset_targets(ctx: &Context) {
     ctx.data_mut(|d| d.insert_temp(targets_id(), TourTargets::default()));
+}
+
+/// Writes `targets` directly (used by the unscaled overlay pass).
+pub fn set_targets(ctx: &Context, targets: TourTargets) {
+    ctx.data_mut(|d| d.insert_temp(targets_id(), targets));
 }
 
 /// Records a target; the first call of a frame wins.

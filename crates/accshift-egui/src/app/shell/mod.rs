@@ -49,7 +49,7 @@ use crate::ui::components::title_bar::{self, TitleBarProps, UpdateCta};
 mod overlays;
 mod stage;
 
-use overlays::{draw_screen_overlays, draw_tour, tour_platforms, SecureView};
+use overlays::{run_overlay_pass, tour_platforms, SecureView};
 use stage::Stage;
 
 /// The obscured shell's filter and scale: 320 ms ease-out.
@@ -225,10 +225,14 @@ fn layer<R>(ui: &mut Ui, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> R {
 }
 
 pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
+    if let Some(mut old) = app.overlay_output.take() {
+        old.textures_delta.clear();
+    }
     let screen = ui.max_rect();
     let window = crate::zoom::stage_rect(ui.ctx(), screen);
     paint_desktop(app, ui, screen);
     let Some(booted) = app.booted.as_ref() else {
+        app.overlay_active = false;
         return boot_error_screen(app, ui, screen);
     };
     let ctx = ui.ctx().clone();
@@ -267,22 +271,20 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     let suspended = booted.secure.render_suspended();
     // The restart modal stays on top of the stage; the tour waits.
     let restart = restart_modal(app, fv.locale);
-    let tour = app
-        .onboarding
-        .view
-        .as_ref()
-        .filter(|_| !suspended && restart.is_none());
-    let modal = covers_panel(app, tour.is_some(), bulk_step);
+    let tour_open = app.onboarding.view.is_some() && !suspended && restart.is_none();
+    let modal = covers_panel(app, tour_open, bulk_step);
     let secure = SecureView::read(booted);
     let pin_focus = std::mem::take(&mut app.pin_focus);
     let streaming = secure.streamer.active;
+    let tour_names =
+        tour_open.then(|| tour_platforms(&booted.platforms, &booted.detected_platforms, fv.os));
+    let tour_detected = !booted.detected_platforms.is_empty();
     let Some(Booted {
         accounts,
         workspace: ws,
         theme,
         stores,
         platforms,
-        detected_platforms,
         personas: persona_ctl,
         registry: theme_registry,
         bulk,
@@ -343,21 +345,61 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     if let Some(events) = held {
         ctx.input_mut(|i| i.events = events);
     }
-    paint_obscured(ui, &ctx, window, secure.obscured || streaming);
-    if let Some(view) = tour {
-        let names = tour_platforms(platforms, detected_platforms, fv.os);
-        actions.extend(draw_tour(
-            ui,
-            &fv,
-            view,
-            &names,
-            !detected_platforms.is_empty(),
-        ));
+    let shield_rect = if secure.pin.is_some() || streaming {
+        Some(Rect::from_min_max(
+            pos2(screen.left(), stage.top()),
+            screen.max,
+        ))
+    } else if tour_open {
+        Some(Rect::from_min_max(
+            pos2(screen.left(), screen.top() + fv.title_bar_h),
+            screen.max,
+        ))
+    } else {
+        None
+    };
+    if let Some(shield) = shield_rect {
+        // Keep stage hits blocked while an overlay draws on its own unscaled
+        // context; onboarding leaves the title bar live.
+        egui::Area::new(egui::Id::unique("overlay-stage-shield"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(shield.min)
+            .show(&ctx, |ui| {
+                ui.allocate_rect(shield, egui::Sense::click_and_drag());
+            });
     }
-    // The screen overlays sit outside the stage: the visible window, under
-    // a macOS title bar.
-    let overlay = Rect::from_min_max(pos2(screen.left(), stage.top()), screen.max);
-    actions.extend(draw_screen_overlays(ui, &fv, overlay, secure, pin_focus));
+    paint_obscured(ui, &ctx, window, secure.obscured || streaming);
+    let want_overlay = tour_open
+        || secure.pin.is_some()
+        || streaming
+        || secure
+            .afk
+            .as_ref()
+            .is_some_and(|a| a.visible || a.version.is_some())
+        || app.overlay_active;
+    if want_overlay {
+        let tour = app
+            .onboarding
+            .view
+            .as_ref()
+            .filter(|_| tour_open)
+            .zip(tour_names.as_deref())
+            .map(|(view, names)| (view, names, tour_detected));
+        actions.extend(run_overlay_pass(
+            &app.overlay_ctx,
+            &mut app.overlay_fonts_cjk,
+            &mut app.overlay_output,
+            &mut app.overlay_active,
+            &ctx,
+            &fv,
+            stage.top(),
+            tour,
+            secure,
+            pin_focus,
+        ));
+    } else {
+        crate::ui::components::secure_overlays::seed_hidden(&app.overlay_ctx);
+    }
     actions
 }
 
