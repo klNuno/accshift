@@ -47,6 +47,10 @@ pub trait LoaderHooks: ProfileSource {
     fn load_error_toast(&self, message: &str) -> Option<Text>;
     /// The dedicated toast for a failed switch, `None` for the generic one.
     fn switch_error_toast(&self, message: &str) -> Option<Text>;
+    /// The dedicated toast for a failed add, `None` for the generic one.
+    fn add_error_toast(&self, _message: &str) -> Option<Text> {
+        None
+    }
     /// The warnings known without a load; `None` when the adapter has none.
     fn cached_warning_states(&self) -> Option<BTreeMap<String, WarningPresentation>>;
     /// Whether the adapter loads warnings.

@@ -187,12 +187,27 @@ pub const LEAGUE_GAME_ACTIVE_PATTERN: &str = "league of legends is in an active 
 /// The dedicated toast for a failed switch or game launch, `None` for the
 /// generic one.
 pub fn switch_error_toast(message: &str) -> Option<Text> {
-    let message = message.to_lowercase();
-    if message.starts_with(ACCOUNT_UNCONFIRMED_PATTERN) {
+    let lower = message.to_lowercase();
+    if lower.starts_with(ACCOUNT_UNCONFIRMED_PATTERN) {
         Some(Text::key("riot.accountNotConfirmed"))
-    } else if message.starts_with(PROFILE_WITHOUT_ACCOUNT_PATTERN) {
+    } else if lower.starts_with(PROFILE_WITHOUT_ACCOUNT_PATTERN) {
         Some(Text::key("riot.profileWithoutAccount"))
-    } else if message.starts_with(LEAGUE_CHAMP_SELECT_PATTERN) {
+    } else {
+        league_refusal_toast(message)
+    }
+}
+
+/// The dedicated toast for a failed account setup start, `None` for the
+/// generic one.
+pub fn add_error_toast(message: &str) -> Option<Text> {
+    league_refusal_toast(message)
+}
+
+/// The toast for the backend's refusal to close `LeagueClient` in champion
+/// select or an active match.
+fn league_refusal_toast(message: &str) -> Option<Text> {
+    let message = message.to_lowercase();
+    if message.starts_with(LEAGUE_CHAMP_SELECT_PATTERN) {
         Some(Text::key("riot.leagueInChampSelect"))
     } else if message.starts_with(LEAGUE_GAME_ACTIVE_PATTERN) {
         Some(Text::key("riot.leagueGameActive"))

@@ -360,3 +360,79 @@ fn a_missing_client_gets_its_own_add_toast() {
         Text::with("toast.addAccountClientMissing", [("platform", "Riot")])
     );
 }
+
+/// [`Hooks`] with the shipped Riot adapter's add toasts.
+struct RiotAdapterHooks(accshift_app::platforms::adapter::PlatformAdapter);
+
+impl ProfileSource for RiotAdapterHooks {
+    fn cached_profile(&self, _account_id: &str) -> Option<CachedPlatformProfile> {
+        None
+    }
+    fn has_profile_info(&self) -> bool {
+        false
+    }
+}
+
+impl LoaderHooks for RiotAdapterHooks {
+    fn platform_id(&self) -> &str {
+        "riot"
+    }
+    fn no_accounts_toast(&self) -> Option<Text> {
+        None
+    }
+    fn load_error_toast(&self, _message: &str) -> Option<Text> {
+        None
+    }
+    fn switch_error_toast(&self, message: &str) -> Option<Text> {
+        self.0.switch_error_toast(message)
+    }
+    fn add_error_toast(&self, message: &str) -> Option<Text> {
+        self.0.add_error_toast(message)
+    }
+    fn cached_warning_states(&self) -> Option<BTreeMap<String, WarningPresentation>> {
+        None
+    }
+    fn has_warnings(&self) -> bool {
+        false
+    }
+}
+
+#[test]
+fn a_league_refusal_at_setup_start_gets_its_own_add_toast() {
+    let hooks = RiotAdapterHooks(
+        accshift_app::platforms::adapter::PlatformAdapter::shipped("riot").unwrap(),
+    );
+    for (message, key) in [
+        (
+            "League of Legends is in champion select: finish or leave champion select before starting Riot account setup.",
+            "riot.leagueInChampSelect",
+        ),
+        (
+            "League of Legends is in an active match (InProgress): finish or leave the match before starting Riot account setup.",
+            "riot.leagueGameActive",
+        ),
+    ] {
+        let mut loader = riot_loader();
+        let add = loader.begin_add().unwrap();
+        let outcome =
+            loader.finish_add(&add, Err(BackendError::new(message)), "Riot", true, &hooks);
+        let AddOutcome::Failed(toast) = outcome else {
+            panic!("expected a failure toast");
+        };
+        assert_eq!(toast.text, Text::key(key), "{message}");
+    }
+
+    // Any other setup failure keeps the generic toast.
+    let mut loader = riot_loader();
+    let add = loader.begin_add().unwrap();
+    let AddOutcome::Failed(toast) = loader.finish_add(
+        &add,
+        Err(BackendError::new("Could not save the current Riot session")),
+        "Riot",
+        true,
+        &hooks,
+    ) else {
+        panic!("expected a failure toast");
+    };
+    assert_eq!(toast.text, Text::key("toast.addAccountFailed"));
+}
