@@ -229,6 +229,7 @@
   "settings.tcnoWarn.identityNotPortable": "comptes qu'accshift ne peut pas changer : {count}",
   "settings.tcnoWarn.snapshotIncomplete": "sessions incomplètes : {count}",
   "settings.tcnoWarn.snapshotFailed": "sessions non copiées : {count}",
+  "settings.tcnoSnapshotRecovery": "Les anciens fichiers de session sont conservés dans le dossier de données locales d’accshift, sous {path}.",
   "settings.telemetryEnableFailed": "Impossible d'activer les stats avancées",
   "settings.telemetryDisableFailed": "Impossible de désactiver les stats avancées",
   "settings.telemetryDeletePending": "Les stats avancées sont désactivées ; il faudra réessayer l'effacement serveur",

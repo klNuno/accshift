@@ -229,6 +229,7 @@
   "settings.tcnoWarn.identityNotPortable": "accounts accshift cannot switch: {count}",
   "settings.tcnoWarn.snapshotIncomplete": "incomplete sessions: {count}",
   "settings.tcnoWarn.snapshotFailed": "sessions that could not be copied: {count}",
+  "settings.tcnoSnapshotRecovery": "The previous session files are still in the accshift local data folder at {path}.",
   "settings.telemetryEnableFailed": "Could not enable enhanced stats",
   "settings.telemetryDisableFailed": "Could not disable enhanced stats",
   "settings.telemetryDeletePending": "Enhanced stats are off; server deletion will need another attempt",

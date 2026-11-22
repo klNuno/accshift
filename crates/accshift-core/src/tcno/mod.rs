@@ -57,6 +57,9 @@ pub enum TcNoWarningKind {
     /// A session snapshot could not be written; the account imports as to
     /// capture.
     SnapshotFailed,
+    /// Previous session files could not be put back. The detail is their
+    /// recovery path relative to accshift's local data folder.
+    SnapshotRecoveryRequired,
 }
 
 /// One non-fatal warning from scanning or importing a platform.

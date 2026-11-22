@@ -23,9 +23,9 @@
           "accountsSkipped": 2,
           "notesImported": 4,
           "notesSkipped": 1,
-          "snapshotsImported": 3,
+          "snapshotsImported": 2,
           "orderEntriesAdded": 9,
-          "toCapture": 6,
+          "toCapture": 7,
           "eglv2Skipped": 1,
           "vaultDetected": false,
           "platforms": [],
@@ -39,6 +39,11 @@
               "platform": "epic",
               "kind": "epicEglv2Skipped",
               "detail": "Builder"
+            },
+            {
+              "platform": "ubisoft",
+              "kind": "snapshotRecoveryRequired",
+              "detail": "platforms/ubisoft/.tcno-previous-ad634015-020e-4712-ab70-fc612504c29f"
             }
           ]
         }

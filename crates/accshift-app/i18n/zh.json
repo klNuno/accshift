@@ -229,6 +229,7 @@
   "settings.tcnoWarn.identityNotPortable": "accshift 无法切换的账号：{count}",
   "settings.tcnoWarn.snapshotIncomplete": "不完整的会话：{count}",
   "settings.tcnoWarn.snapshotFailed": "未能复制的会话：{count}",
+  "settings.tcnoSnapshotRecovery": "上次的会话文件仍保存在 accshift 本地数据文件夹下的 {path}。",
   "settings.telemetryEnableFailed": "无法启用增强统计",
   "settings.telemetryDisableFailed": "无法关闭增强统计",
   "settings.telemetryDeletePending": "增强统计已关闭，服务器数据删除需要再试一次",

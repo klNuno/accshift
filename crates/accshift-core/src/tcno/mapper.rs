@@ -7,7 +7,7 @@ use super::reader::{
 };
 use super::{TcNoFormatVersion, TcNoWarning, TcNoWarningKind, MAX_NOTE_UTF16_LEN};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{hash_map::Entry, BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -92,7 +92,7 @@ fn map_platform(scanned: ScannedPlatform, warnings: &mut Vec<TcNoWarning>) -> Pl
     }
 
     let mut accounts = Vec::new();
-    let mut seen_ids: HashSet<String> = HashSet::new();
+    let mut retained_ids: HashMap<String, String> = HashMap::new();
     let mut uid_to_accshift: HashMap<String, String> = HashMap::new();
     let mut name_to_accshift: HashMap<String, String> = HashMap::new();
     let mut tags_by_accshift: BTreeMap<String, Vec<Arc<str>>> = BTreeMap::new();
@@ -111,7 +111,10 @@ fn map_platform(scanned: ScannedPlatform, warnings: &mut Vec<TcNoWarning>) -> Pl
 
             if scanned.accshift_id == "epic" {
                 let raw_key = trimmed_uid.to_ascii_lowercase();
-                if uid_to_accshift.contains_key(&raw_key) {
+                if let Some(retained_id) = uid_to_accshift.get(&raw_key) {
+                    if !label.is_empty() {
+                        name_to_accshift.insert(label.to_ascii_lowercase(), retained_id.clone());
+                    }
                     continue;
                 }
                 match map_epic_account(cache_dir, trimmed_uid, &label, warnings) {
@@ -127,7 +130,10 @@ fn map_platform(scanned: ScannedPlatform, warnings: &mut Vec<TcNoWarning>) -> Pl
                             name_to_accshift
                                 .insert(label.to_ascii_lowercase(), account.accshift_id.clone());
                         }
-                        if !seen_ids.insert(key) {
+                        if retained_ids
+                            .insert(key, account.accshift_id.clone())
+                            .is_some()
+                        {
                             continue;
                         }
                         if let Some(tags) = cache_dir.ids.account_tags.get(raw_uid) {
@@ -148,13 +154,15 @@ fn map_platform(scanned: ScannedPlatform, warnings: &mut Vec<TcNoWarning>) -> Pl
                 continue;
             };
 
-            let dedup_key = accshift_id.to_ascii_lowercase();
-            uid_to_accshift.insert(trimmed_uid.to_string(), accshift_id.clone());
-            uid_to_accshift.insert(trimmed_uid.to_ascii_lowercase(), accshift_id.clone());
+            let entry = retained_ids.entry(accshift_id.to_ascii_lowercase());
+            let new_account = matches!(entry, Entry::Vacant(_));
+            let retained_id = entry.or_insert_with(|| accshift_id.clone());
+            uid_to_accshift.insert(trimmed_uid.to_string(), retained_id.clone());
+            uid_to_accshift.insert(trimmed_uid.to_ascii_lowercase(), retained_id.clone());
             if !label.is_empty() {
-                name_to_accshift.insert(label.to_ascii_lowercase(), accshift_id.clone());
+                name_to_accshift.insert(label.to_ascii_lowercase(), retained_id.clone());
             }
-            if !seen_ids.insert(dedup_key) {
+            if !new_account {
                 continue;
             }
 

@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 /// One imported item recorded in `state/tcno-import.json` so every item stays
 /// tagged with its TcNo origin and re-runs deduplicate cleanly.
@@ -389,17 +390,27 @@ pub(super) fn execute_plan(
                 let stats = &mut report.platforms[platform_index];
                 stats.snapshots_new -= 1;
                 stats.to_capture += 1;
-                report.warnings.push(TcNoWarning {
-                    platform: acc.platform_id.to_string(),
-                    kind: TcNoWarningKind::SnapshotFailed,
-                    detail: format!(
-                        "Could not import the saved session of '{}': {error}",
-                        if acc.label.is_empty() {
+                let (kind, detail) = match error {
+                    SnapshotError::Failed(error) => {
+                        let label = if acc.label.is_empty() {
                             &acc.accshift_id
                         } else {
                             &acc.label
-                        }
+                        };
+                        (
+                            TcNoWarningKind::SnapshotFailed,
+                            format!("Could not import the saved session of '{label}': {error}"),
+                        )
+                    }
+                    SnapshotError::RecoveryRequired(path) => (
+                        TcNoWarningKind::SnapshotRecoveryRequired,
+                        path.to_string_lossy().into_owned(),
                     ),
+                };
+                report.warnings.push(TcNoWarning {
+                    platform: acc.platform_id.to_string(),
+                    kind,
+                    detail,
                 });
             }
         }
@@ -524,6 +535,18 @@ fn upsert_simple(accounts: &mut Vec<SimpleAccountConfig>, acc: &PlannedAccount) 
     }
 }
 
+#[derive(Debug)]
+pub(super) enum SnapshotError {
+    Failed(String),
+    RecoveryRequired(PathBuf),
+}
+
+impl From<String> for SnapshotError {
+    fn from(message: String) -> Self {
+        Self::Failed(message)
+    }
+}
+
 /// Write an encrypted snapshot into the descriptor engine's snapshot directory
 /// for Ubisoft (`user.dat` + `ConnectSecureStorage.dat`) or Epic legacy
 /// (`GameUserSettings.ini` + `registry_account_id.txt`).
@@ -536,55 +559,59 @@ pub(super) fn write_snapshot(
     app: &dyn AppContext,
     acc: &PlannedAccount,
     snap: &PlannedSnapshot,
-) -> Result<(), String> {
+) -> Result<(), SnapshotError> {
     let root = storage::platform_snapshots_dir(app, acc.platform_id)?;
     let dir = root.join(&acc.accshift_id);
     let beside = root.parent().unwrap_or(&root).to_path_buf();
     let staging = beside.join(format!(".tcno-staging-{}", acc.accshift_id));
-    let aside = beside.join(format!(".tcno-previous-{}", acc.accshift_id));
+    // An earlier failed rollback may still hold the only previous copy.
+    let aside = beside.join(format!(".tcno-previous-{}", uuid::Uuid::new_v4()));
+    let recovery_path = aside
+        .strip_prefix(storage::app_local_data_root(app)?)
+        .map_err(|_| "Could not resolve a local session recovery path".to_string())?;
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging)
         .map_err(|e| format!("Could not create snapshot dir {}: {e}", staging.display()))?;
-    let published = write_snapshot_files(&staging, snap).and_then(|()| {
+    let published = (|| {
+        write_snapshot_files(&staging, snap)?;
         fs::create_dir_all(&root)
             .map_err(|e| format!("Could not create snapshot dir {}: {e}", root.display()))?;
-        publish_staged(&staging, &dir, &aside)
-    });
+        publish_staged(&staging, &dir, &aside, |from, to| fs::rename(from, to))
+    })();
     if published.is_err() {
         let _ = fs::remove_dir_all(&staging);
     }
-    published
+    published.map_err(|error| match error {
+        SnapshotError::RecoveryRequired(_) => SnapshotError::RecoveryRequired(recovery_path.into()),
+        error => error,
+    })
 }
 
 /// Puts the staged session in place of `dir`. What was there (only an
 /// incomplete session: a whole one is skipped) moves to `aside` and is
 /// deleted once the new pair is in place, or put back if it cannot be.
 pub(super) fn publish_staged(
-    staging: &std::path::Path,
-    dir: &std::path::Path,
-    aside: &std::path::Path,
-) -> Result<(), String> {
+    staging: &Path,
+    dir: &Path,
+    aside: &Path,
+    rename: impl Fn(&Path, &Path) -> std::io::Result<()>,
+) -> Result<(), SnapshotError> {
     let previous = dir.exists();
     if previous {
-        let _ = fs::remove_dir_all(aside);
-        fs::rename(dir, aside).map_err(|e| format!("Could not replace {}: {e}", dir.display()))?;
+        rename(dir, aside).map_err(|e| format!("Could not replace {}: {e}", dir.display()))?;
     }
-    match fs::rename(staging, dir) {
+    match rename(staging, dir) {
         Ok(()) => {
-            let _ = fs::remove_dir_all(aside);
+            if previous {
+                let _ = fs::remove_dir_all(aside);
+            }
             Ok(())
         }
         Err(e) => {
-            if previous {
-                if let Err(rollback) = fs::rename(aside, dir) {
-                    return Err(format!(
-                        "Could not publish {}: {e}. The previous files remain at {} because restoring them failed: {rollback}",
-                        dir.display(),
-                        aside.display()
-                    ));
-                }
+            if previous && rename(aside, dir).is_err() {
+                return Err(SnapshotError::RecoveryRequired(aside.into()));
             }
-            Err(format!("Could not publish {}: {e}", dir.display()))
+            Err(format!("Could not publish {}: {e}", dir.display()).into())
         }
     }
 }
@@ -727,19 +754,19 @@ fn read_notes_map(path: &std::path::Path) -> Result<Map<String, Value>, String> 
 }
 
 fn read_folders_value(path: &std::path::Path) -> Result<Value, String> {
-    let value = storage::read_json_if_exists::<Value>(path)
+    let Some(value) = storage::read_json_if_exists::<Value>(path)
         .map_err(|e| format!("Could not read the folders: {e}"))?
-        .unwrap_or(Value::Null);
-    if value.is_null()
-        || value.as_object().is_some_and(|folders| {
-            folders.get("folders").is_none_or(Value::is_array)
-                && folders.get("itemOrder").is_none_or(|order| {
-                    order
-                        .as_object()
-                        .is_some_and(|buckets| buckets.values().all(Value::is_array))
-                })
-        })
-    {
+    else {
+        return Ok(Value::Null);
+    };
+    if value.as_object().is_some_and(|folders| {
+        folders.get("folders").is_none_or(Value::is_array)
+            && folders.get("itemOrder").is_none_or(|order| {
+                order
+                    .as_object()
+                    .is_some_and(|buckets| buckets.values().all(Value::is_array))
+            })
+    }) {
         return Ok(value);
     }
     Err(format!(

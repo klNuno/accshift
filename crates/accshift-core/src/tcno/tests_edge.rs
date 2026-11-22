@@ -12,7 +12,6 @@ use super::test_support::write_file;
 use super::test_support::{config_guard, write_json, TempDir, TestCtx};
 use super::{apply_tcno_import, preview_tcno_import, TcNoFormatVersion, TcNoWarningKind};
 use crate::config;
-#[cfg(windows)]
 use crate::storage;
 use serde_json::json;
 
@@ -115,10 +114,21 @@ fn the_new_epic_cache_does_not_count_a_legacy_account_as_skipped() {
         &json!({"ids": {id: "New"}}),
     );
     std::fs::create_dir_all(tcno.path().join("LoginCache/Epic Games/New/auth")).unwrap();
+    write_json(
+        tcno.path(),
+        "LoginCache/Epic Games/order.json",
+        &json!(["New"]),
+    );
 
     let preview = preview_tcno_import(&ctx, tcno.path()).unwrap();
     assert_eq!(preview.accounts_new, 1);
     assert_eq!(preview.eglv2_skipped, 0);
+    assert_eq!(preview.order_new, 1);
+    apply_tcno_import(&ctx, tcno.path()).unwrap();
+    assert_eq!(
+        super::test_support::read_store(&ctx, storage::STORE_FOLDERS)["itemOrder"]["root:epic"],
+        json!([{ "type": "account", "id": id }])
+    );
 }
 
 #[test]
@@ -140,6 +150,12 @@ fn a_duplicate_battle_net_label_still_places_the_account() {
     let preview = preview_tcno_import(&ctx, tcno.path()).unwrap();
     assert_eq!(preview.accounts_new, 1);
     assert_eq!(preview.order_new, 1);
+    apply_tcno_import(&ctx, tcno.path()).unwrap();
+    assert_eq!(
+        super::test_support::read_store(&ctx, storage::STORE_FOLDERS)["itemOrder"]
+            ["root:battle-net"],
+        json!([{ "type": "account", "id": "One@example.com" }])
+    );
 }
 
 #[test]

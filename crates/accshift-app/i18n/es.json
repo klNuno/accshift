@@ -229,6 +229,7 @@
   "settings.tcnoWarn.identityNotPortable": "cuentas que accshift no puede cambiar: {count}",
   "settings.tcnoWarn.snapshotIncomplete": "sesiones incompletas: {count}",
   "settings.tcnoWarn.snapshotFailed": "sesiones no copiadas: {count}",
+  "settings.tcnoSnapshotRecovery": "Los archivos de la sesión anterior siguen en la carpeta de datos locales de accshift, en {path}.",
   "settings.telemetryEnableFailed": "No se pudieron activar las estadísticas ampliadas",
   "settings.telemetryDisableFailed": "No se pudieron desactivar las estadísticas ampliadas",
   "settings.telemetryDeletePending": "Las estadísticas ampliadas están desactivadas; el borrado en el servidor necesitará otro intento",

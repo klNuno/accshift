@@ -229,6 +229,7 @@
   "settings.tcnoWarn.identityNotPortable": "аккаунты, которые accshift не может переключать: {count}",
   "settings.tcnoWarn.snapshotIncomplete": "неполные сеансы: {count}",
   "settings.tcnoWarn.snapshotFailed": "нескопированные сеансы: {count}",
+  "settings.tcnoSnapshotRecovery": "Файлы предыдущего сеанса остались в папке локальных данных accshift по пути {path}.",
   "settings.telemetryEnableFailed": "Не удалось включить расширенную статистику",
   "settings.telemetryDisableFailed": "Не удалось отключить расширенную статистику",
   "settings.telemetryDeletePending": "Расширенная статистика отключена; удаление на сервере потребует ещё одной попытки",

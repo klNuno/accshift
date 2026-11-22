@@ -2,7 +2,7 @@
 //! read, migrate anything while only previewing, count half a session as
 //! saved, or call a folder that only brings an order empty.
 
-use super::apply::publish_staged;
+use super::apply::{publish_staged, SnapshotError};
 use super::test_support::{config_guard, write_json, TempDir, TestCtx};
 use super::{apply_tcno_import, preview_tcno_import};
 use crate::config;
@@ -278,15 +278,42 @@ fn a_failed_publish_keeps_the_session_that_was_there() {
     let staging = root.path().join(".tcno-staging-acc");
     let aside = root.path().join(".tcno-previous-acc");
 
-    assert!(publish_staged(&staging, &dir, &aside).is_err());
+    assert!(publish_staged(&staging, &dir, &aside, |from, to| fs::rename(from, to)).is_err());
     assert_eq!(fs::read(dir.join("user.dat")).unwrap(), b"kept");
     assert!(!aside.exists());
 
     fs::create_dir_all(&staging).unwrap();
     fs::write(staging.join("user.dat"), b"new").unwrap();
-    publish_staged(&staging, &dir, &aside).unwrap();
+    publish_staged(&staging, &dir, &aside, |from, to| fs::rename(from, to)).unwrap();
     assert_eq!(fs::read(dir.join("user.dat")).unwrap(), b"new");
     assert!(!aside.exists() && !staging.exists());
+}
+
+#[test]
+fn a_retry_preserves_the_copy_left_by_a_failed_rollback() {
+    let root = TempDir::new("failed-rollback");
+    let dir = root.path().join("snapshots").join("acc");
+    let staging = root.path().join(".tcno-staging-acc");
+    let first_aside = root.path().join(".tcno-previous-first");
+    let next_aside = root.path().join(".tcno-previous-next");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("user.dat"), b"previous").unwrap();
+    fs::create_dir(&staging).unwrap();
+    fs::write(staging.join("user.dat"), b"new").unwrap();
+
+    let outcome = publish_staged(&staging, &dir, &first_aside, |from, to| {
+        if from == dir {
+            fs::rename(from, to)
+        } else {
+            Err(std::io::Error::other("synthetic rename failure"))
+        }
+    });
+    assert!(matches!(outcome, Err(SnapshotError::RecoveryRequired(path)) if path == first_aside));
+    assert_eq!(fs::read(first_aside.join("user.dat")).unwrap(), b"previous");
+
+    publish_staged(&staging, &dir, &next_aside, |from, to| fs::rename(from, to)).unwrap();
+    assert_eq!(fs::read(dir.join("user.dat")).unwrap(), b"new");
+    assert_eq!(fs::read(first_aside.join("user.dat")).unwrap(), b"previous");
 }
 
 #[test]
@@ -381,6 +408,33 @@ fn an_import_keeps_the_local_half_of_an_interrupted_config_migration() {
 }
 
 #[test]
+fn a_config_update_after_an_order_only_import_recovers_the_missing_half() {
+    let _config = config_guard();
+    let tcno = TempDir::new("steam-order-src");
+    write_json(
+        tcno.path(),
+        "LoginCache/Steam/order.json",
+        &json!(["76561198000000001"]),
+    );
+    let ctx = TestCtx::new("steam-order-split");
+    let portable = storage::portable_config_path(&ctx).unwrap();
+    storage::write_json_atomic(&portable, &config::AppConfig::default()).unwrap();
+    let legacy = storage::legacy_config_path(&ctx).unwrap();
+    storage::write_json_atomic(&legacy, &json!({"steam_api_key": "fixture-key"})).unwrap();
+
+    let report = apply_tcno_import(&ctx, tcno.path()).unwrap();
+    assert_eq!(report.accounts_imported, 0);
+    assert_eq!(report.order_entries_added, 1);
+    let local = storage::local_config_path(&ctx).unwrap();
+    assert!(!local.exists());
+
+    config::update_config(&ctx, |cfg| cfg.window_width = Some(900.0)).unwrap();
+    let cfg = config::load_config(&ctx);
+    assert_eq!(cfg.window_width, Some(900.0));
+    assert_eq!(cfg.steam.api_key, "fixture-key");
+}
+
+#[test]
 fn a_corrupt_ledger_stops_import_before_legacy_snapshots_move() {
     let _config = config_guard();
     let tcno = battle_net_folder();
@@ -400,11 +454,22 @@ fn a_corrupt_ledger_stops_import_before_legacy_snapshots_move() {
 fn an_invalid_folders_store_blocks_import() {
     let _config = config_guard();
     let tcno = battle_net_folder();
+    write_json(
+        tcno.path(),
+        "LoginCache/BattleNet/order.json",
+        &json!(["gamma@example.com"]),
+    );
     let ctx = TestCtx::new("bad-folders");
     let folders = storage::client_store_path(&ctx, storage::STORE_FOLDERS).unwrap();
-    let existing = json!({"version": 1, "folders": [], "itemOrder": []});
-    storage::write_json_atomic(&folders, &existing).unwrap();
+    fs::create_dir_all(folders.parent().unwrap()).unwrap();
 
-    assert!(apply_tcno_import(&ctx, tcno.path()).is_err());
-    assert!(config::load_config(&ctx).battle_net.accounts.is_empty());
+    for existing in [
+        "{\"version\": 1, \"folders\": [], \"itemOrder\": []}",
+        "null",
+    ] {
+        fs::write(&folders, existing).unwrap();
+        assert!(apply_tcno_import(&ctx, tcno.path()).is_err(), "{existing}");
+        assert_eq!(fs::read_to_string(&folders).unwrap(), existing);
+        assert!(config::load_config(&ctx).battle_net.accounts.is_empty());
+    }
 }

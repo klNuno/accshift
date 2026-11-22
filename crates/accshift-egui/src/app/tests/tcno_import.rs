@@ -15,9 +15,8 @@ struct HeldCommand<'a>(&'a MockBackend, &'static str);
 
 impl<'a> HeldCommand<'a> {
     fn new(mock: &'a MockBackend, command: &'static str) -> Self {
-        let held = Self(mock, command);
         assert!(mock.hold(command));
-        held
+        Self(mock, command)
     }
 }
 

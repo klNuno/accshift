@@ -44,7 +44,7 @@ fn reason_key(kind: TcNoWarningKind) -> &'static str {
         InvalidAccountId => "settings.tcnoWarn.invalidAccountId",
         IdentityNotPortable => "settings.tcnoWarn.identityNotPortable",
         SnapshotIncomplete => "settings.tcnoWarn.snapshotIncomplete",
-        SnapshotFailed => "settings.tcnoWarn.snapshotFailed",
+        SnapshotFailed | SnapshotRecoveryRequired => "settings.tcnoWarn.snapshotFailed",
     }
 }
 
@@ -53,9 +53,14 @@ fn reason_key(kind: TcNoWarningKind) -> &'static str {
 fn tcno_warnings(warnings: &[TcNoWarning], locale: Locale) -> Option<String> {
     let mut counts: Vec<(TcNoWarningKind, usize)> = Vec::new();
     for warning in warnings {
-        match counts.iter_mut().find(|(kind, _)| *kind == warning.kind) {
+        let group = if warning.kind == TcNoWarningKind::SnapshotRecoveryRequired {
+            TcNoWarningKind::SnapshotFailed
+        } else {
+            warning.kind
+        };
+        match counts.iter_mut().find(|(kind, _)| *kind == group) {
             Some((_, count)) => *count += 1,
-            None => counts.push((warning.kind, 1)),
+            None => counts.push((group, 1)),
         }
     }
     if counts.is_empty() {
@@ -133,12 +138,43 @@ pub fn tcno_report(report: &TcNoImportReport, locale: Locale) -> String {
         ],
     )
     .resolve(locale);
-    with_warnings(text, &report.warnings, locale, true)
+    let mut text = with_warnings(text, &report.warnings, locale, true);
+    for warning in &report.warnings {
+        if warning.kind == TcNoWarningKind::SnapshotRecoveryRequired {
+            let message = Text::with(
+                "settings.tcnoSnapshotRecovery",
+                [("path", TranslationValue::Str(warning.detail.clone()))],
+            )
+            .resolve(locale);
+            text.push('\n');
+            text.push_str(&message);
+        }
+    }
+    text
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_report_gives_the_relative_recovery_path_in_every_language() {
+        let path = "platforms/epic/.tcno-previous-1234";
+        let report = TcNoImportReport {
+            warnings: vec![TcNoWarning {
+                platform: "epic".into(),
+                kind: TcNoWarningKind::SnapshotRecoveryRequired,
+                detail: path.into(),
+            }],
+            ..TcNoImportReport::default()
+        };
+        for locale in accshift_app::i18n::LOCALES {
+            let text = tcno_report(&report, locale);
+            let recovery = text.lines().nth(1).expect("separate recovery message");
+            assert!(recovery.contains(path), "{locale:?}: {recovery}");
+            assert!(!recovery.contains('{'), "{locale:?}: {recovery}");
+        }
+    }
 
     fn preview() -> TcNoPreview {
         TcNoPreview {

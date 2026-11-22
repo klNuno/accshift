@@ -63,9 +63,7 @@ fn migrate_locked(
     // migrating the defaults a failed read returns would save empty split
     // files over the only real copy. If the legacy file is corrupt we must
     // NOT destroy it: keep a backup next to it, poison saves, and surface an
-    // error so the user can recover their accounts and API key. The poison
-    // matters when one split file exists: the load then reads that file and
-    // never looks at legacy, so nothing else would stop a save of defaults.
+    // error so the user can recover their accounts and API key.
     let data = match fs::read_to_string(&legacy_path) {
         Ok(d) => d,
         Err(e) => {
