@@ -123,6 +123,10 @@ impl Registrar for PortalRegistrar {
         lock(&self.shared).outcome(id)
     }
 
+    fn retains_held_shortcuts(&self) -> bool {
+        true
+    }
+
     fn configurable(&self) -> bool {
         lock(&self.shared).configurable()
     }

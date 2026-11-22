@@ -80,8 +80,7 @@ pub struct ShortcutRow {
     pub combo: Option<String>,
     /// The trigger the system bound instead, when it differs (the portal).
     pub trigger: Option<String>,
-    /// The system can open its own settings of the shortcuts, where the
-    /// user changes [`Self::trigger`].
+    /// The system can open its settings to change or assign this trigger.
     pub configurable: bool,
     /// The shortcut brings the window, which this system does not let the
     /// app do (Wayland without an activation token).
@@ -167,8 +166,10 @@ pub(super) fn cards(c: &Ctx) -> Vec<CardSpec> {
 }
 
 /// The row shows the link to the system's settings.
-fn configures(row: &ShortcutRow) -> bool {
-    row.configurable && !row.listening && row.status == Some(RowStatus::Active)
+impl ShortcutRow {
+    pub(crate) fn can_configure(&self) -> bool {
+        self.configurable && !self.listening
+    }
 }
 
 /// The line under a row: what went wrong, or what the listening row wants.
@@ -228,7 +229,7 @@ pub(super) fn height(ctx: &Context, c: &Ctx, item: &Item, width: f32) -> f32 {
                 }
                 None => base,
             };
-            if configures(row) {
+            if row.can_configure() {
                 base + NOTE_GAP + LABEL_H
             } else {
                 base
@@ -394,7 +395,7 @@ fn paint_row(ui: &mut Ui, r: Rect, id: Id, c: &Ctx, row: &ShortcutRow) -> Vec<Se
         );
         bottom += NOTE_GAP + measure::wrapped_height(ui.ctx(), &text, &style, r.width());
     }
-    if configures(row) {
+    if row.can_configure() {
         let link = button::link_style(v);
         let label = tr(l, "settings.shortcutsConfigure");
         let w = text::measure(ui.ctx(), &label, &link.font)

@@ -12,10 +12,9 @@
 //! bind another trigger or bind nothing) reports each registration's
 //! [`Outcome`]: a row shows it, and only an id it bound fires.
 //!
-//! A held binding ([`ShortcutService::sync_holding`]) stays registered but
-//! never runs: an account a partial list lacks keeps its place in the
-//! portal's table, where leaving it out would drop the trigger the user set
-//! in the system settings.
+//! A held binding ([`ShortcutService::sync_holding`]) never runs. It keeps
+//! its place in a portal's table, where leaving it out would drop the
+//! trigger the user set in the system settings.
 
 use super::{Combo, ShortcutTarget};
 use std::sync::{Arc, Mutex};
@@ -71,6 +70,12 @@ pub trait Registrar {
     /// has bound it.
     fn outcome(&self, _id: u32) -> Outcome {
         Outcome::Active(None)
+    }
+    /// Omitting a held action would remove its shortcut from the system's
+    /// settings. The layer can keep its action ID alongside another action
+    /// with the same preferred combination and resolve their bindings.
+    fn retains_held_shortcuts(&self) -> bool {
+        false
     }
     /// Whether the OS can open its own settings of the bound shortcuts,
     /// where the user changes a trigger it keeps (the portal).
@@ -140,8 +145,9 @@ impl ShortcutService {
         self.sync_holding(wanted, &[]);
     }
 
-    /// [`Self::sync`], with the rows of `held` kept registered but never
-    /// run. A held row yields its combination to any other row.
+    /// [`Self::sync`], with the rows of `held` kept in a portal's table and
+    /// released by native layers. A held row never runs or counts as a
+    /// duplicate.
     pub fn sync_holding(&mut self, wanted: &[(ShortcutTarget, Combo)], held: &[ShortcutTarget]) {
         self.wanted = wanted.to_vec();
         self.held = held.to_vec();
@@ -262,9 +268,9 @@ impl ShortcutService {
     fn apply(&mut self) {
         let available = self.available();
         let duplicates = self.duplicates();
-        // The bindings that should hold a registration: the first shown row
-        // of each combination, then the held rows on a combination no shown
-        // row uses; none while paused or unsupported.
+        // Keep the first shown row per combination. A portal also needs
+        // held rows even if their preferred keys overlap: it may already
+        // have given their action IDs different effective triggers.
         let keep: Vec<(ShortcutTarget, Combo)> = if self.paused || !available {
             Vec::new()
         } else {
@@ -273,10 +279,13 @@ impl ShortcutService {
                 .iter()
                 .partition(|(target, _)| self.held.contains(target));
             let mut keep: Vec<(ShortcutTarget, Combo)> = Vec::new();
-            for (target, combo) in shown.into_iter().chain(held) {
+            for (target, combo) in shown {
                 if !keep.iter().any(|(_, other)| other == combo) {
                     keep.push((target.clone(), *combo));
                 }
+            }
+            if self.registrar.retains_held_shortcuts() {
+                keep.extend(held.into_iter().cloned());
             }
             keep
         };
@@ -336,6 +345,7 @@ struct FakeState {
     registered: Vec<(u32, Combo)>,
     /// Answers set by [`FakeRegistrar::answer`]; bound otherwise.
     outcomes: Vec<(Combo, Outcome)>,
+    retains_held_shortcuts: bool,
     configurable: bool,
     configured: usize,
 }
@@ -385,6 +395,12 @@ impl FakeRegistrar {
         state.outcomes.push((combo, outcome));
     }
 
+    /// The layer keeps the action IDs in each submitted table, as a portal
+    /// does. Several actions can name the same preferred combination.
+    pub fn set_retains_held_shortcuts(&self, retains: bool) {
+        self.lock().retains_held_shortcuts = retains;
+    }
+
     /// The layer can open the OS's settings of its shortcuts, as the
     /// portal's `ConfigureShortcuts` does.
     pub fn set_configurable(&self, configurable: bool) {
@@ -427,7 +443,9 @@ impl Registrar for FakeRegistrar {
         combo: &Combo,
     ) -> Result<(), RegisterError> {
         let mut state = self.lock();
-        if state.taken.contains(combo) || state.registered.iter().any(|(_, c)| c == combo) {
+        if state.taken.contains(combo)
+            || (!state.retains_held_shortcuts && state.registered.iter().any(|(_, c)| c == combo))
+        {
             return Err(RegisterError::Taken);
         }
         state.registered.push((id, *combo));
@@ -448,6 +466,10 @@ impl Registrar for FakeRegistrar {
             .find(|(registered, _)| *registered == id)
             .and_then(|(_, combo)| state.outcomes.iter().find(|(c, _)| c == combo))
             .map_or(Outcome::Active(None), |(_, outcome)| outcome.clone())
+    }
+
+    fn retains_held_shortcuts(&self) -> bool {
+        self.lock().retains_held_shortcuts
     }
 
     fn configurable(&self) -> bool {

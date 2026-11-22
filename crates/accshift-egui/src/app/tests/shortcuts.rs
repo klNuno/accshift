@@ -255,9 +255,8 @@ fn a_persona_shortcut_takes_the_persona_click_path() {
     );
 }
 
-/// A persona the store lacks is dropped. A bound account its loaded list
-/// lacks is set aside, neither registered nor shown, but stays saved: a
-/// launcher file read short must not erase it for good.
+/// A missing persona is dropped. A missing account keeps its saved binding
+/// and its portal ID, and is absent from the UI.
 #[test]
 fn stale_bindings_are_set_aside_once_their_lists_load() {
     let ctx = Context::default();
@@ -275,6 +274,9 @@ fn stale_bindings_are_set_aside_once_their_lists_load() {
         })),
         "",
     );
+    app.fake_registrar()
+        .unwrap()
+        .set_retains_held_shortcuts(true);
     settle(&mut app, &ctx);
     let saved = &app.booted().unwrap().stores.settings().global_shortcuts;
     assert_eq!(saved.accounts.len(), 2, "a loaded list never unsaves one");
@@ -563,6 +565,28 @@ fn a_trigger_the_portal_keeps_opens_the_system_settings() {
     assert!(!row(&app).configurable, "a layer that cannot open them");
     app.fake_registrar().unwrap().set_configurable(true);
     assert!(row(&app).configurable);
+    app.apply_settings(&ctx, SettingsAction::ShortcutConfigure);
+    assert_eq!(app.fake_registrar().unwrap().configured(), 1);
+}
+
+#[test]
+fn a_refused_portal_shortcut_can_open_the_system_settings() {
+    use accshift_app::shortcuts::RowStatus;
+    let ctx = Context::default();
+    let (mut app, _) = app_with(
+        &ctx,
+        bound(json!({ "openPalette": "Ctrl+Alt+K" })),
+        "Ctrl+Alt+K=",
+    );
+    settle(&mut app, &ctx);
+    let row = app
+        .shortcuts_view()
+        .rows
+        .into_iter()
+        .find(|r| r.target == ShortcutTarget::OpenPalette)
+        .unwrap();
+    assert_eq!(row.status, Some(RowStatus::Failed));
+    assert!(row.can_configure());
     app.apply_settings(&ctx, SettingsAction::ShortcutConfigure);
     assert_eq!(app.fake_registrar().unwrap().configured(), 1);
 }

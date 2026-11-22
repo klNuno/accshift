@@ -677,7 +677,7 @@ impl Runner {
             live.window.focus_window();
             #[cfg(target_os = "linux")]
             if crate::window::wayland::is_wayland(&*live.window) {
-                raised = token.is_some_and(|token| live.raiser.raise(&*live.window, token));
+                raised = token.is_some_and(|token| live.raiser.raise(token));
             }
             #[cfg(not(target_os = "linux"))]
             let _ = token;
@@ -949,6 +949,10 @@ fn context_menu_key(live: &mut Live, event: &WindowEvent) -> bool {
     true
 }
 
+fn is_shortcut_press(pressed: bool, repeat: bool, synthetic: bool) -> bool {
+    pressed && !repeat && !synthetic
+}
+
 impl ApplicationHandler<UserEvent> for Runner {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let Some(init) = self.init.take() else { return };
@@ -1029,6 +1033,9 @@ impl ApplicationHandler<UserEvent> for Runner {
         }));
         let mut info = ViewportInfo::default();
         egui_winit::update_viewport_info(&mut info, &self.ctx, &window, true);
+        #[cfg(target_os = "linux")]
+        let raiser =
+            crate::window::wayland::Raiser::new(window.clone(), event_loop.owned_display_handle());
         self.live = Some(Live {
             canvas: Canvas {
                 window: window.clone(),
@@ -1053,7 +1060,7 @@ impl ApplicationHandler<UserEvent> for Runner {
             modifiers: egui::Modifiers::NONE,
             held: winit::keyboard::ModifiersState::empty(),
             #[cfg(target_os = "linux")]
-            raiser: Default::default(),
+            raiser,
             shown: false,
             script: None,
         });
@@ -1175,8 +1182,15 @@ impl ApplicationHandler<UserEvent> for Runner {
         }
         // A listening shortcut row reads the press as winit gives it, before
         // egui-winit rewrites it ([`crate::window::keystroke`]).
-        if let WindowEvent::KeyboardInput { event: key, .. } = &event {
-            if key.state.is_pressed() && !key.repeat && live.shell.capturing_shortcut() {
+        if let WindowEvent::KeyboardInput {
+            event: key,
+            is_synthetic,
+            ..
+        } = &event
+        {
+            if is_shortcut_press(key.state.is_pressed(), key.repeat, *is_synthetic)
+                && live.shell.capturing_shortcut()
+            {
                 let stroke = crate::window::keystroke::stroke(
                     key,
                     live.held,
@@ -1226,6 +1240,14 @@ impl ApplicationHandler<UserEvent> for Runner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shortcut_capture_ignores_synthetic_focus_presses() {
+        assert!(!is_shortcut_press(true, false, true));
+        assert!(!is_shortcut_press(true, true, false));
+        assert!(!is_shortcut_press(false, false, false));
+        assert!(is_shortcut_press(true, false, false));
+    }
 
     /// A presenter whose buffer fails a given number of times.
     struct Flaky {

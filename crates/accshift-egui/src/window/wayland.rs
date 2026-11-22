@@ -10,6 +10,9 @@
 //! window's life: a registry per raise would stay with the compositor until
 //! the connection closes.
 
+use std::rc::Rc;
+
+use egui_winit::winit::{event_loop::OwnedDisplayHandle, window::Window};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use wayland_client::backend::{Backend, ObjectId};
 use wayland_client::globals::{registry_queue_init, GlobalList, GlobalListContents};
@@ -42,24 +45,31 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
 delegate_noop!(State: XdgActivationV1);
 
 /// The xdg-activation binding of one window, made at its first raise.
-#[derive(Default)]
 pub struct Raiser {
-    tried: bool,
+    // Drop the guest Wayland backend before the handles that keep its
+    // foreign display and surface alive, including after run_app returns.
     activator: Option<Activator>,
+    tried: bool,
+    window: Rc<Window>,
+    display: OwnedDisplayHandle,
 }
 
 impl Raiser {
-    /// Asks the compositor to raise `window` with `token`. `false` when the
-    /// window is not a Wayland surface or the compositor lacks
-    /// xdg-activation.
-    pub fn raise(
-        &mut self,
-        window: &(impl HasDisplayHandle + HasWindowHandle),
-        token: &str,
-    ) -> bool {
+    pub fn new(window: Rc<Window>, display: OwnedDisplayHandle) -> Self {
+        Self {
+            activator: None,
+            tried: false,
+            window,
+            display,
+        }
+    }
+
+    /// Asks the compositor to raise the window with `token`. `false` when
+    /// the surface or xdg-activation is unavailable.
+    pub fn raise(&mut self, token: &str) -> bool {
         if !self.tried {
             self.tried = true;
-            self.activator = Activator::new(window);
+            self.activator = Activator::new(&self.window, &self.display);
         }
         self.activator
             .as_mut()
@@ -76,17 +86,24 @@ struct Activator {
 }
 
 impl Activator {
-    fn new(window: &(impl HasDisplayHandle + HasWindowHandle)) -> Option<Self> {
-        let (Ok(display), Ok(handle)) = (window.display_handle(), window.window_handle()) else {
-            return None;
-        };
-        let (RawDisplayHandle::Wayland(display), RawWindowHandle::Wayland(handle)) =
-            (display.as_raw(), handle.as_raw())
+    fn new(window: &Window, display: &OwnedDisplayHandle) -> Option<Self> {
+        let (
+            RawDisplayHandle::Wayland(display),
+            RawDisplayHandle::Wayland(window_display),
+            RawWindowHandle::Wayland(handle),
+        ) = (
+            display.display_handle().ok()?.as_raw(),
+            window.display_handle().ok()?.as_raw(),
+            window.window_handle().ok()?.as_raw(),
+        )
         else {
             return None;
         };
-        // SAFETY: winit's display and surface outlive the window, which
-        // owns this; the foreign backend never closes winit's connection.
+        if display.display != window_display.display {
+            return None;
+        }
+        // SAFETY: Raiser keeps the owned display and its window until after
+        // this guest backend and surface proxy are dropped.
         let conn = Connection::from_backend(unsafe {
             Backend::from_foreign_display(display.display.as_ptr().cast())
         });

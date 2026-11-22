@@ -19,11 +19,10 @@
 //!   modifiers held at that press: egui-winit turns Ctrl+C into a copy and
 //!   Shift+/ into a question mark, and a frame sees only its last
 //!   modifiers. The scenes and tests, without a runner, read egui's keys.
-//! - A bound account its platform's loaded list lacks is set aside (not
-//!   shown, never run) but stays saved and registered: a launcher file read
-//!   short must not erase it, nor drop the trigger KDE keeps for it, which
-//!   a batch without it would. Forgetting the account in the app removes
-//!   it.
+//! - A bound account missing from its loaded list is set aside. It stays
+//!   saved and keeps its ID in the portal's table to preserve the trigger
+//!   KDE assigned. Native backends release its keys. Forgetting the
+//!   account in the app removes the binding.
 //! - Wayland: a compositor that hands no activation token with a press
 //!   (KDE) cannot let the window come back; the toggle then leaves it in
 //!   place ([`toggle_plan`]) and the rows that bring the window say so.
@@ -155,14 +154,19 @@ impl Shortcuts {
             FakeRegistrar::default()
         };
         // `Combo`: another app holds it; `?Combo`: the layer has not
-        // answered; `Combo=Trigger`: it bound another trigger (a portal).
+        // answered; `Combo=Trigger`: a portal bound another trigger;
+        // `Combo=`: a portal refused the shortcut.
         for entry in message.unwrap_or("").split(',') {
             if let Some(combo) = entry.strip_prefix('?').and_then(Combo::parse) {
                 fake.answer(combo, Outcome::Pending);
             } else if let Some((combo, trigger)) = entry.split_once('=') {
                 if let Some(combo) = Combo::parse(combo) {
-                    fake.answer(combo, Outcome::Active(Some(trigger.to_string())));
-                    // A portal that keeps its trigger opens its settings.
+                    let outcome = if trigger.is_empty() {
+                        Outcome::Refused
+                    } else {
+                        Outcome::Active(Some(trigger.to_string()))
+                    };
+                    fake.answer(combo, outcome);
                     fake.set_configurable(true);
                 }
             } else if let Some(combo) = Combo::parse(entry) {
@@ -806,7 +810,9 @@ impl AppModel {
                             .as_deref()
                             .is_none_or(|asked| !same_trigger(asked, bound))
                     });
-                let configurable = trigger.is_some()
+                let needs_configuration = status == Some(RowStatus::Failed)
+                    || (status == Some(RowStatus::Active) && trigger.is_some());
+                let configurable = needs_configuration
                     && s.service
                         .as_ref()
                         .is_some_and(ShortcutService::configurable);
