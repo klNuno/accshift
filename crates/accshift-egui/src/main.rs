@@ -125,12 +125,22 @@ fn main() {
         accshift_egui::app::avatars::prefetch_pack(cache);
     }
     // The log rotation, "App setup started" and the panic hook, on a thread
-    // while the window builds, joined before anything else logs.
+    // while the window builds, waited for before anything else logs.
     // The `localStorage` of a v0.x install is read first, before the hook: a
     // corrupt LevelDB panics inside the reader, which catches it, and the
-    // hook would report it.
+    // hook would report it. The boot job follows on the same thread, after
+    // the hook: the window shows once boot is done, and no longer waits for
+    // its own creation before boot starts (about 11 ms in the bench).
+    let (early, boot_task) = match real {
+        Some(_) => {
+            let (early, task) = accshift_egui::app::early_boot();
+            (Some(early), Some(task))
+        }
+        None => (None, None),
+    };
     let session = real.as_ref().map(|backend| {
         let backend = Arc::clone(backend);
+        let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let ctx = backend.context().as_ref();
             let legacy = match legacy_root {
@@ -140,8 +150,12 @@ fn main() {
                 None => legacy_web_storage::read_for_boot(ctx, BUNDLE_IDENTIFIER),
             };
             backend.begin_session();
-            legacy
-        })
+            let _ = tx.send(legacy);
+            if let Some(task) = boot_task {
+                task.run(backend.as_ref());
+            }
+        });
+        rx
     });
     bench::mark("backend");
     let saved = real
@@ -218,7 +232,8 @@ fn main() {
         match real {
             // The real app folders, through accshift-core.
             Some(backend) => {
-                let legacy = session.and_then(|s| s.join().ok()).flatten();
+                // A panic on the thread drops the sender: no legacy storage.
+                let legacy = session.and_then(|rx| rx.recv().ok()).flatten();
                 if let Some(read) = &legacy {
                     // Places and key names, never a value.
                     let _ = accshift_core::logging::append_app_log(
@@ -248,6 +263,7 @@ fn main() {
                         ctx,
                         Arc::clone(&backend),
                         legacy.map(|read| read.storage),
+                        early,
                     ))),
                     scenes,
                 );

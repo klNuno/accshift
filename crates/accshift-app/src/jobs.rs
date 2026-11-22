@@ -121,6 +121,11 @@ pub struct Pending<T> {
 }
 
 impl<T> Pending<T> {
+    /// A result another thread sends on `rx`, polled like a job's.
+    pub fn from_receiver(rx: Receiver<T>) -> Pending<T> {
+        Pending { rx, done: false }
+    }
+
     /// Non-blocking: the result once, then [`Poll::Gone`].
     pub fn poll(&mut self) -> Poll<T> {
         if self.done {
