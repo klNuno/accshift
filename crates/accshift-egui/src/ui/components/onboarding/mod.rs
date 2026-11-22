@@ -18,8 +18,9 @@
 //! ```
 //!
 //! The tour measures its target after the step or feature changes (on that
-//! frame, then once more a frame later) and on resize: the rects the title
-//! bar and the grid recorded this frame ([`TourTargets`]).
+//! frame, then once more a frame later), on resize and when the stage's
+//! zoom changes: the rects the title bar and the grid recorded this frame
+//! ([`TourTargets`]).
 
 mod clip;
 mod steps;
@@ -127,6 +128,8 @@ pub struct OnboardingProps<'a> {
     pub locale: Locale,
     /// The window: the backdrop covers it.
     pub viewport: Rect,
+    /// The stage's zoom: its targets move with it, the window does not.
+    pub stage_zoom: f32,
     /// The title bar's height: the click shield starts under it.
     pub titlebar_h: f32,
     /// The app version.
@@ -146,8 +149,8 @@ pub struct OnboardingProps<'a> {
 /// What the last measure of the tour's target found.
 #[derive(Clone, Default)]
 struct Measure {
-    /// Step, feature, window size: a change measures again.
-    key: Option<(Step, usize, [i32; 2])>,
+    /// Step, feature, window size, stage zoom: a change measures again.
+    key: Option<(Step, usize, [i32; 2], u32)>,
     /// Measures taken since the key changed (two: the tick, the frame).
     taken: u8,
     /// The spotlight's rect.
@@ -212,6 +215,13 @@ fn measure(m: &mut Measure, step: Step, feature: usize, targets: &TourTargets, p
     m.spot = Some(rect.expand(6.0));
 }
 
+/// The spotlight's rect the tour of `mount` last measured.
+#[cfg(test)]
+pub(crate) fn measured_spot(ctx: &Context, mount: u64) -> Option<Rect> {
+    let id = Id::unique(ONBOARDING_ID).with(mount).with("measure");
+    ctx.data(|d| d.get_temp::<Measure>(id)).and_then(|m| m.spot)
+}
+
 /// Draws the dialog; returns what the user did.
 pub fn onboarding(ui: &mut Ui, props: &OnboardingProps) -> Vec<OnboardingEvent> {
     let ctx = ui.ctx().clone();
@@ -228,6 +238,7 @@ pub fn onboarding(ui: &mut Ui, props: &OnboardingProps) -> Vec<OnboardingEvent> 
         view.step,
         view.feature,
         [size.x.round() as i32, size.y.round() as i32],
+        props.stage_zoom.to_bits(),
     );
     if m.key != Some(key) {
         m.key = Some(key);

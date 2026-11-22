@@ -804,3 +804,45 @@ fn tab_key() -> Event {
         modifiers: Modifiers::NONE,
     }
 }
+
+#[test]
+fn the_tour_spotlight_follows_a_zoom_change() {
+    let ctx = Context::default();
+    let mut shell = demo_shell(&ctx, json!({ "animations": "off" }), false, true);
+    let size = [1000.0, 680.0];
+    let mut t = 1.0;
+    for _ in 0..8 {
+        t += 0.3;
+        step_shell(&mut shell, &ctx, size, t, Vec::new());
+    }
+    // Welcome's Next, at its 100% place.
+    click_at(&mut shell, &ctx, size, &mut t, pos2(677.0, 472.0));
+    for _ in 0..4 {
+        t += 0.1;
+        step_shell(&mut shell, &ctx, size, t, Vec::new());
+    }
+    let view = app_ref(&shell).onboarding.view.as_ref().unwrap();
+    assert_eq!(view.step, Step::Features);
+    let mount = view.mount;
+    let spot = |shell: &mut Shell| {
+        let (overlay_ctx, mut out) = shell.take_overlay().expect("the tour runs its pass");
+        out.textures_delta.clear();
+        let target = crate::ui::components::onboarding::targets(&overlay_ctx).add_account;
+        let spot = crate::ui::components::onboarding::measured_spot(&overlay_ctx, mount);
+        (
+            target.expect("the first feature's target").expand(6.0),
+            spot,
+        )
+    };
+    let (before, spot_before) = spot(&mut shell);
+    assert_eq!(spot_before, Some(before), "measured at 100%");
+    t += 0.05;
+    step_shell(&mut shell, &ctx, size, t, vec![ctrl_equals()]);
+    for _ in 0..4 {
+        t += 0.1;
+        step_shell(&mut shell, &ctx, size, t, Vec::new());
+    }
+    let (after, spot_after) = spot(&mut shell);
+    assert_ne!(after, before, "the zoom moved the target");
+    assert_eq!(spot_after, Some(after), "the spotlight follows it");
+}
