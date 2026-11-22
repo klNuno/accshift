@@ -66,7 +66,11 @@ impl CurrentState {
     /// cannot be read is an error: taken as empty, the import would write
     /// over it. Only a missing file counts as empty.
     fn load(app: &dyn AppContext, access: Access) -> Result<Self, String> {
-        let cfg = config::load_config_checked(app)?;
+        // The preview only looks: an unreadable config is not logged then.
+        let cfg = match access {
+            Access::ReadOnly => config::peek_config(app)?,
+            Access::Migrate => config::load_config_checked(app)?,
+        };
         let roblox_accounts = load_roblox_accounts(app, &cfg)?;
         let store_path = |id: &str| match access {
             Access::ReadOnly => storage::peek_client_store_path(app, id),

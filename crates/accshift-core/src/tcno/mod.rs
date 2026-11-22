@@ -137,9 +137,17 @@ pub fn preview_tcno_import(app: &dyn AppContext, root: &Path) -> Result<TcNoPrev
     apply::preview_plan(app, &plan)
 }
 
+/// How long the import waits for the lock a switch in progress holds.
+const IMPORT_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Import accounts, labels, notes, order and eligible Ubisoft/Epic legacy
 /// snapshots from `root` into `app`. Never modifies `root`.
+///
+/// It reads then rewrites the account lists: the whole of it holds the
+/// cross-process lock a switch, an add or the CLI takes.
 pub fn apply_tcno_import(app: &dyn AppContext, root: &Path) -> Result<TcNoImportReport, String> {
+    let _lock =
+        crate::lock::acquire_exclusive(app, IMPORT_LOCK_TIMEOUT).map_err(|e| e.to_string())?;
     let scan = reader::scan_root(root)?;
     let plan = mapper::build_plan(scan);
     let report = apply::execute_plan(app, &plan)?;

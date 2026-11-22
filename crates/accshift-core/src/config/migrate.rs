@@ -127,6 +127,20 @@ pub(super) fn retire_legacy_config(app_handle: &dyn AppContext, legacy_path: &st
     }
 }
 
+/// The legacy config for [`super::peek_config`]: defaults when absent, an
+/// error when present but unreadable, and nothing logged or marked.
+pub(super) fn peek_legacy_config(app_handle: &dyn AppContext) -> Result<AppConfig, String> {
+    let path = crate::storage::legacy_config_path(app_handle)?;
+    let unreadable = || format!("The accshift config at {} cannot be read", path.display());
+    match fs::read_to_string(&path) {
+        Ok(data) => serde_json::from_str::<RawAppConfig>(&data)
+            .map(normalize_config)
+            .map_err(|_| unreadable()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(AppConfig::default()),
+        Err(_) => Err(unreadable()),
+    }
+}
+
 pub(super) fn load_legacy_config(app_handle: &dyn AppContext) -> AppConfig {
     let path = match crate::storage::legacy_config_path(app_handle) {
         Ok(path) => path,

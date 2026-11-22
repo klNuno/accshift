@@ -246,3 +246,54 @@ fn the_log_names_no_tcno_account() {
         "{text}"
     );
 }
+
+#[test]
+fn a_preview_over_an_unreadable_config_writes_no_log() {
+    let _config = config_guard();
+    let tcno = TempDir::new("quiet-src");
+    write_json(
+        tcno.path(),
+        "LoginCache/Roblox/ids.json",
+        &json!({ "ids": { "1234": "Builder" } }),
+    );
+    let ctx = TestCtx::new("quiet-config");
+    let config = storage::portable_config_path(&ctx).unwrap();
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(&config, b"{ \"steam\": ").unwrap();
+    let log = crate::logging::log_file_path(&ctx).unwrap();
+
+    assert!(preview_tcno_import(&ctx, tcno.path()).is_err());
+    let text = fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(text, "", "the preview wrote to the log");
+}
+
+#[test]
+fn the_import_waits_for_the_lock_a_switch_holds() {
+    let _config = config_guard();
+    let tcno = TempDir::new("locked-src");
+    write_json(
+        tcno.path(),
+        "LoginCache/Roblox/ids.json",
+        &json!({ "ids": { "1234": "Builder" } }),
+    );
+    let ctx = std::sync::Arc::new(TestCtx::new("locked-app"));
+    // A switch in another instance holds the lock past the import's wait.
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let holder_ctx = std::sync::Arc::clone(&ctx);
+    let holder = std::thread::spawn(move || {
+        let _guard =
+            crate::lock::acquire_exclusive(&*holder_ctx, std::time::Duration::from_secs(1))
+                .unwrap();
+        held_tx.send(()).unwrap();
+        let _ = done_rx.recv_timeout(std::time::Duration::from_secs(10));
+    });
+    held_rx.recv().unwrap();
+
+    let result = apply_tcno_import(&*ctx, tcno.path());
+    let written = storage::roblox_accounts_path(&*ctx).unwrap().exists();
+    done_tx.send(()).unwrap();
+    holder.join().unwrap();
+    assert!(result.is_err(), "the import ran under another lock");
+    assert!(!written, "the Roblox list was written under another lock");
+}

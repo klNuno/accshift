@@ -188,6 +188,23 @@ pub(super) fn with_config_write_locks<T>(
     write()
 }
 
+/// The config as the files hold it, for a caller that only looks: an error
+/// when a file is present but cannot be read. Unlike [`load_config`] it
+/// logs nothing, marks no file unreadable and fills no cache.
+pub fn peek_config(app_handle: &dyn AppContext) -> Result<AppConfig, String> {
+    let read = |path: std::path::PathBuf| {
+        crate::storage::read_json_if_exists::<AppConfig>(&path)
+            .map_err(|_| format!("The accshift config at {} cannot be read", path.display()))
+    };
+    let portable = read(crate::storage::portable_config_path(app_handle)?)?;
+    let local = read(crate::storage::local_config_path(app_handle)?)?;
+    Ok(match (portable, local) {
+        (Some(portable), local) => merge_split_configs(portable, local.unwrap_or_default()),
+        (None, Some(local)) => merge_split_configs(AppConfig::default(), local),
+        (None, None) => super::migrate::peek_legacy_config(app_handle)?,
+    })
+}
+
 /// [`load_config`] for a caller about to write elsewhere first: an error
 /// when a config file is present but could not be read, which
 /// [`save_config`] would refuse to write over anyway.
