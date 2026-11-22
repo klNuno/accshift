@@ -186,16 +186,64 @@ pub fn render_accounts(
     }
 }
 
-pub fn render_switch_ok(platform_id: &str, account_id: &str) {
-    println!("Switched {platform_id} to {account_id}.");
+/// Non-sensitive human label for a requested account id (persona name,
+/// BattleTag, display name or user label), never falling back to the raw
+/// account id or email address.
+pub fn display_label_for(
+    platform_id: &str,
+    accounts: &[Value],
+    requested: &str,
+) -> Option<String> {
+    let get = |account: &Value, key: &str| {
+        account
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+    };
+    accounts.iter().find_map(|account| {
+        let row = extract_row(platform_id, account)?;
+        let matches =
+            requested.eq_ignore_ascii_case(&row.switch_id) || requested == row.storage_id;
+        if !matches {
+            return None;
+        }
+        match platform_id {
+            "steam" => get(account, "persona_name"),
+            "roblox" => get(account, "displayName"),
+            "battle-net" => get(account, "battleTag"),
+            _ => get(account, "label"),
+        }
+    })
+}
+
+pub fn format_switch_ok(platform_id: &str, label: Option<&str>) -> String {
+    match label.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(label) => format!("Switched {platform_id} to {label}."),
+        None => format!("Switched {platform_id}."),
+    }
+}
+
+pub fn render_switch_ok(platform_id: &str, label: Option<&str>) {
+    println!("{}", format_switch_ok(platform_id, label));
+}
+
+pub fn format_dry_run_header(operation: &str, platform_id: &str, label: Option<&str>) -> String {
+    match label.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(label) => {
+            format!("Dry run: {operation} {platform_id} to {label}. Nothing below is written.")
+        }
+        None => format!("Dry run: {operation} on {platform_id}. Nothing below is written."),
+    }
 }
 
 /// The dry run, read top to bottom: what stays untouched, then what would
 /// happen in order, then what would go wrong.
-pub fn render_dry_run(plan: &DryRunPlan) {
+pub fn render_dry_run(plan: &DryRunPlan, label: Option<&str>) {
     println!(
-        "Dry run: {} {} to {}. Nothing below is written.",
-        plan.operation, plan.platform_id, plan.account_id,
+        "{}",
+        format_dry_run_header(&plan.operation, &plan.platform_id, label)
     );
 
     println!();
@@ -421,5 +469,63 @@ pub fn pad(s: &str, target: usize) -> String {
             out.push(' ');
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_label_picks_human_label_and_never_falls_back_to_raw_id_or_email() {
+        let bnet = vec![
+            json!({"email": "secret@example.com", "battleTag": "Hero#1234"}),
+            json!({"email": "nolabel@example.com", "battleTag": ""}),
+        ];
+        assert_eq!(
+            display_label_for("battle-net", &bnet, "SECRET@example.com").as_deref(),
+            Some("Hero#1234")
+        );
+        assert_eq!(
+            display_label_for("battle-net", &bnet, "nolabel@example.com"),
+            None
+        );
+
+        let steam = vec![json!({
+            "steam_id": "76561198000000001",
+            "account_name": "login_name",
+            "persona_name": "Alice"
+        })];
+        assert_eq!(
+            display_label_for("steam", &steam, "login_name").as_deref(),
+            Some("Alice")
+        );
+
+        let epic = vec![
+            json!({"accountId": "acct-raw-id", "label": "Main"}),
+            json!({"accountId": "acct-unlabeled", "label": "   "}),
+        ];
+        assert_eq!(
+            display_label_for("epic", &epic, "acct-raw-id").as_deref(),
+            Some("Main")
+        );
+        assert_eq!(display_label_for("epic", &epic, "acct-unlabeled"), None);
+    }
+
+    #[test]
+    fn switch_and_dry_run_headers_use_label_when_known_and_omit_raw_ids() {
+        assert_eq!(
+            format_switch_ok("battle-net", Some("Hero#1234")),
+            "Switched battle-net to Hero#1234."
+        );
+        assert_eq!(format_switch_ok("battle-net", None), "Switched battle-net.");
+        assert_eq!(
+            format_dry_run_header("switch", "epic", Some("Main")),
+            "Dry run: switch epic to Main. Nothing below is written."
+        );
+        assert_eq!(
+            format_dry_run_header("switch", "epic", None),
+            "Dry run: switch on epic. Nothing below is written."
+        );
     }
 }
