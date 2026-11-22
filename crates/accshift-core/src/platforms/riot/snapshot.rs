@@ -52,21 +52,58 @@ pub(super) fn free_snapshot_secrets(app_handle: &dyn AppContext, snapshot_dir: &
     });
 }
 
+/// Join a `/`-separated relative path onto `base` using the host OS separator.
+pub(super) fn join_relative_path(base: &Path, relative: &str) -> PathBuf {
+    relative
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .fold(base.to_path_buf(), |path, part| path.join(part))
+}
+
+/// Pure path resolver for a snapshot item given explicit OS roots.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) fn live_path_for_in(
+    item: &RiotSnapshotItem,
+    local_data_root: &Path,
+    shared_data_root: &Path,
+    install_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    match item.base {
+        RiotPathBase::LocalAppData => Some(join_relative_path(local_data_root, item.relative_path)),
+        RiotPathBase::ProgramData => Some(join_relative_path(shared_data_root, item.relative_path)),
+        RiotPathBase::InstallDir => {
+            install_dir.map(|dir| join_relative_path(dir, item.relative_path))
+        }
+    }
+}
+
 pub(super) fn live_path_for(
     item: &RiotSnapshotItem,
     install_dir: Option<&Path>,
 ) -> Result<Option<PathBuf>, String> {
-    let relative = item.relative_path.replace('/', "\\");
     match item.base {
-        RiotPathBase::LocalAppData => Ok(Some(live_base("LOCALAPPDATA")?.join(relative))),
-        RiotPathBase::ProgramData => Ok(Some(live_base("PROGRAMDATA")?.join(relative))),
-        RiotPathBase::InstallDir => Ok(install_dir.map(|dir| dir.join(relative))),
+        RiotPathBase::LocalAppData => Ok(Some(join_relative_path(
+            &live_local_data_root()?,
+            item.relative_path,
+        ))),
+        RiotPathBase::ProgramData => Ok(Some(join_relative_path(
+            &live_shared_data_root()?,
+            item.relative_path,
+        ))),
+        RiotPathBase::InstallDir => {
+            Ok(install_dir.map(|dir| join_relative_path(dir, item.relative_path)))
+        }
     }
 }
 
 #[cfg(not(test))]
-fn live_base(name: &str) -> Result<PathBuf, String> {
-    env_path(name)
+fn live_local_data_root() -> Result<PathBuf, String> {
+    riot_local_data_root()
+}
+
+#[cfg(not(test))]
+fn live_shared_data_root() -> Result<PathBuf, String> {
+    riot_shared_data_root()
 }
 
 #[cfg(test)]
@@ -78,10 +115,18 @@ thread_local! {
 }
 
 #[cfg(test)]
-fn live_base(name: &str) -> Result<PathBuf, String> {
+fn live_local_data_root() -> Result<PathBuf, String> {
     match TEST_LIVE_ROOT.with(|root| root.borrow().clone()) {
-        Some(root) => Ok(root.join(name)),
-        None => env_path(name),
+        Some(root) => Ok(root.join("LOCALAPPDATA")),
+        None => riot_local_data_root(),
+    }
+}
+
+#[cfg(test)]
+fn live_shared_data_root() -> Result<PathBuf, String> {
+    match TEST_LIVE_ROOT.with(|root| root.borrow().clone()) {
+        Some(root) => Ok(root.join("PROGRAMDATA")),
+        None => riot_shared_data_root(),
     }
 }
 

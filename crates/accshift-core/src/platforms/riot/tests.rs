@@ -370,3 +370,148 @@ fn riot_close_list_handles_crash_handlers_without_counting_them_as_survivors() {
     assert!(!super::RIOT_CLIENT_PROCESS_NAMES.contains(&"RiotClientCrashHandler.exe"));
     assert!(!super::RIOT_CLIENT_PROCESS_NAMES.contains(&"LeagueCrashHandler64.exe"));
 }
+
+#[test]
+fn macos_riot_data_metadata_and_snapshot_paths_match_expected_layout() {
+    let local_root = super::macos_local_data_root(std::path::Path::new("/Users/alice"));
+    assert_eq!(
+        local_root,
+        std::path::PathBuf::from("/Users/alice")
+            .join("Library")
+            .join("Application Support")
+    );
+
+    let shared_root = super::macos_shared_data_root();
+    assert_eq!(shared_root, std::path::PathBuf::from("/Users/Shared"));
+
+    assert_eq!(
+        super::riot_lockfile_path_in(&local_root),
+        local_root
+            .join("Riot Games")
+            .join("Riot Client")
+            .join("Config")
+            .join("lockfile")
+    );
+    assert_eq!(
+        super::riot_installs_json_path_in(&shared_root),
+        shared_root
+            .join("Riot Games")
+            .join("RiotClientInstalls.json")
+    );
+    assert_eq!(
+        super::riot_metadata_root_in(&shared_root),
+        shared_root.join("Riot Games").join("Metadata")
+    );
+    assert_eq!(
+        super::macos_default_league_lockfile_path(),
+        std::path::PathBuf::from("/Applications/League of Legends.app/Contents/LoL/lockfile")
+    );
+
+    let install_dir = shared_root
+        .join("Riot Games")
+        .join("Riot Client.app")
+        .join("Contents")
+        .join("MacOS");
+
+    let resolved: Vec<(&str, Option<std::path::PathBuf>)> = super::RIOT_SNAPSHOT_ITEMS
+        .iter()
+        .map(|item| {
+            (
+                item.snapshot_name,
+                super::live_path_for_in(item, &local_root, &shared_root, Some(&install_dir)),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        resolved[0],
+        (
+            "RiotGamesPrivateSettings.yaml",
+            Some(
+                local_root
+                    .join("Riot Games")
+                    .join("Riot Client")
+                    .join("Data")
+                    .join("RiotGamesPrivateSettings.yaml")
+            )
+        )
+    );
+    assert_eq!(
+        resolved[5],
+        (
+            "RiotMetadata",
+            Some(
+                shared_root
+                    .join("Riot Games")
+                    .join("Metadata")
+                    .join("Riot Client")
+            )
+        )
+    );
+}
+
+#[test]
+fn macos_riot_install_detection_and_override_validation() {
+    let root = std::env::temp_dir().join(format!(
+        "accshift-riot-macos-paths-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let shared = root.join("Shared");
+    let bundle = shared.join("Riot Games").join("Riot Client.app");
+    let macos_bin_dir = bundle.join("Contents").join("MacOS");
+    let binary = macos_bin_dir.join("RiotClientServices");
+    std::fs::create_dir_all(&macos_bin_dir).unwrap();
+    std::fs::write(&binary, b"stub").unwrap();
+
+    let installs_json = super::riot_installs_json_path_in(&shared);
+    let fallbacks = super::macos_default_riot_client_paths(&shared);
+    assert_eq!(fallbacks[0], binary);
+    assert_eq!(
+        fallbacks[1],
+        std::path::PathBuf::from("/Applications/Riot Client.app/Contents/MacOS/RiotClientServices")
+    );
+
+    // Without RiotClientInstalls.json, macOS detection falls back to /Users/Shared.
+    assert_eq!(
+        super::detect_installation_path_from_installs_in(&installs_json, &fallbacks),
+        Some(binary.to_string_lossy().to_string())
+    );
+
+    // With RiotClientInstalls.json pointing to an existing custom path, it wins.
+    let custom_bin = root
+        .join("Custom")
+        .join("Riot Client.app")
+        .join("Contents")
+        .join("MacOS")
+        .join("RiotClientServices");
+    std::fs::create_dir_all(custom_bin.parent().unwrap()).unwrap();
+    std::fs::write(&custom_bin, b"stub").unwrap();
+    std::fs::write(
+        &installs_json,
+        serde_json::json!({ "rc_live": custom_bin.to_string_lossy() }).to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        super::detect_installation_path_from_installs_in(&installs_json, &fallbacks),
+        Some(custom_bin.to_string_lossy().to_string())
+    );
+
+    // Override validation accepts both the .app bundle and the inner Mach-O binary.
+    assert!(super::validate_macos_riot_client_path(&bundle).is_ok());
+    assert!(super::validate_macos_riot_client_path(&binary).is_ok());
+    assert_eq!(super::macos_client_executable_path(&bundle), binary);
+    assert_eq!(super::macos_client_executable_path(&binary), binary);
+
+    // Rejects an empty bundle, a random directory, or an unrelated file.
+    let empty_bundle = root.join("Empty").join("Riot Client.app");
+    std::fs::create_dir_all(&empty_bundle).unwrap();
+    let other_file = root.join("OtherApp");
+    std::fs::write(&other_file, b"stub").unwrap();
+    assert!(super::validate_macos_riot_client_path(&empty_bundle).is_err());
+    assert!(super::validate_macos_riot_client_path(&root).is_err());
+    assert!(super::validate_macos_riot_client_path(&other_file).is_err());
+
+    let _ = std::fs::remove_dir_all(&root);
+}

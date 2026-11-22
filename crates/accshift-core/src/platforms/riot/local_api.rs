@@ -3,12 +3,16 @@
 #[allow(unused_imports)]
 use super::*;
 
-pub(super) fn riot_lockfile_path() -> Result<PathBuf, String> {
-    Ok(env_path("LOCALAPPDATA")?
+pub(super) fn riot_lockfile_path_in(local_data_root: &Path) -> PathBuf {
+    local_data_root
         .join("Riot Games")
         .join("Riot Client")
         .join("Config")
-        .join("lockfile"))
+        .join("lockfile")
+}
+
+pub(super) fn riot_lockfile_path() -> Result<PathBuf, String> {
+    Ok(riot_lockfile_path_in(&riot_local_data_root()?))
 }
 
 pub(super) fn parse_lockfile_content(content: &str) -> Result<RiotLocalApiAccess, String> {
@@ -330,14 +334,25 @@ pub(super) fn detect_protected_league_phase_from_candidates(
     None
 }
 
-#[cfg(target_os = "macos")]
-fn default_league_lockfile_path() -> PathBuf {
+#[cfg_attr(not(any(test, target_os = "macos")), allow(dead_code))]
+pub(super) fn macos_default_league_lockfile_path() -> PathBuf {
     PathBuf::from("/Applications/League of Legends.app/Contents/LoL/lockfile")
 }
 
-#[cfg(not(target_os = "macos"))]
-fn default_league_lockfile_path() -> PathBuf {
+#[cfg_attr(not(any(test, not(target_os = "macos"))), allow(dead_code))]
+pub(super) fn windows_default_league_lockfile_path() -> PathBuf {
     PathBuf::from(r"C:\Riot Games\League of Legends\lockfile")
+}
+
+fn default_league_lockfile_path() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        macos_default_league_lockfile_path()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        windows_default_league_lockfile_path()
+    }
 }
 
 /// Probe the live League Client for a protected gameflow phase. Returns `None`

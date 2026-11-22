@@ -37,12 +37,13 @@ pub(super) fn known_product(product_id: &str) -> Option<&'static str> {
         .map(|(_, name)| *name)
 }
 
-/// `ProgramData/Riot Games/Metadata`, where the Riot Client keeps one
-/// `<product>.<patchline>` folder per installed product.
+/// Riot Games `Metadata` directory (`%PROGRAMDATA%\Riot Games\Metadata` on
+/// Windows, `/Users/Shared/Riot Games/Metadata` on macOS), where the Riot
+/// Client keeps one `<product>.<patchline>` folder per installed product.
 pub(super) fn metadata_root() -> Option<PathBuf> {
-    std::env::var_os("PROGRAMDATA")
-        .map(PathBuf::from)
-        .map(|root| root.join("Riot Games").join("Metadata"))
+    riot_shared_data_root()
+        .ok()
+        .map(|root| riot_metadata_root_in(&root))
 }
 
 /// The `product_install_full_path` of a `product_settings.yaml` body, quotes
