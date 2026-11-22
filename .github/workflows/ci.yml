@@ -90,7 +90,7 @@ jobs:
         run: corepack pnpm install --frozen-lockfile
 
       - name: Bundle script tests
-        run: node --test crates/accshift-egui/bundle/linux-deps.test.mjs
+        run: node --test crates/accshift-egui/bundle/linux-deps.test.mjs scripts/release-notes.test.mjs
 
       # esbuild and the Stream Deck SDK: the start test bundles the plugin
       # and runs it against a fake Stream Deck.
