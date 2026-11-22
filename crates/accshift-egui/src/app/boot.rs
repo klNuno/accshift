@@ -133,15 +133,7 @@ impl BootTask {
     /// The boot payload, then a repaint once the model polls for it. A
     /// result in before the model exists waits for its first frame.
     pub fn run(self, backend: &dyn Backend) {
-        self.run_then(backend, || {});
-    }
-
-    /// [`Self::run`], `then` called once the payload is read (the legacy
-    /// config migrated) and before the model can see it.
-    pub fn run_then(self, backend: &dyn Backend, then: impl FnOnce()) {
-        let boot = load_boot(backend);
-        then();
-        if self.tx.send(boot).is_ok() {
+        if self.tx.send(load_boot(backend)).is_ok() {
             if let Some(ctx) = self.wake.get() {
                 ctx.request_repaint();
             }

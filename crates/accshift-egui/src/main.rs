@@ -131,33 +131,21 @@ fn main() {
     // hook would report it. The boot job follows on the same thread, after
     // the hook: the window shows once boot is done, and no longer waits for
     // its own creation before boot starts (about 11 ms in the bench). The
-    // saved geometry is read before the thread starts, the telemetry
-    // consent after the boot payload (app/session.rs). The probe's folders
-    // are a scratch copy: no telemetry from it, and the keyring sweep would
-    // read every real entry as an orphan. Neither does a bench run, nor does
-    // it register the scheme or run the maintenance.
-    let quiet = probing || bench_build;
+    // saved geometry is read before the thread starts, and the legacy read
+    // arrives once the config is migrated (app/session.rs).
     bench::mark("backend");
     let session = real.as_ref().map(|backend| {
-        accshift_egui::app::session::start(
-            backend,
-            move |backend| {
-                let ctx = backend.context().as_ref();
-                let legacy = match legacy_root {
-                    Some(root) => legacy_web_storage::read_for_boot_with(ctx, || {
-                        legacy_web_storage::read_in(&root, BUNDLE_IDENTIFIER)
-                    }),
-                    None => legacy_web_storage::read_for_boot(ctx, BUNDLE_IDENTIFIER),
-                };
-                backend.begin_session();
-                legacy
-            },
-            move |backend| {
-                if !quiet {
-                    backend.start_telemetry();
-                }
-            },
-        )
+        accshift_egui::app::session::start(backend, move |backend| {
+            let ctx = backend.context().as_ref();
+            let legacy = match legacy_root {
+                Some(root) => legacy_web_storage::read_for_boot_with(ctx, || {
+                    legacy_web_storage::read_in(&root, BUNDLE_IDENTIFIER)
+                }),
+                None => legacy_web_storage::read_for_boot(ctx, BUNDLE_IDENTIFIER),
+            };
+            backend.begin_session();
+            legacy
+        })
     });
     bench::mark("saved_window");
     let saved = session.as_ref().map(|session| session.saved);
@@ -251,7 +239,15 @@ fn main() {
                         Some(&read.notes.join("; ")),
                     );
                 }
-                // The rest of `setup`, in its order (`quiet` above).
+                // The rest of `setup`, in its order, on the migrated
+                // config. The probe's folders are a scratch copy: no
+                // telemetry from it, and the keyring sweep would read every
+                // real entry as an orphan. Neither does a bench run, nor
+                // does it register the scheme or run the maintenance.
+                let quiet = probing || bench_build;
+                if !quiet {
+                    backend.start_telemetry();
+                }
                 #[cfg(windows)]
                 let hwnd = hwnd(handle).map_or(0, |h| h as isize);
                 #[cfg(not(windows))]

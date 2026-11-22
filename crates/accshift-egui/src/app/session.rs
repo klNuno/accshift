@@ -15,7 +15,7 @@ pub struct Session {
     pub saved: SavedWindow,
     /// The boot result, for [`super::AppModel::real`].
     pub early: EarlyBoot,
-    /// The legacy web storage read, sent before the boot runs.
+    /// The legacy web storage read, sent once the config is migrated.
     pub legacy: mpsc::Receiver<Option<LegacyRead>>,
     /// The thread, joined before the process ends: the boot may be
     /// migrating the config.
@@ -23,27 +23,28 @@ pub struct Session {
 }
 
 /// Reads the saved window geometry, then starts the session thread:
-/// `before_boot` (the legacy web storage read, the log session), the boot
-/// payload, then `after_boot` (the telemetry queue) before the model sees
-/// the payload.
+/// `before_boot` (the legacy web storage read, the log session), the
+/// migration of a pre-1.0 config, then the boot payload.
 ///
-/// The boot migrates a pre-1.0 config into two files. Nothing may read the
-/// config while it does: a read between the writes, or between the split
-/// files' absence and the legacy file's, gets the defaults. The geometry is
-/// therefore read before the thread starts, and the telemetry consent after
-/// the payload, still before the model reports the first boot.
+/// Nothing may read the config while it migrates into two files: a read
+/// between the writes, or between the split files' absence and the legacy
+/// file's, gets the defaults. The geometry is therefore read before the
+/// thread starts, and [`Session::legacy`] only arrives once the migration
+/// is over: what waits for it (the telemetry consent, then the maintenance
+/// and its config lock) reads the migrated config.
 pub fn start(
     backend: &Arc<RealBackend>,
     before_boot: impl FnOnce(&RealBackend) -> Option<LegacyRead> + Send + 'static,
-    after_boot: impl FnOnce(&RealBackend) + Send + 'static,
 ) -> Session {
     let saved = config::load_window(backend.context().as_ref());
     let (early, task) = early_boot();
     let (tx, legacy) = mpsc::channel();
     let backend = Arc::clone(backend);
     let thread = std::thread::spawn(move || {
-        let _ = tx.send(before_boot(&backend));
-        task.run_then(backend.as_ref(), || after_boot(&backend));
+        let legacy = before_boot(&backend);
+        backend.migrate_config_early();
+        let _ = tx.send(legacy);
+        task.run(backend.as_ref());
     });
     Session {
         saved,

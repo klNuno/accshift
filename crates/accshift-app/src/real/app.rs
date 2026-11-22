@@ -32,9 +32,13 @@ pub(super) fn migrate_legacy_config(c: &dyn AppContext) -> String {
 }
 
 /// Backs `Backend::get_boot_payload`.
-pub(super) fn boot_payload(c: &dyn AppContext) -> BackendResult<BootPayload> {
+/// `early` is the outcome of a migration the shell already ran.
+pub(super) fn boot_payload(
+    c: &dyn AppContext,
+    early: Option<String>,
+) -> BackendResult<BootPayload> {
     // Migration must land before anything reads config or stores.
-    let migration = migrate_legacy_config(c);
+    let migration = early.unwrap_or_else(|| migrate_legacy_config(c));
     let (storage_snapshot, recovered_stores) =
         storage::load_client_storage_snapshot_reporting(c).map_err(PlatformError::from)?;
     // A missing themes dir is normal on a first run, and reads whole. A

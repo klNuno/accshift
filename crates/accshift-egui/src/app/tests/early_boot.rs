@@ -158,7 +158,7 @@ fn a_release_folder_keeps_its_window_geometry_through_the_session_thread() {
     let ctx = Context::default();
     let dir = release_folder("geometry");
     let backend = Arc::new(RealBackend::with_context(dir.clone()));
-    let session = super::super::session::start(&backend, |_| None, |_| {});
+    let session = super::super::session::start(&backend, |_| None);
     // The pre-1.0 file's size, not the default one.
     assert_eq!(session.saved.size, Some((1180.0, 760.0)));
     assert_eq!(session.legacy.recv().unwrap().map(|read| read.notes), None);
@@ -190,26 +190,13 @@ fn the_telemetry_consent_is_read_once_the_release_folder_is_migrated() {
         dir.clone(),
         "http://127.0.0.1:9",
     ));
-    let seen = Arc::new(std::sync::Mutex::new(None));
-    let session = {
-        let seen = Arc::clone(&seen);
-        super::super::session::start(
-            &backend,
-            |_| None,
-            move |backend| {
-                // What the telemetry start reads: the migrated pair.
-                *seen.lock().unwrap() = Some(legacy.exists());
-                backend.start_telemetry();
-            },
-        )
-    };
+    let session = super::super::session::start(&backend, |_| None);
+    // As `main` does: the telemetry starts once the legacy read is in,
+    // before the maintenance and while the boot runs.
+    let _ = session.legacy.recv().unwrap();
+    assert!(!legacy.exists(), "read before the migration");
+    assert!(backend.start_telemetry());
     session.thread.join().unwrap();
-    assert_eq!(
-        *seen.lock().unwrap(),
-        Some(false),
-        "read before the migration"
-    );
-    assert!(backend.telemetry_running());
     let mut app = AppModel::from_backend(&ctx, backend.clone(), Clock::wall(), Some(session.early));
     app.wait_boot(&ctx).expect("early boot");
     let config = accshift_core::config::load_config(dir.as_ref());
@@ -217,4 +204,22 @@ fn the_telemetry_consent_is_read_once_the_release_folder_is_migrated() {
     assert!(accshift_core::telemetry::install_id::is_valid(
         &config.telemetry.anonymous_id
     ));
+}
+
+#[test]
+fn the_legacy_read_is_handed_over_once_the_config_is_migrated() {
+    let ctx = Context::default();
+    let dir = release_folder("order");
+    let legacy = accshift_core::storage::legacy_config_path(dir.as_ref()).unwrap();
+    let backend = Arc::new(RealBackend::with_context(dir.clone()));
+    let session = super::super::session::start(&backend, |_| None);
+    // What `main` waits for before the telemetry and the maintenance.
+    assert_eq!(session.legacy.recv().unwrap().map(|read| read.notes), None);
+    assert!(!legacy.exists(), "the migration was still to come");
+    session.thread.join().unwrap();
+    let mut app = AppModel::from_backend(&ctx, backend, Clock::wall(), Some(session.early));
+    app.wait_boot(&ctx).expect("early boot");
+    // The boot still reports the migration it no longer runs itself.
+    let toasts = format!("{:?}", app.toasts().toasts());
+    assert!(toasts.contains("legacyConfigMigrated"), "{toasts}");
 }
