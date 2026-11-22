@@ -272,10 +272,9 @@ pub(super) fn clear_live_session_for_login(
 pub(super) fn prepare_clean_riot_launch(install_dir: Option<&Path>) -> Result<(), CloseError> {
     // A kill, not a graceful quit: the quit waits up to 8 s for the client to
     // flush a session this function wipes next. A session worth keeping was
-    // flushed and saved by `begin_profile_setup` already.
-    ensure_league_not_in_protected_phase("starting Riot account setup")
-        .map_err(CloseError::Refused)?;
-    kill_riot_client_processes();
+    // flushed and saved by `begin_profile_setup` already. The League guard
+    // runs before each kill round.
+    kill_riot_client_processes("starting Riot account setup")?;
     thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
     ensure_riot_client_closed().map_err(CloseError::AfterClose)?;
     clear_live_riot_setup_state(install_dir).map_err(CloseError::AfterClose)

@@ -58,6 +58,45 @@ fn profile(id: &str, state: &str) -> RiotProfileConfig {
 
 // -- S1: the forced close re-reads the League phase ----------------------
 
+/// The kill rounds of a forced close, counting kills, on a client that never
+/// exits.
+fn guarded_kills<'a>(
+    guard: &'a dyn Fn() -> Result<(), String>,
+    kills: &'a Cell<usize>,
+) -> impl Fn() -> Result<(), CloseError> + 'a {
+    move || {
+        run_guarded_kill(&KillIo {
+            guard,
+            kill_running: &|| kills.set(kills.get() + 1),
+            client_running: &|| true,
+            wait: &|| {},
+            attempts: 4,
+        })
+    }
+}
+
+#[test]
+fn each_kill_round_rechecks_the_league_phase() {
+    // The first round leaves the client running; the player enters champion
+    // select before the next one.
+    let guards = Cell::new(0);
+    let kills = Cell::new(0);
+    let guard = || {
+        guards.set(guards.get() + 1);
+        if guards.get() == 1 {
+            Ok(())
+        } else {
+            Err(champ_select_refusal())
+        }
+    };
+
+    let result = guarded_kills(&guard, &kills)();
+
+    assert_eq!(kills.get(), 1, "League was killed in champion select");
+    // The first round may have closed part of the client: relaunch it.
+    assert_eq!(result, Err(CloseError::AfterClose(champ_select_refusal())));
+}
+
 #[test]
 fn the_forced_close_after_the_quit_wait_rechecks_the_league_phase() {
     // The phase is fine when the quit is asked; the player enters champion
@@ -72,10 +111,7 @@ fn the_forced_close_after_the_quit_wait_rechecks_the_league_phase() {
             Err(champ_select_refusal())
         }
     };
-    let force_close = || {
-        kills.set(kills.get() + 1);
-        Ok(())
-    };
+    let force_close = guarded_kills(&guard, &kills);
     let io = QuitIo {
         guard: &guard,
         request_quit: &|| QuitRequest::Sent,
@@ -107,10 +143,7 @@ fn the_forced_close_without_the_local_api_rechecks_the_league_phase() {
             Err(champ_select_refusal())
         }
     };
-    let force_close = || {
-        kills.set(kills.get() + 1);
-        Ok(())
-    };
+    let force_close = guarded_kills(&guard, &kills);
     let io = QuitIo {
         guard: &guard,
         request_quit: &|| QuitRequest::NoApi,
@@ -131,12 +164,10 @@ fn the_forced_close_without_the_local_api_rechecks_the_league_phase() {
 #[test]
 fn the_forced_close_still_runs_when_league_allows_it() {
     let kills = Cell::new(0);
-    let force_close = || {
-        kills.set(kills.get() + 1);
-        Ok(())
-    };
+    let guard = || Ok(());
+    let force_close = guarded_kills(&guard, &kills);
     let io = QuitIo {
-        guard: &|| Ok(()),
+        guard: &guard,
         request_quit: &|| QuitRequest::Sent,
         client_running: &|| true,
         wait: &|| {},
@@ -145,7 +176,7 @@ fn the_forced_close_still_runs_when_league_allows_it() {
         polls: 3,
     };
     assert_eq!(run_graceful_quit(&io), Ok(()));
-    assert_eq!(kills.get(), 1);
+    assert_eq!(kills.get(), 4);
 }
 
 // -- S2: a refusal before the close does not relaunch the client ---------

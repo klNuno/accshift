@@ -119,8 +119,25 @@ pub(super) fn close_process_names() -> &'static [&'static str] {
     RIOT_CLOSE_PROCESS_NAMES
 }
 
-pub(super) fn kill_riot_client_processes() {
-    for _ in 0..KILL_RETRY_COUNT {
+/// The kill rounds of a forced close, injected so tests run them without a
+/// Riot client.
+pub(super) struct KillIo<'a> {
+    /// The League guard: `Err` while closing `LeagueClient` must be refused.
+    pub guard: &'a dyn Fn() -> Result<(), String>,
+    /// Kills the client processes running now.
+    pub kill_running: &'a dyn Fn(),
+    pub client_running: &'a dyn Fn() -> bool,
+    /// The pause after a round that left the client running.
+    pub wait: &'a dyn Fn(),
+    pub attempts: usize,
+}
+
+/// Kills the client processes, the League guard first. A refusal before the
+/// first round is [`CloseError::Refused`]; later, part of the client may be
+/// gone already, so it is [`CloseError::AfterClose`].
+pub(super) fn kill_riot_client_processes(action: &str) -> Result<(), CloseError> {
+    let guard = || ensure_league_not_in_protected_phase(action);
+    let kill_running = || {
         // Resolve what is actually running with one refresh, then kill only
         // those. Calling kill_process per name re-scanned the whole process
         // table per round even when nothing was running.
@@ -128,11 +145,36 @@ pub(super) fn kill_riot_client_processes() {
         for name in running {
             let _ = os::kill_process(name);
         }
-        if !is_any_process_running(RIOT_CLIENT_PROCESS_NAMES) {
+    };
+    let client_running = || is_any_process_running(RIOT_CLIENT_PROCESS_NAMES);
+    let wait = || thread::sleep(std::time::Duration::from_millis(KILL_RETRY_DELAY_MS));
+    run_guarded_kill(&KillIo {
+        guard: &guard,
+        kill_running: &kill_running,
+        client_running: &client_running,
+        wait: &wait,
+        attempts: KILL_RETRY_COUNT,
+    })
+}
+
+pub(super) fn run_guarded_kill(io: &KillIo) -> Result<(), CloseError> {
+    for attempt in 0..io.attempts {
+        // Read before every round: a round that left the client running is
+        // followed by a pause, long enough to enter champion select.
+        if let Err(refusal) = (io.guard)() {
+            return Err(if attempt == 0 {
+                CloseError::Refused(refusal)
+            } else {
+                CloseError::AfterClose(refusal)
+            });
+        }
+        (io.kill_running)();
+        if !(io.client_running)() {
             break;
         }
-        thread::sleep(std::time::Duration::from_millis(KILL_RETRY_DELAY_MS));
+        (io.wait)();
     }
+    Ok(())
 }
 
 /// Best-effort cleanup of lingering crash handlers after a graceful quit.
@@ -216,8 +258,9 @@ pub(super) struct QuitIo<'a> {
     pub client_running: &'a dyn Fn() -> bool,
     /// One pause between two checks of `client_running`.
     pub wait: &'a dyn Fn(),
-    /// Kills the client processes, then fails when one survived.
-    pub force_close: &'a dyn Fn() -> Result<(), String>,
+    /// Kills the client processes, the League guard before each round, then
+    /// fails when one survived.
+    pub force_close: &'a dyn Fn() -> Result<(), CloseError>,
     /// Cleanup once the client exited on its own.
     pub after_exit: &'a dyn Fn(),
     /// Checks of `client_running` before the forced close.
@@ -240,8 +283,8 @@ pub(super) fn graceful_riot_quit_checked() -> Result<(), CloseError> {
     let client_running = || is_any_process_running(RIOT_CLIENT_PROCESS_NAMES);
     let wait = || thread::sleep(std::time::Duration::from_millis(500));
     let force_close = || {
-        kill_riot_client_processes();
-        ensure_riot_client_closed()
+        kill_riot_client_processes("closing Riot Client")?;
+        ensure_riot_client_closed().map_err(CloseError::AfterClose)
     };
     let after_exit = || {
         kill_riot_crash_handlers();
@@ -301,20 +344,17 @@ pub(super) fn run_graceful_quit(io: &QuitIo) -> Result<(), CloseError> {
     forced_close(io, true)
 }
 
-/// The forced-kill fallback. The League phase is read again first: the quit
-/// request and the wait take seconds, long enough to enter champion select,
-/// and the kill takes `LeagueClient` down with the client. `quit_asked` says
-/// whether a quit request may already have closed part of the client, so a
-/// refusal then still has the caller relaunch it.
+/// The forced-kill fallback. `force_close` reads the League phase again
+/// before each kill round: the quit request, the wait and the rounds take
+/// seconds, long enough to enter champion select, and a kill takes
+/// `LeagueClient` down with the client. `quit_asked` says whether a quit
+/// request may already have closed part of the client, so a refusal then
+/// still has the caller relaunch it.
 fn forced_close(io: &QuitIo, quit_asked: bool) -> Result<(), CloseError> {
-    if let Err(refusal) = (io.guard)() {
-        return Err(if quit_asked {
-            CloseError::AfterClose(refusal)
-        } else {
-            CloseError::Refused(refusal)
-        });
-    }
-    (io.force_close)().map_err(CloseError::AfterClose)
+    (io.force_close)().map_err(|error| match error {
+        CloseError::Refused(refusal) if quit_asked => CloseError::AfterClose(refusal),
+        error => error,
+    })
 }
 
 pub(super) fn launch_riot_client(client_path: &Path) -> Result<(), String> {
