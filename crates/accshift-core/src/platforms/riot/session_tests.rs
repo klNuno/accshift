@@ -516,7 +516,7 @@ fn the_setup_launch_does_not_touch_the_client_without_the_lock() {
     let ran = std::thread::scope(|s| {
         s.spawn(|| {
             let mut ran = false;
-            run_riot_setup_launch(&ctx, &profile_id, Duration::from_millis(150), || {
+            run_riot_setup_launch(&ctx, &profile_id, "", Duration::from_millis(150), || {
                 ran = true;
                 Ok(())
             });
@@ -543,15 +543,15 @@ fn the_setup_launch_records_success_and_failure() {
     let ok_id = format!("riot-profile-{}", Uuid::new_v4());
     save_pending_setup(&ctx, &ok_id);
     set_setup_launch(&ok_id, SetupLaunch::Running);
-    run_riot_setup_launch(&ctx, &ok_id, Duration::from_millis(500), || Ok(()));
+    run_riot_setup_launch(&ctx, &ok_id, "", Duration::from_millis(500), || Ok(()));
     assert_eq!(setup_launch(&ok_id), Some(SetupLaunch::Launched));
     forget_setup_launch(&ok_id);
 
     let failed_id = format!("riot-profile-{}", Uuid::new_v4());
     save_pending_setup(&ctx, &failed_id);
     set_setup_launch(&failed_id, SetupLaunch::Running);
-    run_riot_setup_launch(&ctx, &failed_id, Duration::from_millis(500), || {
-        Err("Could not remove file".into())
+    run_riot_setup_launch(&ctx, &failed_id, "", Duration::from_millis(500), || {
+        Err(CloseError::AfterClose("Could not remove file".into()))
     });
     assert_eq!(
         setup_launch(&failed_id),
@@ -570,7 +570,7 @@ fn a_setup_cancelled_before_its_launch_ran_is_left_alone() {
     config::save_config(&ctx, &config_with(Vec::new(), "")).unwrap();
 
     let mut ran = false;
-    run_riot_setup_launch(&ctx, &profile_id, Duration::from_millis(500), || {
+    run_riot_setup_launch(&ctx, &profile_id, "", Duration::from_millis(500), || {
         ran = true;
         Ok(())
     });
@@ -643,7 +643,7 @@ fn a_failed_setup_capture_reopens_the_client_and_leaves_the_setup_cancellable() 
         &mut cfg,
         &profile_id,
         "setup_pending",
-        "backup failed".into(),
+        CloseError::AfterClose("backup failed".into()),
         || {
             launched += 1;
             Err("launch failed".into())

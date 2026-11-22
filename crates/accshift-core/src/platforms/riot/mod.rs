@@ -390,6 +390,8 @@ impl PlatformService for RiotService {
 #[cfg(test)]
 mod games_tests;
 #[cfg(test)]
+mod guard_tests;
+#[cfg(test)]
 mod local_api_tests;
 #[cfg(test)]
 mod rollback_tests;

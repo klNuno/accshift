@@ -91,8 +91,9 @@ pub(super) fn setup_launch_still_wanted(cfg: &config::AppConfig, profile_id: &st
 pub(super) fn run_riot_setup_launch(
     app_handle: &dyn AppContext,
     profile_id: &str,
+    previous_profile_id: &str,
     lock_timeout: Duration,
-    launch: impl FnOnce() -> Result<(), String>,
+    launch: impl FnOnce() -> Result<(), CloseError>,
 ) {
     let outcome = crate::lock::with_exclusive(app_handle, lock_timeout, || {
         let cfg = config::load_config(app_handle);
@@ -101,6 +102,10 @@ pub(super) fn run_riot_setup_launch(
             return Ok(());
         }
         let result = launch();
+        if let Err(CloseError::Refused(_)) = &result {
+            restore_previous_profile(app_handle, profile_id, previous_profile_id);
+        }
+        let result = result.map_err(String::from);
         match &result {
             Ok(()) => finish_setup_launch(profile_id, SetupLaunch::Launched),
             Err(error) => finish_setup_launch(profile_id, SetupLaunch::Failed(error.clone())),
@@ -124,6 +129,34 @@ pub(super) fn run_riot_setup_launch(
     );
 }
 
+/// A setup launch the League guard refused closed and cleared nothing: the
+/// account signed in is still the previous profile's. Make that profile
+/// current again, or a cancel of the setup leaves the live session with no
+/// profile, and the next setup skips its backup.
+pub(super) fn restore_previous_profile(
+    app_handle: &dyn AppContext,
+    profile_id: &str,
+    previous_profile_id: &str,
+) {
+    let mut cfg = config::load_config(app_handle);
+    if previous_profile_id.is_empty()
+        || previous_profile_id == profile_id
+        || cfg.riot.current_profile_id != profile_id
+        || find_profile(&cfg, previous_profile_id).is_none()
+    {
+        return;
+    }
+    cfg.riot.current_profile_id = previous_profile_id.to_string();
+    if let Err(error) = config::save_config(app_handle, &cfg) {
+        log_platform_error(
+            app_handle,
+            "riot.setup_launch",
+            "Could not make the previous Riot profile current after a refused setup",
+            error,
+        );
+    }
+}
+
 /// Finish an operation that quit the client: relaunch it whether or not the
 /// work in between succeeded, so a failure never leaves it closed. The work's
 /// error wins over the launch's.
@@ -133,6 +166,18 @@ pub(super) fn relaunch_after_quit(
 ) -> Result<(), String> {
     let launched = launch();
     work.and(launched)
+}
+
+/// [`relaunch_after_quit`] for a close the League guard may refuse: a refusal
+/// before anything was closed leaves the running client alone.
+pub(super) fn relaunch_unless_refused(
+    work: Result<(), CloseError>,
+    launch: impl FnOnce() -> Result<(), String>,
+) -> Result<(), CloseError> {
+    if let Err(CloseError::Refused(refusal)) = work {
+        return Err(CloseError::Refused(refusal));
+    }
+    relaunch_after_quit(work.map_err(String::from), launch).map_err(CloseError::AfterClose)
 }
 
 /// Whether the login is kept ("Stay signed in"): the API says so, or the
@@ -224,15 +269,16 @@ pub(super) fn clear_live_session_for_login(
     result
 }
 
-pub(super) fn prepare_clean_riot_launch(install_dir: Option<&Path>) -> Result<(), String> {
+pub(super) fn prepare_clean_riot_launch(install_dir: Option<&Path>) -> Result<(), CloseError> {
     // A kill, not a graceful quit: the quit waits up to 8 s for the client to
     // flush a session this function wipes next. A session worth keeping was
     // flushed and saved by `begin_profile_setup` already.
-    ensure_league_not_in_protected_phase("starting Riot account setup")?;
+    ensure_league_not_in_protected_phase("starting Riot account setup")
+        .map_err(CloseError::Refused)?;
     kill_riot_client_processes();
     thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
-    ensure_riot_client_closed()?;
-    clear_live_riot_setup_state(install_dir)
+    ensure_riot_client_closed().map_err(CloseError::AfterClose)?;
+    clear_live_riot_setup_state(install_dir).map_err(CloseError::AfterClose)
 }
 
 /// Quit the client, clear its session and relaunch it on the login screen, in
@@ -242,6 +288,7 @@ pub(super) fn prepare_clean_riot_launch(install_dir: Option<&Path>) -> Result<()
 pub(super) fn spawn_riot_setup_launch(
     app_handle: AppCtx,
     profile_id: String,
+    previous_profile_id: String,
     client_path: PathBuf,
 ) {
     set_setup_launch(&profile_id, SetupLaunch::Running);
@@ -250,15 +297,17 @@ pub(super) fn spawn_riot_setup_launch(
         run_riot_setup_launch(
             &app_handle,
             &profile_id,
+            &previous_profile_id,
             crate::platforms::SETUP_LAUNCH_LOCK_TIMEOUT,
             || {
-                ensure_league_not_in_protected_phase("starting Riot account setup")?;
                 let started = std::time::Instant::now();
                 let prepared = prepare_clean_riot_launch(client_path.parent());
                 let prepare_ms = started.elapsed().as_millis();
                 // Relaunch even when the clear stopped halfway, so the client
-                // is not left closed. The failure still fails the setup.
-                let launched = relaunch_after_quit(prepared, || launch_riot_client(&client_path));
+                // is not left closed. The failure still fails the setup. A
+                // guard refusal closed nothing: the client keeps running.
+                let launched =
+                    relaunch_unless_refused(prepared, || launch_riot_client(&client_path));
                 // The poll's `lockfile=true` line then dates the new client's
                 // start.
                 log_platform_info(
@@ -463,8 +512,9 @@ pub(super) fn get_profile_setup_status_internal(
 
     // A client that survived the quit still holds the rotated tokens in
     // memory: capturing now would save a session the server already dropped.
-    if let Err(error) = graceful_riot_quit().and_then(|()| {
+    if let Err(error) = graceful_riot_quit_checked().and_then(|()| {
         capture_profile_into_snapshot(app_handle, cfg, profile_id, identity.as_ref())
+            .map_err(CloseError::AfterClose)
     }) {
         return Err(undo_failed_setup_capture(
             app_handle,
@@ -480,17 +530,20 @@ pub(super) fn get_profile_setup_status_internal(
     Ok(make_setup_status(&updated, "ready", ""))
 }
 
-/// A setup capture failed after the poll quit the client. Put the profile back
-/// in its state from before the capture, or it stays `capturing`, which a
-/// cancel does not remove, and reopen the client. Returns the capture error.
+/// A setup capture failed. Put the profile back in its state from before the
+/// capture, or it stays `capturing`, which a cancel does not remove, and
+/// reopen the client unless the League guard refused before anything was
+/// closed. Returns the capture error.
 pub(super) fn undo_failed_setup_capture(
     app_handle: &dyn AppContext,
     cfg: &mut config::AppConfig,
     profile_id: &str,
     state_before_capture: &str,
-    error: String,
+    error: CloseError,
     launch: impl FnOnce() -> Result<(), String>,
 ) -> String {
+    let reopen = !error.is_refusal();
+    let error = String::from(error);
     log_platform_error(
         app_handle,
         "riot.setup_poll",
@@ -512,6 +565,9 @@ pub(super) fn undo_failed_setup_capture(
             "Could not restore the profile state after a failed capture",
             save_error,
         );
+    }
+    if !reopen {
+        return error;
     }
     if let Err(launch_error) = launch() {
         log_platform_error(
@@ -542,25 +598,45 @@ pub fn begin_profile_setup(app_handle: AppCtx) -> Result<RiotProfileSetupStatus,
             .is_some_and(|p| SETUP_BACKUP_STATES.contains(&p.snapshot_state.as_str()));
     if prev_needs_backup {
         let identity = detect_live_identity().ok();
-        // From here the client is closed: every failure relaunches it.
-        let saved = graceful_riot_quit().and_then(|()| {
-            backup_before_setup(&app_handle, &mut cfg, &prev_id, install_dir, identity)
-        });
-        let started = saved.and_then(|()| start_setup_profile(&app_handle, &mut cfg, &client_path));
-        if started.is_err() {
-            if let Err(error) = launch_riot_client(&client_path) {
-                log_platform_error(
-                    &app_handle,
-                    "riot.begin_setup",
-                    "Could not relaunch Riot Client after a failed setup start",
-                    error,
-                );
-            }
-        }
-        return started;
+        return start_setup_after_quit(
+            &app_handle,
+            graceful_riot_quit_checked,
+            || {
+                backup_before_setup(&app_handle, &mut cfg, &prev_id, install_dir, identity)?;
+                start_setup_profile(&app_handle, &mut cfg, &client_path)
+            },
+            || launch_riot_client(&client_path),
+        );
     }
 
     start_setup_profile(&app_handle, &mut cfg, &client_path)
+}
+
+/// Quit the client, then back up and start the setup with `work`. From the
+/// close on, every failure relaunches the client; a refusal of the League
+/// guard before anything was closed leaves the running client alone.
+pub(super) fn start_setup_after_quit<T>(
+    app_handle: &dyn AppContext,
+    quit: impl FnOnce() -> Result<(), CloseError>,
+    work: impl FnOnce() -> Result<T, String>,
+    launch: impl FnOnce() -> Result<(), String>,
+) -> Result<T, String> {
+    let started = match quit() {
+        // Nothing was closed: the client runs as before.
+        Err(CloseError::Refused(refusal)) => return Err(refusal),
+        quit => quit.map_err(String::from).and_then(|()| work()),
+    };
+    if started.is_err() {
+        if let Err(error) = launch() {
+            log_platform_error(
+                app_handle,
+                "riot.begin_setup",
+                "Could not relaunch Riot Client after a failed setup start",
+                error,
+            );
+        }
+    }
+    started
 }
 
 /// Save the current profile's live session before a setup clears it. A
@@ -623,12 +699,16 @@ pub(super) fn start_setup_profile(
     cfg: &mut config::AppConfig,
     client_path: &Path,
 ) -> Result<RiotProfileSetupStatus, String> {
+    // Made current again when the League guard refuses the setup launch: its
+    // account is still the one signed in.
+    let previous_profile_id = cfg.riot.current_profile_id.clone();
     if let Some(existing) = find_pending_setup_profile(cfg).cloned() {
         cfg.riot.current_profile_id = existing.id.clone();
         config::save_config(app_handle, cfg)?;
         spawn_riot_setup_launch(
             app_handle.clone(),
             existing.id.clone(),
+            previous_profile_id,
             client_path.to_path_buf(),
         );
         return Ok(make_setup_status(&existing, "waiting_for_client", ""));
@@ -655,6 +735,7 @@ pub(super) fn start_setup_profile(
     spawn_riot_setup_launch(
         app_handle.clone(),
         profile_id.clone(),
+        previous_profile_id,
         client_path.to_path_buf(),
     );
     let created = find_profile(cfg, &profile_id)

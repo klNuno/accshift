@@ -68,14 +68,33 @@ pub(super) fn ensure_league_not_in_protected_phase(action: &str) -> Result<(), S
 }
 
 pub(super) fn ensure_no_riot_game_running(action: &str) -> Result<(), String> {
-    let running_games = running_process_names(RIOT_GAME_PROCESS_NAMES);
+    riot_game_guard_error(
+        &running_process_names(RIOT_GAME_PROCESS_NAMES),
+        || {
+            is_any_process_running(LEAGUE_CLIENT_PROCESS_NAMES)
+                .then(detect_protected_league_phase)
+                .flatten()
+        },
+        action,
+    )
+}
+
+/// The refusal for a running game, `Ok(())` when nothing is running. The
+/// League phase is read first: a League match runs `League of Legends.exe`
+/// too, and its refusal has a dedicated message the app translates.
+pub(super) fn riot_game_guard_error(
+    running_games: &[&str],
+    league_phase: impl FnOnce() -> Option<&'static str>,
+    action: &str,
+) -> Result<(), String> {
+    league_phase_guard_error(league_phase(), action)?;
     if !running_games.is_empty() {
         return Err(format!(
             "Close Riot game processes before {action}: {}",
             running_games.join(", ")
         ));
     }
-    ensure_league_not_in_protected_phase(action)
+    Ok(())
 }
 
 /// Fails when a client process outlived the quit. The session files are only
@@ -152,22 +171,100 @@ pub(super) fn riot_local_client() -> &'static reqwest::Client {
     })
 }
 
+/// Why closing the Riot client failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum CloseError {
+    /// The League guard refused before any quit was asked or any process
+    /// killed: the client runs as before, so nothing needs relaunching.
+    Refused(String),
+    /// A quit was asked or a kill tried, or a step after the close failed.
+    /// The caller relaunches the client so it is never left closed.
+    AfterClose(String),
+}
+
+impl CloseError {
+    pub(super) fn is_refusal(&self) -> bool {
+        matches!(self, Self::Refused(_))
+    }
+}
+
+impl From<CloseError> for String {
+    fn from(error: CloseError) -> Self {
+        match error {
+            CloseError::Refused(message) | CloseError::AfterClose(message) => message,
+        }
+    }
+}
+
+/// What the local API made of the quit request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum QuitRequest {
+    /// No lockfile: the request was never sent.
+    NoApi,
+    /// Sent, but no answer: the client may have received it.
+    Failed,
+    /// The client accepted the quit.
+    Sent,
+}
+
+/// The process side of a graceful quit, injected so the order of the guard,
+/// the wait and the forced close runs in tests without a Riot client.
+pub(super) struct QuitIo<'a> {
+    /// The League guard: `Err` while closing `LeagueClient` must be refused.
+    pub guard: &'a dyn Fn() -> Result<(), String>,
+    pub request_quit: &'a dyn Fn() -> QuitRequest,
+    pub client_running: &'a dyn Fn() -> bool,
+    /// One pause between two checks of `client_running`.
+    pub wait: &'a dyn Fn(),
+    /// Kills the client processes, then fails when one survived.
+    pub force_close: &'a dyn Fn() -> Result<(), String>,
+    /// Cleanup once the client exited on its own.
+    pub after_exit: &'a dyn Fn(),
+    /// Checks of `client_running` before the forced close.
+    pub polls: usize,
+}
+
 /// Request a graceful quit via the local API, which flushes in-memory tokens
 /// to disk before exiting. Falls back to force-kill if the API is unreachable
 /// or the process doesn't exit within the timeout. An error means a client
-/// process survived both (an elevated or hung client).
+/// process survived both (an elevated or hung client), or the League guard
+/// refused.
 pub(super) fn graceful_riot_quit() -> Result<(), String> {
-    ensure_league_not_in_protected_phase("closing Riot Client")?;
-    let access = match read_riot_local_api_access() {
-        Ok(a) => a,
-        Err(_) => {
-            kill_riot_client_processes();
-            return ensure_riot_client_closed();
-        }
-    };
+    graceful_riot_quit_checked().map_err(String::from)
+}
 
-    // POST /process-control/v1/process/quit triggers a graceful shutdown
-    let quit_ok = crate::runtime::block_on(async {
+/// [`graceful_riot_quit`], telling a refusal before anything was closed apart.
+pub(super) fn graceful_riot_quit_checked() -> Result<(), CloseError> {
+    let guard = || ensure_league_not_in_protected_phase("closing Riot Client");
+    let request_quit = request_riot_quit;
+    let client_running = || is_any_process_running(RIOT_CLIENT_PROCESS_NAMES);
+    let wait = || thread::sleep(std::time::Duration::from_millis(500));
+    let force_close = || {
+        kill_riot_client_processes();
+        ensure_riot_client_closed()
+    };
+    let after_exit = || {
+        kill_riot_crash_handlers();
+        thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
+    };
+    run_graceful_quit(&QuitIo {
+        guard: &guard,
+        request_quit: &request_quit,
+        client_running: &client_running,
+        wait: &wait,
+        force_close: &force_close,
+        after_exit: &after_exit,
+        // Up to 8 seconds.
+        polls: 16,
+    })
+}
+
+/// POST /process-control/v1/process/quit triggers a graceful shutdown.
+fn request_riot_quit() -> QuitRequest {
+    let Ok(access) = read_riot_local_api_access() else {
+        return QuitRequest::NoApi;
+    };
+    let sent = crate::runtime::block_on(async {
         let url = format!(
             "{}://127.0.0.1:{}/process-control/v1/process/quit",
             access.protocol, access.port
@@ -179,25 +276,45 @@ pub(super) fn graceful_riot_quit() -> Result<(), String> {
             .await
             .is_ok()
     });
-
-    if !quit_ok {
-        kill_riot_client_processes();
-        return ensure_riot_client_closed();
+    if sent {
+        QuitRequest::Sent
+    } else {
+        QuitRequest::Failed
     }
+}
 
-    // Wait for the process to exit (up to 8 seconds)
-    for _ in 0..16 {
-        if !is_any_process_running(RIOT_CLIENT_PROCESS_NAMES) {
-            kill_riot_crash_handlers();
-            thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
+pub(super) fn run_graceful_quit(io: &QuitIo) -> Result<(), CloseError> {
+    (io.guard)().map_err(CloseError::Refused)?;
+    match (io.request_quit)() {
+        QuitRequest::NoApi => return forced_close(io, false),
+        QuitRequest::Failed => return forced_close(io, true),
+        QuitRequest::Sent => {}
+    }
+    for _ in 0..io.polls {
+        if !(io.client_running)() {
+            (io.after_exit)();
             return Ok(());
         }
-        thread::sleep(std::time::Duration::from_millis(500));
+        (io.wait)();
     }
-
     // Timed out, so force kill
-    kill_riot_client_processes();
-    ensure_riot_client_closed()
+    forced_close(io, true)
+}
+
+/// The forced-kill fallback. The League phase is read again first: the quit
+/// request and the wait take seconds, long enough to enter champion select,
+/// and the kill takes `LeagueClient` down with the client. `quit_asked` says
+/// whether a quit request may already have closed part of the client, so a
+/// refusal then still has the caller relaunch it.
+fn forced_close(io: &QuitIo, quit_asked: bool) -> Result<(), CloseError> {
+    if let Err(refusal) = (io.guard)() {
+        return Err(if quit_asked {
+            CloseError::AfterClose(refusal)
+        } else {
+            CloseError::Refused(refusal)
+        });
+    }
+    (io.force_close)().map_err(CloseError::AfterClose)
 }
 
 pub(super) fn launch_riot_client(client_path: &Path) -> Result<(), String> {
