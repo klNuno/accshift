@@ -112,7 +112,9 @@ pub(super) fn is_default_riot_config(value: &RiotConfig) -> bool {
 }
 
 pub(super) fn is_default_battle_net_config(value: &BattleNetConfig) -> bool {
-    value.path_override.is_empty() && value.accounts.is_empty()
+    value.path_override.is_empty()
+        && value.accounts.is_empty()
+        && value.owed_saved_accounts.is_empty()
 }
 
 pub(super) fn is_default_ubisoft_config(value: &UbisoftConfig) -> bool {

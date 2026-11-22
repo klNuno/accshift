@@ -13,6 +13,7 @@ pub(super) fn portable_config(config: &AppConfig) -> AppConfig {
     portable.steam.cs2_bridge = Cs2BridgeConfig::default();
     portable.riot.path_override.clear();
     portable.battle_net.path_override.clear();
+    portable.battle_net.owed_saved_accounts.clear();
     portable.ubisoft.path_override.clear();
     portable.epic.path_override.clear();
     portable.gog.path_override.clear();
@@ -116,6 +117,7 @@ pub(super) fn local_config(config: &AppConfig) -> AppConfig {
     {
         target.clone_from(source);
     }
+    local.battle_net.owed_saved_accounts = config.battle_net.owed_saved_accounts.clone();
     // Same rule as every shipped section: where a launcher lives is a fact
     // about this machine, so it never travels in the portable file.
     local.custom_platforms = config
@@ -179,6 +181,10 @@ pub(super) fn merge_split_configs(portable: AppConfig, mut local: AppConfig) -> 
         local.steam.api_key_encrypted,
     );
     overwrite_if_set(&mut merged.steam.cs2_bridge, local.steam.cs2_bridge);
+    overwrite_if_set(
+        &mut merged.battle_net.owed_saved_accounts,
+        local.battle_net.owed_saved_accounts,
+    );
     for (id, section) in local.custom_platforms {
         if section.path_override.trim().is_empty() {
             continue;

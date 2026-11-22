@@ -533,6 +533,7 @@ fn portable_config_strips_secrets_and_paths() {
         battle_net: BattleNetConfig {
             path_override: "C:\\BNet".into(),
             accounts: vec![],
+            owed_saved_accounts: vec![],
         },
         ubisoft: UbisoftConfig {
             path_override: "C:\\Ubi".into(),
@@ -639,6 +640,7 @@ fn local_config_keeps_only_secrets_paths_and_window() {
                 battle_tag: "Tag#1234".into(),
                 last_used_at: None,
             }],
+            owed_saved_accounts: vec![],
         },
         ubisoft: UbisoftConfig {
             path_override: "C:\\Ubi".into(),
@@ -917,4 +919,40 @@ fn telemetry_identifiers_stay_local_and_merge_back() {
         config.telemetry.pending_forget_install_ids
     );
     assert_eq!(merged.telemetry.anonymous_id, config.telemetry.anonymous_id);
+}
+
+#[test]
+fn battle_net_owed_saved_accounts_stay_local_and_missing_field_is_noop() {
+    let config = AppConfig {
+        battle_net: BattleNetConfig {
+            owed_saved_accounts: vec!["old-a@example.com".into(), "old-b@example.com".into()],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let portable = portable_config(&config);
+    assert!(portable.battle_net.owed_saved_accounts.is_empty());
+
+    let local = local_config(&config);
+    assert_eq!(
+        local.battle_net.owed_saved_accounts,
+        vec!["old-a@example.com", "old-b@example.com"]
+    );
+    assert!(!is_default_battle_net_config(&local.battle_net));
+
+    let merged = merge_split_configs(portable, local);
+    assert_eq!(
+        merged.battle_net.owed_saved_accounts,
+        vec!["old-a@example.com", "old-b@example.com"]
+    );
+
+    // Config written before owed_saved_accounts existed parses cleanly with an
+    // empty list, and re-serializing omits the field altogether.
+    let legacy_json = r#"{"battleNet":{"path_override":"C:\\BNet","accounts":[]}}"#;
+    let raw: RawAppConfig = serde_json::from_str(legacy_json).unwrap();
+    let parsed = normalize_config(raw);
+    assert!(parsed.battle_net.owed_saved_accounts.is_empty());
+    let reserialized = serde_json::to_string(&parsed).unwrap();
+    assert!(!reserialized.contains("owed_saved_accounts"));
 }

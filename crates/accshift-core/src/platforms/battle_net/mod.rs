@@ -108,9 +108,10 @@ pub fn switch_account(app_handle: AppCtx, email: String) -> Result<(), String> {
     // failed step after the quit still brings the launcher back.
     kill_battle_net()?;
     let fresh = relaunch_if_err(&app_handle, read_saved_accounts())?;
-    let reordered = order_saved_accounts_for_switch(&with_owed_saved_accounts(fresh), &target);
+    let (merged, owed) = with_owed_saved_accounts(&*app_handle, fresh);
+    let reordered = order_saved_accounts_for_switch(&merged, &target);
     relaunch_if_err(&app_handle, write_saved_accounts(&app_handle, &reordered))?;
-    settle_owed_saved_accounts();
+    settle_owed_saved_accounts(&*app_handle, &owed);
     relaunch_if_err(
         &app_handle,
         remember_account_usage(&app_handle, &target, false),
@@ -144,9 +145,10 @@ pub fn forget_account(app_handle: AppCtx, email: String) -> Result<(), String> {
     // closed, which is what a forget did before.
     kill_battle_net()?;
     let fresh = relaunch_if_err(&app_handle, read_saved_accounts())?;
-    let filtered = saved_accounts_without(&with_owed_saved_accounts(fresh), &target_email);
+    let (merged, owed) = with_owed_saved_accounts(&*app_handle, fresh);
+    let filtered = saved_accounts_without(&merged, &target_email);
     relaunch_if_err(&app_handle, write_saved_accounts(&app_handle, &filtered))?;
-    settle_owed_saved_accounts();
+    settle_owed_saved_accounts(&*app_handle, &owed);
     relaunch_if_err(
         &app_handle,
         forget_account_metadata(&app_handle, &target_email),

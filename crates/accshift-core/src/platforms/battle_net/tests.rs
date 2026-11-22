@@ -10,7 +10,6 @@ use super::{
 };
 #[cfg(windows)]
 use super::{normalize_registry_path, write_saved_accounts};
-#[cfg(windows)]
 use crate::AppContext;
 use serde_json::json;
 use std::collections::HashSet;
@@ -287,12 +286,10 @@ fn normalize_registry_path_keeps_comma_path_with_icon_index() {
 // Seeds an APPDATA-rooted config, so it only exercises the Windows path
 // layout. The backup-before-overwrite branch it guards is shared, so
 // covering it on one OS is enough.
-#[cfg(windows)]
 struct TestCtx {
     root: std::path::PathBuf,
 }
 
-#[cfg(windows)]
 impl AppContext for TestCtx {
     fn app_config_dir(&self) -> Result<std::path::PathBuf, String> {
         Ok(self.root.clone())
@@ -389,34 +386,50 @@ fn battle_net_path_override_must_name_the_launcher() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-// One test for both ways a setup ends without a cancel: the owed list is a
-// process-wide static, so two tests on it would race.
 #[test]
 fn a_setup_that_ends_without_a_cancel_hands_its_saved_list_to_the_next_switch() {
+    let _guard = crate::config::config_io_test_mutex()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let root = std::env::temp_dir().join(format!(
+        "accshift-battlenet-setup-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let ctx = TestCtx { root: root.clone() };
+
     let old = vec![
         "old-a@example.com".to_string(),
         "old-b@example.com".to_string(),
     ];
 
     // Ready: the launcher signed in the new account and only saved that one.
-    owe_saved_accounts(&old);
+    owe_saved_accounts(&ctx, &old);
     let fresh = vec!["new@example.com".to_string()];
+    let (merged, owed) = with_owed_saved_accounts(&ctx, fresh);
+    assert_eq!(owed, old);
     assert_eq!(
-        order_saved_accounts_for_switch(&with_owed_saved_accounts(fresh), "old-b@example.com"),
+        order_saved_accounts_for_switch(&merged, "old-b@example.com"),
         vec![
             "old-b@example.com".to_string(),
             "new@example.com".to_string(),
             "old-a@example.com".to_string(),
         ]
     );
-    settle_owed_saved_accounts();
+    settle_owed_saved_accounts(&ctx, &owed);
+    let (after_settle, remaining) =
+        with_owed_saved_accounts(&ctx, vec!["new@example.com".to_string()]);
+    assert!(remaining.is_empty());
     assert_eq!(
-        with_owed_saved_accounts(vec!["new@example.com".to_string()]),
+        after_settle,
         vec!["new@example.com".to_string()],
         "a settled list is not written twice"
     );
 
-    // Expired: the purge owes the list instead of dropping it.
+    // Expired: the purge returns the owed list so the caller persists it
+    // instead of dropping it.
     let mut jobs = std::collections::HashMap::new();
     jobs.insert(
         "stale".to_string(),
@@ -426,19 +439,19 @@ fn a_setup_that_ends_without_a_cancel_hands_its_saved_list_to_the_next_switch() 
             last_touched_at: 0,
         },
     );
-    purge_expired_battle_net_setup_jobs(&mut jobs);
+    let expired = purge_expired_battle_net_setup_jobs(&mut jobs);
     assert!(jobs.is_empty());
+    owe_saved_accounts(&ctx, &expired);
+    let (merged, owed) = with_owed_saved_accounts(&ctx, vec!["new@example.com".to_string()]);
     assert_eq!(
-        saved_accounts_without(
-            &with_owed_saved_accounts(vec!["new@example.com".to_string()]),
-            "gone@example.com"
-        ),
+        saved_accounts_without(&merged, "gone@example.com"),
         vec![
             "new@example.com".to_string(),
             "old-c@example.com".to_string()
         ]
     );
-    settle_owed_saved_accounts();
+    settle_owed_saved_accounts(&ctx, &owed);
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
@@ -457,4 +470,91 @@ fn writing_saved_names_keeps_the_key_order_of_the_config() {
         written,
         r#"{"Zeta":{"b":1,"a":2},"Client":{"Zoom":"1","SavedAccountNames":"new@example.com","Alpha":"2"},"Alpha":true}"#
     );
+}
+
+#[test]
+fn owed_saved_accounts_persist_in_local_config() {
+    let _guard = crate::config::config_io_test_mutex()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let root = std::env::temp_dir().join(format!(
+        "accshift-battlenet-owed-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let other_root = root.join("evict-cache");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&other_root).unwrap();
+    let ctx = TestCtx { root: root.clone() };
+    let other_ctx = TestCtx { root: other_root };
+
+    // A config written before owed_saved_accounts existed loads cleanly as a no-op.
+    let portable_path = crate::storage::portable_config_path(&ctx).unwrap();
+    if let Some(parent) = portable_path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(
+        &portable_path,
+        r#"{"battleNet":{"accounts":[{"email":"existing@example.com"}]}}"#,
+    )
+    .unwrap();
+    let (merged, owed) = with_owed_saved_accounts(&ctx, vec!["fresh@example.com".to_string()]);
+    assert!(owed.is_empty());
+    assert_eq!(merged, vec!["fresh@example.com".to_string()]);
+
+    owe_saved_accounts(
+        &ctx,
+        &[
+            "old-a@example.com".to_string(),
+            "old-b@example.com".to_string(),
+        ],
+    );
+
+    // Persisted in local config only, never in portable config.
+    let local_path = crate::storage::local_config_path(&ctx).unwrap();
+    let local_content = std::fs::read_to_string(&local_path).unwrap_or_default();
+    let portable_content = std::fs::read_to_string(&portable_path).unwrap_or_default();
+    assert!(
+        local_content.contains("old-a@example.com"),
+        "owed saved accounts must be persisted in local config so they survive a restart"
+    );
+    assert!(
+        !portable_content.contains("owed_saved_accounts"),
+        "owed saved accounts are machine-local and must stay out of portable config"
+    );
+
+    // Simulate a restart: evict the single-entry config read cache by loading
+    // a different context, then read owed accounts back from disk.
+    let _ = crate::config::load_config(&other_ctx);
+    let (merged, owed) = with_owed_saved_accounts(&ctx, vec!["new@example.com".to_string()]);
+    assert_eq!(
+        owed,
+        vec![
+            "old-a@example.com".to_string(),
+            "old-b@example.com".to_string(),
+        ]
+    );
+    assert_eq!(
+        merged,
+        vec![
+            "new@example.com".to_string(),
+            "old-a@example.com".to_string(),
+            "old-b@example.com".to_string(),
+        ]
+    );
+
+    // Partial settle removes only the settled snapshot, keeping any account
+    // owed afterwards intact.
+    owe_saved_accounts(&ctx, &["later@example.com".to_string()]);
+    settle_owed_saved_accounts(&ctx, &owed);
+    let _ = crate::config::load_config(&other_ctx);
+    let (_, remaining) = with_owed_saved_accounts(&ctx, Vec::new());
+    assert_eq!(remaining, vec!["later@example.com".to_string()]);
+
+    settle_owed_saved_accounts(&ctx, &remaining);
+    let _ = crate::config::load_config(&other_ctx);
+    let (_, empty) = with_owed_saved_accounts(&ctx, Vec::new());
+    assert!(empty.is_empty());
+
+    let _ = std::fs::remove_dir_all(&root);
 }

@@ -112,6 +112,12 @@ pub struct BattleNetConfig {
     pub path_override: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub accounts: Vec<BattleNetAccountConfig>,
+    /// `SavedAccountNames` entries emptied during an account setup that have
+    /// not yet been written back by a cancel, switch or forget. Kept in the
+    /// machine-local config so a restart between setup and the next switch
+    /// does not drop them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub owed_saved_accounts: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]

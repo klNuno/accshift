@@ -20,46 +20,84 @@ pub(super) fn battle_net_setup_jobs() -> &'static Mutex<HashMap<String, BattleNe
 
 pub(super) fn purge_expired_battle_net_setup_jobs(
     jobs: &mut HashMap<String, BattleNetAccountSetupJob>,
-) {
+) -> Vec<String> {
+    let mut expired_saved = Vec::new();
     jobs.retain(|_, job| {
         let expired = crate::platforms::setup_expired(job.last_touched_at, BATTLE_NET_SETUP_TTL_MS);
         if expired {
-            owe_saved_accounts(&job.previous_saved);
+            expired_saved = merge_saved_after_setup(
+                std::mem::take(&mut expired_saved),
+                &job.previous_saved,
+            );
         }
         !expired
     });
+    expired_saved
 }
 
-/// Saved names that setups emptied out of `SavedAccountNames` and that no
-/// cancel put back. A setup that ends with a sign-in leaves the launcher
-/// running on the new account; quitting it then to restore the list would
-/// undo what the user just did, so the next switch or forget, which quits the
-/// launcher anyway, writes them back.
-fn owed_saved_accounts() -> &'static Mutex<Vec<String>> {
-    static OWED: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
-    OWED.get_or_init(|| Mutex::new(Vec::new()))
-}
-
-pub(super) fn owe_saved_accounts(previous: &[String]) {
-    if let Ok(mut owed) = owed_saved_accounts().lock() {
-        let merged = merge_saved_after_setup(std::mem::take(&mut *owed), previous);
-        *owed = merged;
+/// Persists saved names that setups emptied out of `SavedAccountNames` and
+/// that no cancel put back. A setup that ends with a sign-in leaves the
+/// launcher running on the new account; quitting it then to restore the list
+/// would undo what the user just did, so the next switch or forget, which
+/// quits the launcher anyway, writes them back — even after an app restart.
+pub(super) fn owe_saved_accounts(app_handle: &dyn AppContext, previous: &[String]) {
+    let incoming = collect_unique_accounts(previous.iter().cloned(), &mut HashSet::new());
+    if incoming.is_empty() {
+        return;
+    }
+    if let Err(err) = config::update_config(app_handle, |cfg| {
+        let current = std::mem::take(&mut cfg.battle_net.owed_saved_accounts);
+        cfg.battle_net.owed_saved_accounts = merge_saved_after_setup(current, &incoming);
+    }) {
+        log_platform_error(
+            app_handle,
+            "battle_net.owe_saved_accounts",
+            "Could not persist owed Battle.net saved account names",
+            err,
+        );
     }
 }
 
-/// `fresh` with every owed name appended once, for a write that quit the
-/// launcher first.
-pub(super) fn with_owed_saved_accounts(fresh: Vec<String>) -> Vec<String> {
-    match owed_saved_accounts().lock() {
-        Ok(owed) => merge_saved_after_setup(fresh, &owed),
-        Err(_) => fresh,
+/// `fresh` with every persisted owed name appended once, for a write that quit
+/// the launcher first. Returns both the merged list and the snapshot of owed
+/// names included in it so [`settle_owed_saved_accounts`] clears only what was
+/// actually written.
+pub(super) fn with_owed_saved_accounts(
+    app_handle: &dyn AppContext,
+    fresh: Vec<String>,
+) -> (Vec<String>, Vec<String>) {
+    let owed = config::load_config(app_handle)
+        .battle_net
+        .owed_saved_accounts;
+    if owed.is_empty() {
+        return (fresh, owed);
     }
+    let merged = merge_saved_after_setup(fresh, &owed);
+    (merged, owed)
 }
 
-/// Called once a list built by [`with_owed_saved_accounts`] is on disk.
-pub(super) fn settle_owed_saved_accounts() {
-    if let Ok(mut owed) = owed_saved_accounts().lock() {
-        owed.clear();
+/// Called once a list built by [`with_owed_saved_accounts`] (or a setup
+/// restore) is on disk. Removes only `settled` so names owed concurrently stay
+/// persisted.
+pub(super) fn settle_owed_saved_accounts(app_handle: &dyn AppContext, settled: &[String]) {
+    if settled.is_empty() {
+        return;
+    }
+    let settled_keys: HashSet<String> = settled
+        .iter()
+        .map(|name| normalize_account_key(name))
+        .collect();
+    if let Err(err) = config::update_config(app_handle, |cfg| {
+        cfg.battle_net
+            .owed_saved_accounts
+            .retain(|name| !settled_keys.contains(&normalize_account_key(name)));
+    }) {
+        log_platform_error(
+            app_handle,
+            "battle_net.settle_owed_saved_accounts",
+            "Could not settle owed Battle.net saved account names",
+            err,
+        );
     }
 }
 
@@ -83,19 +121,25 @@ pub fn begin_account_setup(app_handle: AppCtx) -> Result<SetupStatus, String> {
     let previous_saved = read_saved_accounts().unwrap_or_default();
     write_saved_accounts(&app_handle, &[])?;
 
-    let mut jobs = battle_net_setup_jobs()
-        .lock()
-        .map_err(|_| "Battle.net setup storage is unavailable".to_string())?;
-    purge_expired_battle_net_setup_jobs(&mut jobs);
-    jobs.insert(
-        setup_id.clone(),
-        BattleNetAccountSetupJob {
-            known_account_keys,
-            previous_saved: previous_saved.clone(),
-            last_touched_at: created_at,
-        },
-    );
-    drop(jobs);
+    let expired = {
+        let mut jobs = battle_net_setup_jobs()
+            .lock()
+            .map_err(|_| "Battle.net setup storage is unavailable".to_string())?;
+        let expired = purge_expired_battle_net_setup_jobs(&mut jobs);
+        jobs.insert(
+            setup_id.clone(),
+            BattleNetAccountSetupJob {
+                known_account_keys,
+                previous_saved: previous_saved.clone(),
+                last_touched_at: created_at,
+            },
+        );
+        expired
+    };
+    // Persist immediately after emptying SavedAccountNames so even a restart
+    // or crash mid-setup does not lose the user's previously saved accounts.
+    let to_owe = merge_saved_after_setup(expired, &previous_saved);
+    owe_saved_accounts(&*app_handle, &to_owe);
 
     if let Err(e) = launch_battle_net(&app_handle) {
         log_platform_error(
@@ -108,13 +152,14 @@ pub fn begin_account_setup(app_handle: AppCtx) -> Result<SetupStatus, String> {
         if let Ok(mut jobs) = battle_net_setup_jobs().lock() {
             jobs.remove(&setup_id);
         }
-        if let Err(restore) = write_saved_accounts(&app_handle, &previous_saved) {
-            log_platform_error(
+        match write_saved_accounts(&app_handle, &previous_saved) {
+            Ok(()) => settle_owed_saved_accounts(&*app_handle, &previous_saved),
+            Err(restore) => log_platform_error(
                 &app_handle,
                 "battle_net.begin_account_setup",
                 "Could not restore SavedAccountNames after a failed setup launch",
                 restore,
-            );
+            ),
         }
         return Err(e);
     }
@@ -131,16 +176,20 @@ pub fn get_account_setup_status(
     app_handle: AppCtx,
     setup_id: String,
 ) -> Result<SetupStatus, String> {
-    let job = {
+    let (job, expired) = {
         let mut jobs = battle_net_setup_jobs()
             .lock()
             .map_err(|_| "Battle.net setup storage is unavailable".to_string())?;
-        purge_expired_battle_net_setup_jobs(&mut jobs);
-        let Some(job) = jobs.get_mut(&setup_id) else {
-            return Err("Battle.net setup session not found".into());
-        };
-        job.last_touched_at = crate::platforms::now_unix_ms();
-        job.clone()
+        let expired = purge_expired_battle_net_setup_jobs(&mut jobs);
+        let job = jobs.get_mut(&setup_id).map(|job| {
+            job.last_touched_at = crate::platforms::now_unix_ms();
+            job.clone()
+        });
+        (job, expired)
+    };
+    owe_saved_accounts(&*app_handle, &expired);
+    let Some(job) = job else {
+        return Err("Battle.net setup session not found".into());
     };
 
     let accounts = read_saved_accounts().unwrap_or_default();
@@ -151,7 +200,7 @@ pub fn get_account_setup_status(
         if let Ok(mut jobs) = battle_net_setup_jobs().lock() {
             jobs.remove(&setup_id);
         }
-        owe_saved_accounts(&job.previous_saved);
+        owe_saved_accounts(&*app_handle, &job.previous_saved);
         let _ = remember_account_usage(&app_handle, account, true);
         return Ok(crate::platforms::make_setup_status(
             &setup_id,
@@ -182,13 +231,14 @@ pub fn get_account_setup_status(
 }
 
 pub fn cancel_account_setup(app_handle: AppCtx, setup_id: String) -> Result<(), String> {
-    let job = {
+    let (job, expired) = {
         let mut jobs = battle_net_setup_jobs()
             .lock()
             .map_err(|_| "Battle.net setup storage is unavailable".to_string())?;
-        purge_expired_battle_net_setup_jobs(&mut jobs);
-        jobs.remove(&setup_id)
+        let expired = purge_expired_battle_net_setup_jobs(&mut jobs);
+        (jobs.remove(&setup_id), expired)
     };
+    owe_saved_accounts(&*app_handle, &expired);
     let Some(job) = job else {
         return Ok(());
     };
@@ -197,13 +247,14 @@ pub fn cancel_account_setup(app_handle: AppCtx, setup_id: String) -> Result<(), 
     }
     // The cancel itself succeeds either way: the job is gone, and a list left
     // empty only costs the launcher its remembered accounts until the next switch.
-    if let Err(e) = restore_saved_accounts_after_setup(&app_handle, &job.previous_saved) {
-        log_platform_error(
+    match restore_saved_accounts_after_setup(&app_handle, &job.previous_saved) {
+        Ok(()) => settle_owed_saved_accounts(&*app_handle, &job.previous_saved),
+        Err(e) => log_platform_error(
             &app_handle,
             "battle_net.cancel_account_setup",
             "Could not restore SavedAccountNames after a cancelled setup",
             e,
-        );
+        ),
     }
     Ok(())
 }
