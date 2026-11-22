@@ -356,7 +356,6 @@ fn tab_content(
     f: &Frame,
 ) -> Vec<SettingsAction> {
     let ctx = ui.ctx().clone();
-    let ppp = ctx.pixels_per_point();
     // The find shortcut: the search field takes focus with its text
     // selected.
     if std::mem::take(&mut panel.focus_platform_search) && f.active == "platforms" {
@@ -367,6 +366,13 @@ fn tab_content(
         .active
         .strip_prefix("platform:")
         .and_then(|id| view.platforms.iter().find(|p| p.id == id));
+    // A Shortcuts row just started listening: it may sit under every saved
+    // row, below the fold of a tab opened at its top.
+    if f.active == crate::app::shortcuts::TAB && std::mem::take(&mut panel.reveal_listening) {
+        if let Some(offset) = listening_offset(&ctx, panel, view, f, viewport) {
+            panel.scroll = offset;
+        }
+    }
     let c = Ctx {
         panel,
         view,
@@ -388,26 +394,13 @@ fn tab_content(
     for (k, ((spec, rect), measured)) in cards.iter().zip(&grid.rects).zip(&grid.items).enumerate()
     {
         card::paint_frame(&content_ui, *rect, &view.vars, kind);
-        let inner = card::content(*rect, ppp);
-        // The layout's heights hold when the content width is the one they
-        // were measured at; a float rounding step apart, measure again.
-        let measured = (inner.width() == measured.inner).then_some(&measured.heights);
-        let mut y = inner.top();
-        for (i, item) in spec.items.iter().enumerate() {
-            if i > 0 {
-                y += gap_before(item);
-            }
-            let h = measured.map_or_else(
-                || measure::item_height(&ctx, &c, item, inner.width()),
-                |m| m[i],
-            );
-            let r = Rect::from_min_size(pos2(inner.left(), y), vec2(inner.width(), h));
+        let placed = item_rects(&ctx, &c, spec, *rect, measured);
+        for (i, (item, r)) in spec.items.iter().zip(placed).enumerate() {
             // By card and item: two cards share a left edge when one spans
             // the row (telemetry under privacy), and an id clash leaves the
             // first widget without a hit box.
             let id = c.scope.with((f.active, k, i));
             out.extend(rows::paint_item(&mut content_ui, r, id, &c, item));
-            y += h;
         }
     }
     let mut offset = c.panel.scroll;
@@ -421,6 +414,85 @@ fn tab_content(
     );
     panel.scroll = offset;
     out
+}
+
+/// Where each item of the card laid out at `rect` sits.
+fn item_rects(
+    ctx: &egui::Context,
+    c: &Ctx,
+    spec: &CardSpec,
+    rect: Rect,
+    measured: &measure::CardItems,
+) -> Vec<Rect> {
+    let inner = card::content(rect, ctx.pixels_per_point());
+    // The layout's heights hold when the content width is the one they
+    // were measured at; a float rounding step apart, measure again.
+    let measured = (inner.width() == measured.inner).then_some(&measured.heights);
+    let mut y = inner.top();
+    let mut out = Vec::with_capacity(spec.items.len());
+    for (i, item) in spec.items.iter().enumerate() {
+        if i > 0 {
+            y += gap_before(item);
+        }
+        let h = measured.map_or_else(
+            || measure::item_height(ctx, c, item, inner.width()),
+            |m| m[i],
+        );
+        out.push(Rect::from_min_size(
+            pos2(inner.left(), y),
+            vec2(inner.width(), h),
+        ));
+        y += h;
+    }
+    out
+}
+
+/// The Shortcuts tab's scroll offset that shows its listening row whole,
+/// moved as little as it can; `None` when no row listens.
+fn listening_offset(
+    ctx: &egui::Context,
+    panel: &SettingsPanel,
+    view: &View,
+    f: &Frame,
+    viewport: Rect,
+) -> Option<f32> {
+    let c = Ctx {
+        panel,
+        view,
+        locale: f.locale,
+        focus: f.focus,
+        scope: Id::unique("settings"),
+    };
+    let cards = tab_cards(&c, f.active, None);
+    let grid = measure::fit_grid(ctx, &c, &cards, viewport);
+    let rows = &view.shortcuts.rows;
+    let row =
+        cards
+            .iter()
+            .zip(&grid.rects)
+            .zip(&grid.items)
+            .find_map(|((spec, rect), measured)| {
+                let placed = item_rects(ctx, &c, spec, *rect, measured);
+                spec.items
+                    .iter()
+                    .zip(placed)
+                    .find_map(|(item, r)| match item {
+                        Item::Shortcuts(shortcuts_tab::Item::Row(i))
+                            if rows.get(*i).is_some_and(|row| row.listening) =>
+                        {
+                            Some(r)
+                        }
+                        _ => None,
+                    })
+            })?;
+    // The grid's top is the viewport's, less the offset it was laid at.
+    let top = row.top() - viewport.top() + panel.scroll;
+    Some(scroll::nearest(
+        panel.scroll,
+        viewport.height(),
+        top,
+        top + row.height(),
+    ))
 }
 
 /// The cards of tab `tab`; `platform` is the platform a per-platform tab

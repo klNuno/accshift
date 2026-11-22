@@ -104,6 +104,9 @@ pub struct SettingsPanel {
     pub backup: super::BackupState,
     /// The scroll offset of the tab's content.
     pub scroll: f32,
+    /// A Shortcuts row started listening: the next frame of that tab
+    /// scrolls it into view.
+    pub reveal_listening: bool,
     /// Text for the clipboard once the frame has the context.
     pub(super) clipboard: Option<String>,
 }
@@ -262,6 +265,7 @@ impl SettingsPanel {
             pending_removal: None,
             backup: super::BackupState::default(),
             scroll: 0.0,
+            reveal_listening: false,
             clipboard: None,
             draft,
         };

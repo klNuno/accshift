@@ -221,13 +221,14 @@ fn stale_persona_bindings_are_dropped() {
 }
 
 #[test]
-fn missing_accounts_are_set_aside_from_a_non_empty_list_only() {
+fn missing_accounts_are_set_aside_from_any_loaded_list() {
     let mut shortcuts = GlobalShortcuts::default();
     shortcuts.set(&account("steam", "1"), Some(combo("Ctrl+Alt+1")));
     shortcuts.set(&account("steam", "2"), Some(combo("Ctrl+Alt+2")));
     shortcuts.set(&account("riot", "2"), Some(combo("Ctrl+Alt+3")));
-    // An empty read is not proof the accounts are gone.
-    assert!(shortcuts.absent_accounts("steam", &[]).is_empty());
+    // A list that loaded empty sets every bound account of its platform
+    // aside; a failed read never gets here.
+    assert_eq!(shortcuts.absent_accounts("steam", &[]), ["1", "2"]);
     // A short list sets the missing account aside without unsaving it.
     assert_eq!(shortcuts.absent_accounts("steam", &["1", "9"]), ["2"]);
     assert!(shortcuts.absent_accounts("riot", &["2"]).is_empty());

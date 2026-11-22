@@ -14,8 +14,13 @@ pub enum TaskEffect {
     Toast(Text),
     /// Reload the accounts.
     RefreshAccounts,
-    /// Remove the account from the grid.
-    RemoveAccount(String),
+    /// Remove the account of this platform from the app: its card when
+    /// its tab shows, its folder placement and its shortcut. The task may
+    /// finish after the user moved to another tab.
+    RemoveAccount {
+        platform_id: String,
+        account_id: String,
+    },
     /// Store the account's default game in the client stores.
     SetDefaultGame { steam_id: String, game: DefaultGame },
     /// Clear the account's default game in the client stores.

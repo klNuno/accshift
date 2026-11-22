@@ -3,13 +3,15 @@
 //! portal made of each binding.
 //!
 //! A binding shows active only once the portal's answer to `BindShortcuts`
-//! (or a later `ShortcutsChanged`) lists it, with the trigger it names. A
-//! press fires only for a binding the current session listed: an
-//! `Activated` from a closed session, or for an id it never bound, is
-//! dropped. A session the portal closes drops its bindings and is bound
-//! again once.
+//! (or a later `ShortcutsChanged`) lists it, with the trigger it names. The
+//! answer stands for the whole table; `ShortcutsChanged` names only what
+//! changed, and what it says outlives an answer applied after it. A press
+//! fires only for a binding the current session listed: an `Activated`
+//! from a closed session, or for an id it never bound, is dropped. A
+//! session the portal closes drops its bindings and is bound again once;
+//! one the worker closes itself is detached first.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use accshift_app::shortcuts::Outcome;
 
@@ -41,6 +43,9 @@ pub struct Bindings {
     answered_once: bool,
     /// The portal closed an answered session: bind the table again.
     rebind: bool,
+    /// The registrations a `ShortcutsChanged` of the current session named:
+    /// newer than any answer still on its way.
+    changed: HashSet<u32>,
 }
 
 impl Default for Bindings {
@@ -53,11 +58,20 @@ impl Default for Bindings {
             outcomes: HashMap::new(),
             answered_once: false,
             rebind: false,
+            changed: HashSet::new(),
         }
     }
 }
 
 impl Bindings {
+    /// The worker is about to close the current session to replace it: from
+    /// now its `Closed` is ours, not the portal's, and asks for no rebind,
+    /// even when a commit runs before the next session starts.
+    pub fn detach(&mut self) {
+        self.session = None;
+        self.forget_close();
+    }
+
     /// A fresh session asked to bind `keys`: each one pending.
     pub fn start(&mut self, session: &str, keys: Vec<(u32, String)>) {
         self.session = Some(session.to_string());
@@ -87,7 +101,9 @@ impl Bindings {
     /// portal declined the request. KDE lists a shortcut it did not bind
     /// (refused in a partly accepted batch, cleared in the system settings)
     /// with an empty `trigger_description`; one that names no trigger at
-    /// all is bound to something the portal does not describe.
+    /// all is bound to something the portal does not describe. A binding a
+    /// `ShortcutsChanged` named meanwhile keeps what that signal said: the
+    /// listener thread may apply it before the worker applies this answer.
     pub fn answered(&mut self, session: &str, listed: Option<&[Listed]>) {
         if self.session.as_deref() != Some(session) {
             return;
@@ -96,13 +112,12 @@ impl Bindings {
             self.answered_once = true;
         }
         for (id, key) in &self.keys {
+            if self.changed.contains(id) {
+                continue;
+            }
             let outcome = match listed {
                 None => Outcome::Refused,
-                Some(listed) => match listed.iter().find(|(bound, _)| bound == key) {
-                    None => Outcome::Refused,
-                    Some((_, Some(trigger))) if trigger.trim().is_empty() => Outcome::Refused,
-                    Some((_, trigger)) => Outcome::Active(trigger.clone()),
-                },
+                Some(listed) => listed_outcome(listed, key).unwrap_or(Outcome::Refused),
             };
             self.outcomes.insert(*id, outcome);
         }
@@ -129,6 +144,7 @@ impl Bindings {
     fn forget_close(&mut self) {
         self.answered_once = false;
         self.rebind = false;
+        self.changed.clear();
     }
 
     /// Whether the next commit sends the table even when it did not change,
@@ -137,10 +153,20 @@ impl Bindings {
         std::mem::take(&mut self.rebind)
     }
 
-    /// `ShortcutsChanged`: the session's whole list as it now stands (the
-    /// user changed or removed a trigger in the system settings).
+    /// `ShortcutsChanged`: the shortcuts whose trigger the user changed or
+    /// removed in the system settings. The portal names only those, so a
+    /// binding it leaves out keeps its outcome; an empty trigger unbinds.
     pub fn changed(&mut self, session: &str, listed: &[Listed]) {
-        self.answered(session, Some(listed));
+        if self.session.as_deref() != Some(session) {
+            return;
+        }
+        self.answered_once = true;
+        for (id, key) in &self.keys {
+            if let Some(outcome) = listed_outcome(listed, key) {
+                self.outcomes.insert(*id, outcome);
+                self.changed.insert(*id);
+            }
+        }
     }
 
     /// The registration an `Activated` of `session` for `key` fires, if
@@ -166,6 +192,15 @@ impl Bindings {
         }
         self.outcomes.get(&id).cloned().unwrap_or(Outcome::Pending)
     }
+}
+
+/// What `listed` says of the portal shortcut `key`, if it names it.
+fn listed_outcome(listed: &[Listed], key: &str) -> Option<Outcome> {
+    let (_, trigger) = listed.iter().find(|(bound, _)| bound == key)?;
+    Some(match trigger {
+        Some(trigger) if trigger.trim().is_empty() => Outcome::Refused,
+        trigger => Outcome::Active(trigger.clone()),
+    })
 }
 
 #[cfg(test)]
@@ -237,6 +272,62 @@ mod tests {
         }
     }
 
+    /// `ShortcutsChanged` carries the shortcuts that changed, not the whole
+    /// session: one it leaves out keeps what the portal said of it.
+    #[test]
+    fn a_changed_signal_updates_only_the_shortcuts_it_lists() {
+        let mut b = Bindings::default();
+        b.start("/s/1", table());
+        b.answered(
+            "/s/1",
+            Some(&[
+                bound("palette", "Ctrl+Alt+K"),
+                bound("account-steam-1", "Meta+1"),
+            ]),
+        );
+        b.changed("/s/1", &[bound("palette", "Meta+K")]);
+        assert_eq!(b.outcome(1), Outcome::Active(Some("Meta+K".into())));
+        assert_eq!(b.outcome(2), Outcome::Active(Some("Meta+1".into())));
+        assert_eq!(b.pressed("/s/1", "account-steam-1"), Some(2));
+    }
+
+    /// A `ShortcutsChanged` the listener applies while `BindShortcuts`
+    /// still waits is newer than the answer the worker applies after it:
+    /// the answer does not undo it.
+    #[test]
+    fn a_change_during_the_bind_outlives_its_answer() {
+        let mut b = Bindings::default();
+        b.start("/s/1", table());
+        b.changed("/s/1", &[bound("account-steam-1", "Meta+1")]);
+        b.answered("/s/1", Some(&[bound("palette", "Ctrl+Alt+K")]));
+        assert_eq!(b.outcome(1), Outcome::Active(Some("Ctrl+Alt+K".into())));
+        assert_eq!(b.outcome(2), Outcome::Active(Some("Meta+1".into())));
+        assert_eq!(b.pressed("/s/1", "account-steam-1"), Some(2));
+        // The next session starts from its own answer.
+        b.start("/s/2", table());
+        b.answered("/s/2", Some(&[bound("palette", "Ctrl+Alt+K")]));
+        assert_eq!(b.outcome(2), Outcome::Refused);
+    }
+
+    /// The worker detaches the session it replaces before it closes it: a
+    /// `Closed` that our own `Close` brings, even with a commit before the
+    /// next session starts, asks for no rebind. A close the portal starts
+    /// on its own still does.
+    #[test]
+    fn closing_the_replaced_session_ourselves_asks_for_no_rebind() {
+        let mut b = Bindings::default();
+        b.start("/s/1", table());
+        b.answered("/s/1", Some(&[bound("palette", "Ctrl+Alt+K")]));
+        b.detach();
+        b.closed("/s/1");
+        assert!(!b.take_rebind(), "our own close asked for a rebind");
+        assert_eq!(b.pressed("/s/1", "palette"), None);
+        b.start("/s/2", table());
+        b.answered("/s/2", Some(&[bound("palette", "Ctrl+Alt+K")]));
+        b.closed("/s/2");
+        assert!(b.take_rebind());
+    }
+
     #[test]
     fn a_declined_request_binds_nothing() {
         let mut b = Bindings::default();
@@ -259,7 +350,10 @@ mod tests {
             ]),
         );
         assert_eq!(b.outcome(2), Outcome::Active(None));
-        b.changed("/s/1", &[bound("account-steam-1", "Meta+1")]);
+        b.changed(
+            "/s/1",
+            &[bound("palette", ""), bound("account-steam-1", "Meta+1")],
+        );
         assert_eq!(b.outcome(1), Outcome::Refused);
         assert_eq!(b.outcome(2), Outcome::Active(Some("Meta+1".into())));
         assert_eq!(b.pressed("/s/1", "palette"), None);

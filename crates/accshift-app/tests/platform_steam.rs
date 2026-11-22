@@ -513,7 +513,10 @@ fn steam_forget_clears_default_game_first() {
                 steam_id: "7656".to_string()
             },
             TaskEffect::Toast(Text::key("steam.forgotAccount")),
-            TaskEffect::RemoveAccount("7656".to_string()),
+            TaskEffect::RemoveAccount {
+                platform_id: "steam".to_string(),
+                account_id: "7656".to_string(),
+            },
         ]
     );
 }

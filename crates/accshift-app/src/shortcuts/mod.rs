@@ -251,11 +251,9 @@ impl GlobalShortcuts {
     /// platform's freshly loaded list. They stay saved: a launcher file
     /// read short (a truncated `loginusers.vdf`) lists fewer accounts than
     /// exist, so a missing account is only set aside until it comes back.
-    /// An empty list sets nothing aside: a failed read reports no accounts.
+    /// A list that loaded empty sets every bound account of the platform
+    /// aside; a failed read is no list and must not reach here.
     pub fn absent_accounts(&self, platform_id: &str, loaded: &[&str]) -> Vec<String> {
-        if loaded.is_empty() {
-            return Vec::new();
-        }
         self.accounts
             .iter()
             .filter(|a| a.platform_id == platform_id && !loaded.contains(&a.account_id.as_str()))

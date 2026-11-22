@@ -181,12 +181,11 @@ impl Shortcuts {
         }
     }
 
-    /// A platform's freshly loaded list: the bound accounts it lacks are set
-    /// aside until a later list has them. An empty list proves nothing.
+    /// A platform's list that loaded, empty included: the bound accounts it
+    /// lacks are set aside until a later list has them. A failed read keeps
+    /// the last verdict: neither caller passes one (the loader reports no
+    /// `landed` for it, the tab's load drops it).
     fn set_aside(&mut self, saved: &GlobalShortcuts, platform_id: &str, loaded: &[String]) {
-        if loaded.is_empty() {
-            return;
-        }
         let loaded: Vec<&str> = loaded.iter().map(String::as_str).collect();
         self.absent.insert(
             platform_id.to_string(),
@@ -205,6 +204,15 @@ impl Shortcuts {
                 .is_some_and(|ids| ids.contains(account_id)),
             _ => false,
         }
+    }
+
+    /// Whether a delivered `target` still runs on this frame: its binding
+    /// is in the table last synced and not set aside. A refresh, or an
+    /// edit, between the press and its frame may have taken it out.
+    fn still_bound(&self, target: &ShortcutTarget) -> bool {
+        self.synced.as_ref().is_some_and(|(table, held, _)| {
+            table.iter().any(|(bound, _)| bound == target) && !held.contains(target)
+        })
     }
 
     /// A row starts listening: what was delivered and not yet run is
@@ -519,6 +527,15 @@ impl AppModel {
             );
             s.service = Some(ShortcutService::new(registrar));
         }
+        // A row may have started listening before the service said the
+        // session takes no global shortcut (the card menu opens the tab
+        // and listens on the same frame).
+        if s.service
+            .as_ref()
+            .is_some_and(|service| !service.available())
+        {
+            s.capture = None;
+        }
         let paused = s.capture.is_some();
         let state = (table, held, paused);
         if s.synced.as_ref() != Some(&state) {
@@ -532,7 +549,9 @@ impl AppModel {
         let fired = std::mem::take(&mut self.shortcuts.fired);
         if self.shortcuts.capture.is_none() {
             for target in fired {
-                self.run_shortcut(ctx, target);
+                if self.shortcuts.still_bound(&target) {
+                    self.run_shortcut(ctx, target);
+                }
             }
         }
     }
@@ -683,7 +702,16 @@ impl AppModel {
         if again {
             self.shortcuts.capture = None;
         } else {
-            self.shortcuts.listen(target);
+            self.start_listening(target);
+        }
+    }
+
+    /// A row listens, and the tab scrolls to it on its next frame: a new
+    /// row goes under every saved one.
+    fn start_listening(&mut self, target: ShortcutTarget) {
+        self.shortcuts.listen(target);
+        if let Some(panel) = self.settings_panel.as_mut() {
+            panel.reveal_listening = true;
         }
     }
 
@@ -706,7 +734,8 @@ impl AppModel {
     }
 
     /// The context menu's "Set global shortcut": the settings on the
-    /// Shortcuts tab with the row listening.
+    /// Shortcuts tab with the row listening, unless the session takes no
+    /// global shortcut (the tab then says so).
     pub(super) fn open_shortcut_capture(&mut self, target: ShortcutTarget) {
         if self.settings_panel.is_none() {
             self.toggle_settings_panel();
@@ -715,7 +744,11 @@ impl AppModel {
         if let Some(panel) = self.settings_panel.as_mut() {
             panel.show_tab(jobs, TAB);
         }
-        self.shortcuts.listen(target);
+        if self.shortcuts_available() {
+            self.start_listening(target);
+        } else {
+            self.shortcuts.capture = None;
+        }
     }
 
     /// What the Shortcuts tab reads.

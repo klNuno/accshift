@@ -206,6 +206,9 @@ fn rebind(
     shared: &Shared,
 ) -> Option<OwnedObjectPath> {
     if let Some(old) = session {
+        // Ours to close: its `Closed` must not read as the portal's and
+        // queue this table a second time.
+        lock(shared).detach();
         close(conn, &old);
     }
     let keys: Vec<(u32, String)> = table

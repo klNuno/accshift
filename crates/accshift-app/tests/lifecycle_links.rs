@@ -1063,6 +1063,62 @@ fn a_shortcut_to_another_tab_changes_it_first() {
     );
 }
 
+/// The user picks another tab while the requested one loads: that tab
+/// holds an account with the same id, and the switch, which runs on the
+/// visible tab, must not land on it. Both waits after the tab change: the
+/// loader, and the reload of a tab that had not read its list yet.
+#[test]
+fn a_tab_picked_while_the_requested_one_loads_ends_the_switch() {
+    for lazy in [false, true] {
+        let mut app = App::new("riot");
+        app.lazy_tab_load = lazy;
+        let riot_twin = account("account-1", "twin", "Riot Twin");
+        let mut controller = started();
+        let now = Instant::now();
+        controller.on_shortcut(
+            DeepLinkSwitchRequest {
+                platform_id: "steam".into(),
+                account_ref: "account-1".into(),
+            },
+            now,
+        );
+        assert_eq!(
+            controller.poll(&app.view(), now),
+            [DeepLinkAction::LoadPlatformAccounts("steam".into())]
+        );
+        let steam = app.loaded["steam"].clone();
+        assert_eq!(
+            controller.answer(DeepLinkAnswer::PlatformAccounts(steam), &app.view(), now),
+            [DeepLinkAction::ChangeTab("steam".into())]
+        );
+        app.active_tab = "steam".into();
+        let busy = DeepLinkView {
+            loader_loading: !lazy,
+            accounts: &[],
+            ..app.view()
+        };
+        let waiting = controller.answer(DeepLinkAnswer::TabChanged, &busy, now);
+        if lazy {
+            assert_eq!(waiting, [DeepLinkAction::LoadAccounts]);
+        } else {
+            assert!(waiting.is_empty(), "{waiting:?}");
+        }
+        // Riot is back in front before steam's list came.
+        app.active_tab = "riot".into();
+        app.visible = vec![riot_twin.clone()];
+        let actions = if lazy {
+            controller.answer(DeepLinkAnswer::AccountsLoaded, &app.view(), now)
+        } else {
+            controller.poll(&app.view(), now)
+        };
+        assert!(
+            !actions.contains(&DeepLinkAction::Switch(riot_twin)),
+            "lazy {lazy}: {actions:?}"
+        );
+        assert!(!controller.is_busy(), "lazy {lazy}: still walking");
+    }
+}
+
 #[test]
 fn a_shortcut_works_with_deep_links_disabled() {
     let mut app = App::new("steam");

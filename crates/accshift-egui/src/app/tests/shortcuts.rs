@@ -720,3 +720,149 @@ fn a_session_without_shortcuts_offers_nothing_to_add() {
     });
     assert!(app.shortcuts.capture.is_none());
 }
+
+/// Regression: the card menu's "Set global shortcut" listened in a session
+/// without global shortcuts, before the service was built or after.
+#[test]
+fn the_card_menu_does_not_listen_in_a_session_without_shortcuts() {
+    use accshift_app::actions::AppEffect;
+    use accshift_app::shortcuts::account_menu_id;
+    for settings in [bound(json!({ "openPalette": "Ctrl+Alt+K" })), json!({})] {
+        let ctx = Context::default();
+        let (mut app, _) = app_with(&ctx, settings.clone(), "*");
+        settle(&mut app, &ctx);
+        let built = app.shortcuts.service.is_some();
+        app.apply_effects(
+            &ctx,
+            vec![AppEffect::CustomMenu(account_menu_id("steam", STEAM_OTHER))],
+        );
+        frame(&mut app, &ctx);
+        frame(&mut app, &ctx);
+        assert!(
+            app.shortcuts.capture.is_none(),
+            "service built before the menu: {built}"
+        );
+    }
+}
+
+/// A platform's list that loads empty holds no bound account: its shortcut
+/// no longer runs. A failed read never lands here.
+#[test]
+fn an_empty_loaded_list_sets_its_bound_accounts_aside() {
+    let ctx = Context::default();
+    let (mut app, _) = app_with(
+        &ctx,
+        bound(
+            json!({ "accounts": [{"platformId": "steam", "accountId": STEAM_OTHER, "keys": "Ctrl+Alt+1"}] }),
+        ),
+        "",
+    );
+    settle(&mut app, &ctx);
+    let id = id_of(&app, "Ctrl+Alt+1");
+    app.booted.as_mut().unwrap().accounts.landed = Some(("steam".into(), Vec::new()));
+    frame(&mut app, &ctx);
+    assert_eq!(app.hotkey(&ctx, id), WindowOp::None);
+    let saved = &app.booted().unwrap().stores.settings().global_shortcuts;
+    assert_eq!(saved.accounts.len(), 1, "set aside, still saved");
+}
+
+/// A forget started on one tab lands after the user moved to another tab
+/// holding an account with the same id: that account keeps its binding
+/// and its card.
+#[test]
+fn a_forget_that_lands_on_another_tab_keeps_that_tabs_binding() {
+    use accshift_app::menu::{TaskEffect, TaskOutcome};
+    let ctx = Context::default();
+    let (mut app, _) = app_with(
+        &ctx,
+        bound(json!({ "accounts": [
+            {"platformId": "steam", "accountId": STEAM_OTHER, "keys": "Ctrl+Alt+1"},
+            {"platformId": "riot", "accountId": STEAM_OTHER, "keys": "Ctrl+Alt+2"},
+        ] })),
+        "",
+    );
+    settle(&mut app, &ctx);
+    assert_eq!(app.booted().unwrap().nav.active_tab, "steam");
+    let effect = TaskEffect::RemoveAccount {
+        platform_id: "riot".into(),
+        account_id: STEAM_OTHER.into(),
+    };
+    let job = app.jobs.run(move |_| TaskOutcome {
+        effects: vec![effect],
+    });
+    app.task_jobs.push(job);
+    assert!(pump_until(&mut app, &ctx, |a| a.task_jobs.is_empty()));
+    let b = app.booted().unwrap();
+    let saved = &b.stores.settings().global_shortcuts;
+    let platforms: Vec<&str> = saved
+        .accounts
+        .iter()
+        .map(|a| a.platform_id.as_str())
+        .collect();
+    assert_eq!(platforms, ["steam"], "the forgotten one is riot's");
+    assert!(b
+        .accounts
+        .loading
+        .loader
+        .accounts()
+        .iter()
+        .any(|a| a.id == STEAM_OTHER));
+}
+
+/// A press delivered just before a refresh found its account missing is
+/// dropped with it, not walked to a switch.
+#[test]
+fn a_queued_press_whose_account_went_missing_does_not_run() {
+    let ctx = Context::default();
+    let (mut app, mock) = app_with(
+        &ctx,
+        bound(
+            json!({ "accounts": [{"platformId": "steam", "accountId": STEAM_OTHER, "keys": "Ctrl+Alt+1"}] }),
+        ),
+        "",
+    );
+    settle(&mut app, &ctx);
+    let before = mock.seen("platform_switch_account");
+    let id = id_of(&app, "Ctrl+Alt+1");
+    assert_eq!(app.hotkey(&ctx, id), WindowOp::Reveal);
+    app.booted.as_mut().unwrap().accounts.landed =
+        Some(("steam".into(), vec![STEAM_EXPIRED.to_string()]));
+    for _ in 0..30 {
+        frame(&mut app, &ctx);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert_eq!(mock.seen("platform_switch_account"), before);
+    assert!(!app.deep_links.controller.is_busy());
+}
+
+/// The card menu opens the tab at its top and the new row listens under
+/// every saved one: the tab scrolls to it.
+#[test]
+fn the_capture_scrolls_the_tab_to_the_listening_row() {
+    let accounts: Vec<Value> = ('A'..='T')
+        .map(|letter| {
+            json!({
+                "platformId": "roblox",
+                "accountId": format!("roblox-{letter}"),
+                "keys": format!("Ctrl+Alt+{letter}"),
+            })
+        })
+        .collect();
+    let ctx = Context::default();
+    let (mut app, _) = app_with(&ctx, bound(json!({ "accounts": accounts })), "");
+    settle(&mut app, &ctx);
+    let target = ShortcutTarget::Persona {
+        persona_id: "persona-main".into(),
+    };
+    app.open_shortcut_capture(target.clone());
+    for _ in 0..4 {
+        frame(&mut app, &ctx);
+    }
+    let rows = app.shortcuts_view().rows;
+    assert_eq!(rows.len(), 23, "the bound rows show");
+    assert!(rows
+        .last()
+        .is_some_and(|r| r.target == target && r.listening));
+    let scroll = app.settings_panel.as_ref().unwrap().scroll;
+    assert!(scroll > 0.0, "the listening row stayed below the fold");
+}

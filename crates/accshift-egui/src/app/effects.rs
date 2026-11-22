@@ -52,7 +52,12 @@ impl AppModel {
                     self.copy_to_clipboard(ctx, text, label);
                 }
                 AppEffect::CopyBulkUrls(urls) => self.copy_bulk_urls(ctx, urls),
-                AppEffect::RemoveAccount(account_id) => self.remove_account(&account_id),
+                AppEffect::RemoveAccount(account_id) => {
+                    let tab = self.booted.as_ref().map(|b| b.nav.active_tab.clone());
+                    if let Some(tab) = tab {
+                        self.remove_account(&tab, &account_id);
+                    }
+                }
                 AppEffect::RunPlatformTask(task) => self.run_platform_task(task),
                 AppEffect::RenameAccount {
                     platform_id,
@@ -126,13 +131,19 @@ impl AppModel {
         self.toasts.push(toast, Instant::now());
     }
 
-    /// Drops an account from the active tab's grid, folders and shortcuts.
-    fn remove_account(&mut self, account_id: &str) {
+    /// Drops an account of `platform_id` from its folders and shortcuts,
+    /// and from the grid when that platform's tab shows.
+    fn remove_account(&mut self, platform_id: &str, account_id: &str) {
         if let Some(b) = self.booted.as_mut() {
-            b.accounts
-                .remove_account(&mut b.stores, &b.nav.active_tab, account_id);
-            let tab = b.nav.active_tab.clone();
-            super::shortcuts::edit_shortcuts(&mut b.stores, |s| s.remove_account(&tab, account_id));
+            if b.nav.active_tab == platform_id {
+                b.accounts
+                    .remove_account(&mut b.stores, platform_id, account_id);
+            } else {
+                b.stores.forget_account(account_id, platform_id);
+            }
+            super::shortcuts::edit_shortcuts(&mut b.stores, |s| {
+                s.remove_account(platform_id, account_id)
+            });
         }
     }
 
@@ -209,7 +220,10 @@ impl AppModel {
             TaskEffect::RefreshAccounts => {
                 self.load_accounts(load_options(true, false, false, false));
             }
-            TaskEffect::RemoveAccount(id) => self.remove_account(&id),
+            TaskEffect::RemoveAccount {
+                platform_id,
+                account_id,
+            } => self.remove_account(&platform_id, &account_id),
             TaskEffect::SetDefaultGame { steam_id, game } => {
                 if let Some(b) = self.booted.as_mut() {
                     b.stores.set_default_game(&steam_id, &game);

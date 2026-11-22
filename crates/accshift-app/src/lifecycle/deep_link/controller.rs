@@ -350,6 +350,11 @@ impl DeepLinkController {
                 }
             }
             Phase::WaitLoaderAfterTab { switch, since } => {
+                // The visible tab is the one the switch runs on: another tab
+                // picked meanwhile may hold an account with the same id.
+                if view.active_tab != switch.request.platform_id {
+                    return self.finish(now);
+                }
                 if view.loader_busy(since, now) {
                     self.phase = Phase::WaitLoaderAfterTab { switch, since };
                     return;
@@ -530,9 +535,13 @@ impl DeepLinkController {
                 }
             }
             (Phase::AwaitReloadAfterTab(switch), DeepLinkAnswer::AccountsLoaded) => {
-                match switch.confirmed_in(view.accounts) {
-                    Some(account) => self.switch(switch, account.clone(), &mut actions),
-                    None => self.not_found(&switch, &mut actions, now),
+                if view.active_tab != switch.request.platform_id {
+                    self.finish(now);
+                } else {
+                    match switch.confirmed_in(view.accounts) {
+                        Some(account) => self.switch(switch, account.clone(), &mut actions),
+                        None => self.not_found(&switch, &mut actions, now),
+                    }
                 }
             }
             (Phase::AwaitSwitch(switch), DeepLinkAnswer::Switched(switched)) => {
