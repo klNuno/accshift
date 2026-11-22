@@ -131,11 +131,14 @@ pub(super) fn run_overlay_pass(
     }
     onboarding::set_targets(overlay_ctx, onboarding::targets(ctx).scale(ui_zoom));
 
+    // The events are in the points of the zoom factor in force when they
+    // arrived, not yet the one this pass applies.
+    let input_zoom = crate::zoom::input_frame(ctx);
     let (focused, viewports, events) = ctx.input(|i| {
         (
             i.focused,
             i.raw.viewports.clone(),
-            crate::zoom::scale_events(&i.events, ui_zoom),
+            crate::zoom::scale_events(&i.events, input_zoom),
         )
     });
     let overlay_raw = egui::RawInput {

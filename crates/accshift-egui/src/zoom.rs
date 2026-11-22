@@ -19,7 +19,8 @@ use egui::{Context, Event, Id, RawInput};
 
 const BASE: &str = "accshift-zoom/base";
 const UI: &str = "accshift-zoom/ui";
-const FRAME: &str = "accshift-zoom/frame";
+const STAGE: &str = "accshift-zoom/stage";
+const FRAME_INPUT: &str = "accshift-zoom/frame-input";
 const UPSCALE: &str = "accshift-zoom/upscale";
 const CLEAR_HOVER: &str = "accshift-zoom/clear-hover";
 
@@ -81,17 +82,36 @@ pub fn ui(ctx: &Context) -> f32 {
 }
 
 /// Before a software frame: `stage` is the zoom the runner scales the
-/// frame by, 1 when egui's zoom factor carries it.
+/// frame by, 1 when egui's zoom factor carries it. Call it before the pass
+/// starts: the zoom factor in force now is the one the frame's events were
+/// converted with ([`input_frame`]).
 pub fn begin_frame(ctx: &Context, stage: f32) {
-    let zoom = stage * ctx.zoom_factor() / base(ctx);
-    ctx.data_mut(|d| d.insert_temp(Id::unique(FRAME), zoom));
+    let input = stage * ctx.zoom_factor() / base(ctx);
+    ctx.data_mut(|d| {
+        d.insert_temp(Id::unique(STAGE), stage);
+        d.insert_temp(Id::unique(FRAME_INPUT), input);
+    });
+}
+
+fn stage(ctx: &Context) -> f32 {
+    ctx.data(|d| d.get_temp::<f32>(Id::unique(STAGE)))
+        .unwrap_or(1.0)
 }
 
 /// The zoom this frame lays out at: the screen is the window divided by
-/// it.
+/// it. It reads the zoom factor egui applied to the pass, so on the first
+/// frame of a zoom change (egui switches factors as the pass begins) the
+/// geometry already follows the new one.
 pub fn frame(ctx: &Context) -> f32 {
-    ctx.data(|d| d.get_temp::<f32>(Id::unique(FRAME)))
-        .unwrap_or_else(|| ctx.zoom_factor() / base(ctx))
+    stage(ctx) * ctx.zoom_factor() / base(ctx)
+}
+
+/// The zoom this frame's input events are in: the factor in force when
+/// they were received, before the pass applied a pending zoom change
+/// (egui rescales the screen then, not the events).
+pub fn input_frame(ctx: &Context) -> f32 {
+    ctx.data(|d| d.get_temp::<f32>(Id::unique(FRAME_INPUT)))
+        .unwrap_or_else(|| frame(ctx))
 }
 
 /// `100vw` by `100vh` in the stage's points: the window's CSS size, which

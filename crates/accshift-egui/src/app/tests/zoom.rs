@@ -518,3 +518,68 @@ fn overlays_keep_hidpi_base_scale_at_150_ui_scale() {
         overlay_out.pixels_per_point
     );
 }
+
+fn ctrl_equals() -> Event {
+    Event::Key {
+        key: Key::Equals,
+        physical_key: Some(Key::Equals),
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::CTRL,
+    }
+}
+
+#[test]
+fn overlay_keeps_the_window_size_on_the_first_frame_of_a_zoom_change() {
+    let ctx = Context::default();
+    let mut shell = demo_shell(
+        &ctx,
+        json!({
+            "animations": "off",
+            "uiScalePercent": 100,
+            "streamerMode": "auto",
+        }),
+        true,
+        false,
+    );
+    let size = [1000.0, 680.0];
+    let mut t = 1.0;
+    for _ in 0..5 {
+        t += 0.4;
+        step_shell(&mut shell, &ctx, size, t, Vec::new());
+    }
+    assert!(app_ref(&shell).booted().unwrap().streamer.active());
+    t += 0.05;
+    step_shell(&mut shell, &ctx, size, t, vec![ctrl_equals()]);
+    let zoom_before = ctx.zoom_factor();
+    let pointer = pos2(500.0, 300.0);
+    for frame in 0..3 {
+        t += 0.05;
+        step_shell(
+            &mut shell,
+            &ctx,
+            size,
+            t,
+            vec![Event::PointerMoved(pointer)],
+        );
+        let (overlay_ctx, mut overlay_out) = shell
+            .take_overlay()
+            .expect("the streamer overlay runs its pass");
+        overlay_out.textures_delta.clear();
+        let screen = overlay_ctx.content_rect();
+        assert!(
+            (screen.width() - size[0]).abs() < 0.5 && (screen.height() - size[1]).abs() < 0.5,
+            "frame {frame} after Ctrl+=: the overlay screen {screen:?} must stay the window's {size:?}"
+        );
+        let latest = overlay_ctx.input(|i| i.pointer.latest_pos());
+        assert!(
+            latest.is_some_and(|p| (p - pointer).length() < 0.5),
+            "frame {frame} after Ctrl+=: the pointer lands at {latest:?}, not {pointer:?}"
+        );
+    }
+    assert!(
+        ctx.zoom_factor() > zoom_before + 0.01,
+        "Ctrl+= went through egui's zoom factor ({zoom_before} -> {})",
+        ctx.zoom_factor()
+    );
+}
