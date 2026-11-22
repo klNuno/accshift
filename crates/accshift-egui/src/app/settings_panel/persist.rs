@@ -216,7 +216,7 @@ fn autostart_change(previous: &Value, draft: &AppSettings) -> Option<bool> {
 
 /// The enabled platforms changed: a tab that is no longer enabled falls
 /// back to the first one the settings allow.
-fn keep_active_tab_enabled(b: &mut Booted) {
+pub(super) fn keep_active_tab_enabled(b: &mut Booted) {
     let s = b.stores.settings();
     if !s.enabled_platforms.contains(&b.nav.active_tab) {
         b.nav.active_tab = platforms::initial_tab(

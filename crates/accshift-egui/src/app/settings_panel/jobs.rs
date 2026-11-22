@@ -118,8 +118,10 @@ pub(super) fn drain_landed<J, T>(
 
 /// The folder's descriptors become the user platforms of the tabs, the
 /// account registry and the stores. While a descriptor could not be read,
-/// the stores keep the platforms the settings name.
+/// the stores keep the platforms the settings name; once every descriptor
+/// reads, the settings and the active tab are checked again against them.
 pub(in crate::app) fn apply_report(b: &mut Booted, report: &UserPlatformReport) {
+    let settled = !report.incomplete && b.user_platforms.as_ref().is_some_and(|r| r.incomplete);
     let loaded: Vec<Value> = report
         .loaded
         .iter()
@@ -140,6 +142,10 @@ pub(in crate::app) fn apply_report(b: &mut Booted, report: &UserPlatformReport) 
             .get(accshift_app::storage::CLIENT_STORE_SETTINGS),
     );
     b.stores.set_context(ctx);
+    if settled {
+        b.stores.resanitize_settings();
+        super::persist::keep_active_tab_enabled(b);
+    }
     b.user_platforms = Some(report.clone());
 }
 

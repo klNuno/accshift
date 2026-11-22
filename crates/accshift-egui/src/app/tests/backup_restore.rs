@@ -1342,3 +1342,48 @@ fn a_pin_typed_during_the_restore_is_dropped_with_it() {
     );
     assert!(!app.booted().unwrap().stores.settings().pin_enabled);
 }
+
+#[test]
+fn a_reload_that_finds_the_locked_descriptor_gone_drops_its_platform() {
+    // Regression (GHOST_TAB): the only platform the settings enabled was
+    // locked at boot, then deleted; the panel's reload read a complete
+    // folder without it, and the settings in memory kept naming it, so no
+    // platform tab was offered until the next save.
+    let ctx = Context::default();
+    let (mut app, _mock) = restore_app_with(&ctx, |commands| {
+        let boot = &mut commands["get_boot_payload"][0]["result"];
+        boot["userPlatforms"]["incomplete"] = json!(true);
+        let settings = &mut boot["storageSnapshot"]["stores"]["client.settings"];
+        settings["enabledPlatforms"] = json!(["egui-fixture"]);
+        settings["defaultPlatformId"] = json!("egui-fixture");
+        commands["reload_user_platforms"][0]["result"]["loaded"] = json!([]);
+    });
+    frame(&mut app, &ctx);
+    let s = app.booted().unwrap().stores.settings();
+    assert_eq!(s.enabled_platforms, ["egui-fixture"]);
+    app.toggle_settings_panel();
+    pump_until(&mut app, &ctx, |a| {
+        a.settings_panel.as_ref().is_some_and(|p| p.hydrated)
+    });
+    app.apply_settings(&ctx, SettingsAction::ReloadDescriptors);
+    pump_until(&mut app, &ctx, |a| {
+        a.booted()
+            .unwrap()
+            .user_platforms
+            .as_ref()
+            .is_some_and(|r| !r.incomplete)
+    });
+    let b = app.booted().unwrap();
+    let s = b.stores.settings();
+    assert!(
+        !s.enabled_platforms.iter().any(|p| p == "egui-fixture"),
+        "GHOST_TAB: the settings still enable the deleted platform: {:?}",
+        s.enabled_platforms
+    );
+    assert!(
+        s.enabled_platforms.contains(&b.nav.active_tab)
+            && b.platforms.iter().any(|p| p.id == b.nav.active_tab),
+        "GHOST_TAB: the active tab {} is not an enabled platform",
+        b.nav.active_tab
+    );
+}
