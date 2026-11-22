@@ -1,0 +1,103 @@
+{
+  "id": "shortcuts-bound-glass-dark-100",
+  "scenario": "dev",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "personasEnabled": true,
+      "globalShortcuts": {
+        "openPalette": "Ctrl+Alt+K",
+        "toggleWindow": "Ctrl+Alt+H",
+        "accounts": [
+          {
+            "platformId": "steam",
+            "accountId": "76561198100000001",
+            "keys": "Ctrl+Shift+1"
+          }
+        ],
+        "personas": [
+          {
+            "personaId": "persona-smurfs",
+            "keys": "Ctrl+Shift+1"
+          }
+        ]
+      }
+    },
+    "PERSONAS": [
+      {
+        "id": "persona-main",
+        "name": "Main",
+        "color": "",
+        "assignments": [
+          {
+            "platformId": "steam",
+            "accountId": "76561198100000001"
+          },
+          {
+            "platformId": "riot",
+            "accountId": "riot-1"
+          }
+        ]
+      },
+      {
+        "id": "persona-smurfs",
+        "name": "Smurfs",
+        "color": "#8b5cf6",
+        "assignments": [
+          {
+            "platformId": "steam",
+            "accountId": "76561198100000002"
+          }
+        ]
+      }
+    ]
+  },
+  "fail": {
+    "registerGlobalShortcut": "Ctrl+Alt+H"
+  },
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [
+        87,
+        18
+      ]
+    },
+    {
+      "move": [
+        430,
+        5
+      ]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "click": [
+        75,
+        212
+      ]
+    },
+    {
+      "move": [
+        430,
+        5
+      ]
+    },
+    {
+      "wait": 800
+    },
+    {
+      "shot": "bound"
+    }
+  ]
+}

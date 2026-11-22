@@ -9,7 +9,8 @@ use std::time::Instant;
 
 use accshift_app::actions::keyboard::CARD_NAV_SCOPES;
 use accshift_app::actions::keyboard::{
-    current_key_scope, Direction, KeyAction, KeyEvent, KeyHost, KeyOutcome, KeyScope,
+    current_key_scope, run_command, Direction, KeyAction, KeyCommand, KeyEvent, KeyHost,
+    KeyOutcome, KeyResult, KeyScope,
 };
 use accshift_app::display::DisplayItem;
 use accshift_app::folders::{FolderInfo, ItemKind, ItemRef};
@@ -397,6 +398,26 @@ impl AppModel {
                 });
             });
         }
+    }
+
+    /// Runs `command` as its key would in the current scope: a global
+    /// shortcut reaches the table this way. False when no binding of the
+    /// command holds in this scope (the PIN lock, a dialog) or it passed.
+    pub(super) fn run_key_command(&mut self, ctx: &Context, command: KeyCommand) -> bool {
+        let scope = self.key_scope();
+        let bound = self
+            .keyboard
+            .bindings()
+            .any(|binding| binding.command == command && binding.scopes.contains(scope));
+        if !bound {
+            return false;
+        }
+        let Some(mut host) = self.key_host(ctx) else {
+            return false;
+        };
+        let result = run_command(command, &KeyEvent::default(), &mut host);
+        self.apply_host(ctx, host);
+        !matches!(result, KeyResult::Pass)
     }
 
     /// What one key's bindings asked for: the card focus moved, Escape

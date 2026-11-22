@@ -32,8 +32,8 @@ use super::clock::Clock;
 use super::platforms::{self, PlatformDef, RuntimeOs};
 use super::theme::compute_theme;
 use super::{
-    deep_link, onboarding, personas, ui_scale, updates, wallpaper, AppModel, Booted, MockSetup,
-    Navigation,
+    deep_link, onboarding, personas, shortcuts, ui_scale, updates, wallpaper, AppModel, Booted,
+    MockSetup, Navigation,
 };
 use crate::screens::workspace::Workspace;
 use crate::ui::anim;
@@ -136,6 +136,7 @@ impl AppModel {
         if let Some((_, window, scale)) = &setup.wallpaper {
             model.liquid.pin_window(*window, *scale);
         }
+        model.shortcuts = shortcuts::Shortcuts::mock(&setup.failures);
         model.setup = Some(setup);
         model.desktop = Some(ctx.load_texture(
             "desktop",
@@ -222,6 +223,7 @@ impl AppModel {
             onboarding: onboarding::Onboarding::default(),
             personas: personas::PersonasState::default(),
             deep_links: deep_link::DeepLinks::started(),
+            shortcuts: shortcuts::Shortcuts::default(),
             updates: updates::Updates::off(),
             liquid: wallpaper::Liquid::default(),
         }

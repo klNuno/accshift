@@ -491,8 +491,24 @@ impl App {
 
     /// Runs one URL to the end.
     fn run(&mut self, controller: &mut DeepLinkController, url: &str) {
+        controller.on_urls(&[url], Instant::now());
+        self.drive(controller);
+    }
+
+    /// Runs one global shortcut's switch to the end.
+    fn run_shortcut(&mut self, controller: &mut DeepLinkController, platform: &str, id: &str) {
+        controller.on_shortcut(
+            DeepLinkSwitchRequest {
+                platform_id: platform.into(),
+                account_ref: id.into(),
+            },
+            Instant::now(),
+        );
+        self.drive(controller);
+    }
+
+    fn drive(&mut self, controller: &mut DeepLinkController) {
         let now = Instant::now();
-        controller.on_urls(&[url], now);
         let mut actions = controller.poll(&self.view(), now);
         let mut guard = 0;
         while let Some(action) = actions.first().cloned() {
@@ -1023,4 +1039,162 @@ fn a_second_process_reaches_the_first() {
 fn the_current_arguments_and_folder_are_read() {
     assert!(!single_instance::current_args().is_empty());
     assert!(!single_instance::current_cwd().is_empty());
+}
+
+// ------------------------------------------------------------ global shortcuts
+
+#[test]
+fn a_shortcut_switches_without_the_link_confirm() {
+    let mut app = App::new("steam");
+    let mut controller = started();
+    app.run_shortcut(&mut controller, "steam", "account-1");
+    assert_eq!(app.events.len(), 2, "{:?}", app.events);
+    assert_eq!(app.events[0], "switch:account-1");
+    assert!(app.events[1].contains("toast.deepLinkSwitched"));
+}
+
+#[test]
+fn a_shortcut_to_another_tab_changes_it_first() {
+    let mut app = App::new("riot");
+    app.run_shortcut(&mut started(), "steam", "account-1");
+    assert_eq!(
+        &app.events[..3],
+        ["loadPlatform:steam", "tab:steam", "switch:account-1"]
+    );
+}
+
+/// The user picks another tab while the requested one loads: that tab
+/// holds an account with the same id, and the switch, which runs on the
+/// visible tab, must not land on it. Both waits after the tab change: the
+/// loader, and the reload of a tab that had not read its list yet.
+#[test]
+fn a_tab_picked_while_the_requested_one_loads_ends_the_switch() {
+    for lazy in [false, true] {
+        let mut app = App::new("riot");
+        app.lazy_tab_load = lazy;
+        let riot_twin = account("account-1", "twin", "Riot Twin");
+        let mut controller = started();
+        let now = Instant::now();
+        controller.on_shortcut(
+            DeepLinkSwitchRequest {
+                platform_id: "steam".into(),
+                account_ref: "account-1".into(),
+            },
+            now,
+        );
+        assert_eq!(
+            controller.poll(&app.view(), now),
+            [DeepLinkAction::LoadPlatformAccounts("steam".into())]
+        );
+        let steam = app.loaded["steam"].clone();
+        assert_eq!(
+            controller.answer(DeepLinkAnswer::PlatformAccounts(steam), &app.view(), now),
+            [DeepLinkAction::ChangeTab("steam".into())]
+        );
+        app.active_tab = "steam".into();
+        let busy = DeepLinkView {
+            loader_loading: !lazy,
+            accounts: &[],
+            ..app.view()
+        };
+        let waiting = controller.answer(DeepLinkAnswer::TabChanged, &busy, now);
+        if lazy {
+            assert_eq!(waiting, [DeepLinkAction::LoadAccounts]);
+        } else {
+            assert!(waiting.is_empty(), "{waiting:?}");
+        }
+        // Riot is back in front before steam's list came.
+        app.active_tab = "riot".into();
+        app.visible = vec![riot_twin.clone()];
+        let actions = if lazy {
+            controller.answer(DeepLinkAnswer::AccountsLoaded, &app.view(), now)
+        } else {
+            controller.poll(&app.view(), now)
+        };
+        assert!(
+            !actions.contains(&DeepLinkAction::Switch(riot_twin)),
+            "lazy {lazy}: {actions:?}"
+        );
+        assert!(!controller.is_busy(), "lazy {lazy}: still walking");
+    }
+}
+
+#[test]
+fn a_shortcut_works_with_deep_links_disabled() {
+    let mut app = App::new("steam");
+    app.settings = settings(false);
+    app.run_shortcut(&mut started(), "steam", "account-1");
+    assert_eq!(app.events[0], "switch:account-1");
+}
+
+#[test]
+fn a_shortcut_is_refused_while_the_pin_locks_the_app() {
+    let mut app = App::new("steam");
+    app.pin_locked = true;
+    app.run_shortcut(&mut started(), "steam", "account-1");
+    assert!(app.events.is_empty(), "{:?}", app.events);
+}
+
+#[test]
+fn a_shortcut_keeps_the_platform_checks() {
+    let mut app = App::new("steam");
+    app.settings = sanitize_settings(
+        &json!({"enabledPlatforms": ["steam"]}),
+        &StoreContext::shipped(),
+    );
+    app.run_shortcut(&mut started(), "riot", "r-1");
+    assert_eq!(app.events.len(), 1);
+    assert!(app.events[0].contains("toast.deepLinkPlatformDisabled"));
+}
+
+#[test]
+fn a_shortcut_to_a_missing_account_says_so() {
+    let mut app = App::new("steam");
+    app.run_shortcut(&mut started(), "steam", "gone");
+    assert_eq!(app.events.len(), 2, "{:?}", app.events);
+    assert_eq!(app.events[0], "loadAccounts");
+    assert!(app.events[1].contains("toast.deepLinkAccountNotFound"));
+}
+
+/// A shortcut names an account by its exact id: a binding whose account
+/// is gone never falls back to another account's username or display
+/// name, on the active tab or another one. Links keep the name lookup.
+#[test]
+fn a_shortcut_never_resolves_an_id_by_name() {
+    for active in ["steam", "riot"] {
+        let mut app = App::new(active);
+        app.run_shortcut(&mut started(), "steam", "alice");
+        assert!(
+            !app.events.iter().any(|e| e.starts_with("switch:")),
+            "{active}: {:?}",
+            app.events
+        );
+        assert!(app
+            .events
+            .last()
+            .is_some_and(|e| e.contains("toast.deepLinkAccountNotFound")));
+        let mut app = App::new(active);
+        app.run_shortcut(&mut started(), "steam", "Account-1");
+        assert!(!app.events.iter().any(|e| e.starts_with("switch:")));
+    }
+    let mut app = App::new("steam");
+    app.run(&mut started(), "accshift://switch/steam/alice");
+    assert!(app.events.iter().any(|e| e == "switch:account-1"));
+}
+
+#[test]
+fn the_controller_tells_a_shortcut_from_a_link() {
+    let mut controller = started();
+    let now = Instant::now();
+    controller.on_shortcut(
+        DeepLinkSwitchRequest {
+            platform_id: "steam".into(),
+            account_ref: "account-1".into(),
+        },
+        now,
+    );
+    assert!(controller.is_shortcut());
+    let mut links = started();
+    links.on_urls(&["accshift://switch/steam/account-1"], now);
+    assert!(!links.is_shortcut());
 }

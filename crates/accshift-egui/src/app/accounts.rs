@@ -180,6 +180,9 @@ pub struct Accounts {
     pub add_flow: PlatformAddFlow,
     /// The pending setup card of this frame, and its setup sections.
     pub setup: Option<(PlatformAccount, SetupExtension)>,
+    /// The ids of the tab's list that just loaded, with its platform: the
+    /// shortcuts set aside the bindings it lacks.
+    pub landed: Option<(String, Vec<String>)>,
 }
 
 /// The add flow's view of the app on `tab`.
@@ -249,6 +252,7 @@ impl Accounts {
             drag_order: Vec::new(),
             add_flow: PlatformAddFlow::new(),
             setup: None,
+            landed: None,
         };
         accounts
             .navigation
@@ -514,6 +518,8 @@ impl Accounts {
                 LoadingEvent::AccountsLoaded { platform_id } => {
                     if platform_id == tab {
                         self.navigation.refresh_current_items(stores, tab);
+                        let ids = self.loading.loader.accounts().iter();
+                        self.landed = Some((tab.to_string(), ids.map(|a| a.id.clone()).collect()));
                     }
                 }
                 LoadingEvent::Cs2Check { steam_id } => checks.push(steam_id),

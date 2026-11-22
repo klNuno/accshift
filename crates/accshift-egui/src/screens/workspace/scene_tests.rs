@@ -533,22 +533,22 @@ fn context_menu_opens_closes_and_copies() {
     assert!(!open(&run));
     run.rclick(pos2(205.0, 152.0));
     assert!(open(&run));
-    // The reference draws the menu at 205..425 x 111..436.
+    // The reference draws the menu at 205..425 x 72..436.
     assert!(context_menu::contains(&run.ctx, pos2(300.0, 300.0)));
     run.click(pos2(845.0, 425.0));
     assert!(!open(&run));
-    // "Copy..." at 210..420 x 254..284, its submenu right of the menu.
+    // "Copy..." at 210..420 x 215..245, its submenu right of the menu.
     run.rclick(pos2(205.0, 152.0));
-    run.send(Event::PointerMoved(pos2(260.0, 269.0)));
+    run.send(Event::PointerMoved(pos2(260.0, 230.0)));
     run.frame();
     run.frame();
-    assert!(context_menu::contains(&run.ctx, pos2(500.0, 270.0)));
-    run.send(Event::PointerMoved(pos2(500.0, 305.0)));
+    assert!(context_menu::contains(&run.ctx, pos2(500.0, 231.0)));
+    run.send(Event::PointerMoved(pos2(500.0, 266.0)));
     run.frame();
     let mut copied = Vec::new();
     for pressed in [true, false] {
         run.send(Event::PointerButton {
-            pos: pos2(500.0, 305.0),
+            pos: pos2(500.0, 266.0),
             button: PointerButton::Primary,
             pressed,
             modifiers: Modifiers::NONE,
@@ -739,7 +739,7 @@ fn forget_confirm_runs_the_task() {
     // The scene's "Forget" entry, then the dialog's red button at the
     // right end of its actions row (250..610 x 242..274).
     run.rclick(pos2(205.0, 152.0));
-    run.click(pos2(240.0, 377.0));
+    run.click(pos2(240.0, 338.0));
     assert!(state(&run).0);
     run.click(pos2(575.0, 258.0));
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -1123,4 +1123,73 @@ fn remounts_drop_the_state_of_the_old_mounts() {
             "{scene}: temp data grew from {before} to {after} entries over 10 remounts"
         );
     }
+}
+
+/// The rail of a short window with four platforms and the Shortcuts tab:
+/// Epic sits under Help and Logs until the wheel scrolls the list, then a
+/// click opens it (unscrolled, the same point is Roblox).
+#[test]
+fn the_settings_rail_scrolls_to_its_last_platform() {
+    fn wait(run: &mut Run, ms: u64) {
+        let until = Instant::now() + Duration::from_millis(ms);
+        while Instant::now() < until {
+            run.frame();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    let active = |run: &Run| match &run.screen {
+        Screen::App(app) => app
+            .settings_panel()
+            .map(|p| p.tab_bar.active_tab().to_string()),
+        _ => panic!("not the app"),
+    };
+    let mut run = Run::new("settings-epic-fr-light-100", 1.0);
+    run.settle();
+    wait(&mut run, 600);
+    run.click(pos2(87.0, 18.0));
+    wait(&mut run, 700);
+    run.send(Event::PointerMoved(pos2(93.0, 300.0)));
+    run.send(Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, -300.0),
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+        modifiers: Modifiers::NONE,
+    });
+    wait(&mut run, 400);
+    run.click(pos2(93.0, 365.0));
+    wait(&mut run, 300);
+    assert_eq!(active(&run).as_deref(), Some("platform:epic"));
+}
+
+/// Tab walks the rail's clipped rows too: the row it focuses scrolls into
+/// view, as a click on it would need.
+#[test]
+fn the_settings_rail_reveals_a_focused_tab() {
+    fn wait(run: &mut Run, ms: u64) {
+        let until = Instant::now() + Duration::from_millis(ms);
+        while Instant::now() < until {
+            run.frame();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    let mut run = Run::new("settings-epic-fr-light-100", 1.0);
+    run.settle();
+    wait(&mut run, 600);
+    run.click(pos2(87.0, 18.0));
+    wait(&mut run, 700);
+    assert_eq!(crate::screens::settings::rail_offset(&run.ctx), 0.0);
+    let epic = egui::Id::unique(("settings-tab", "platform:epic"));
+    for _ in 0..40 {
+        if run.ctx.memory(|m| m.has_focus(epic)) {
+            break;
+        }
+        run.key(Key::Tab);
+    }
+    assert!(
+        run.ctx.memory(|m| m.has_focus(epic)),
+        "Tab never reached Epic"
+    );
+    wait(&mut run, 300);
+    assert!(crate::screens::settings::rail_offset(&run.ctx) > 0.0);
 }

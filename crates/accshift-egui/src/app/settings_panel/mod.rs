@@ -96,6 +96,13 @@ pub enum SettingFlag {
 pub enum SettingsAction {
     /// The close button or Escape: flush, then close.
     Close,
+    /// A shortcut's combination box, or the add picker: the row listens
+    /// (a second click stops it).
+    ShortcutListen(accshift_app::shortcuts::ShortcutTarget),
+    /// A shortcut's clear button.
+    ShortcutClear(accshift_app::shortcuts::ShortcutTarget),
+    /// The link to the system's own settings of the shortcuts (the portal).
+    ShortcutConfigure,
     SelectTab(String),
     OpenHelp,
     OpenLogs,

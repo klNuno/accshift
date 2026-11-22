@@ -23,6 +23,8 @@
 //!   shell state and the CS2 bridge queue.
 //! - [`lifecycle`]: boot and shutdown order, the updater, single instance,
 //!   deep links, autostart and process control.
+//! - [`shortcuts`]: the global shortcuts, their settings field, binding
+//!   table, conflicts and registration service.
 
 pub mod accounts;
 pub mod actions;
@@ -47,6 +49,7 @@ pub mod platforms;
 pub mod real;
 pub mod secure;
 pub mod settings;
+pub mod shortcuts;
 pub mod storage;
 pub mod stores;
 pub mod streamer;

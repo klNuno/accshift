@@ -4,8 +4,8 @@
 use egui::{pos2, vec2, Id, Rect, Ui};
 
 use super::{
-    field_label_style, hint_style, measure, platform_tab, platforms_tab, steam_tab, theme_grid,
-    Control, Ctx, InputField, Item,
+    field_label_style, hint_style, measure, platform_tab, platforms_tab, shortcuts_tab, steam_tab,
+    theme_grid, Control, Ctx, InputField, Item,
 };
 use crate::app::settings_panel::{js_number, SettingsAction};
 use crate::app::vars::Vars;
@@ -97,6 +97,7 @@ pub(super) fn paint_item(
         Item::Platforms(item) => out.extend(platforms_tab::paint(ui, r, id, c, item)),
         Item::Platform(item) => out.extend(platform_tab::paint(ui, r, id, c, item)),
         Item::Steam(item) => out.extend(steam_tab::paint(ui, r, id, c, item)),
+        Item::Shortcuts(item) => out.extend(shortcuts_tab::paint(ui, r, id, c, item)),
     }
     out
 }

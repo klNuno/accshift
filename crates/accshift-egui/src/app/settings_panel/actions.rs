@@ -58,13 +58,23 @@ impl AppModel {
             }
             return;
         }
+        match action {
+            SettingsAction::ShortcutListen(target) => return self.listen_shortcut(target),
+            SettingsAction::ShortcutClear(target) => return self.clear_shortcut(&target),
+            SettingsAction::ShortcutConfigure => return self.configure_shortcuts(),
+            _ => {}
+        }
         let jobs = &self.jobs;
         let gate = &self.backup.gate;
         let Some(panel) = self.settings_panel.as_mut() else {
             return;
         };
         match action {
-            SettingsAction::Close | SettingsAction::ReplayOnboarding => {}
+            SettingsAction::Close
+            | SettingsAction::ReplayOnboarding
+            | SettingsAction::ShortcutListen(_)
+            | SettingsAction::ShortcutClear(_)
+            | SettingsAction::ShortcutConfigure => {}
             SettingsAction::SelectTab(id) => panel.select_tab(jobs, id),
             SettingsAction::OpenHelp => panel.open_help_page(jobs, WIKI_URL),
             SettingsAction::OpenLogs => {
@@ -226,6 +236,11 @@ impl AppModel {
 
 /// Tabs.
 impl SettingsPanel {
+    /// Shows `id`, as a click on its tab would.
+    pub(in crate::app) fn show_tab(&mut self, jobs: &Jobs, id: &str) {
+        self.select_tab(jobs, id.to_string());
+    }
+
     /// Shows another tab. Leaving the Platforms tab clears its search and
     /// notices, any change of tab clears the Roblox tab's cookie and error,
     /// and entering the Privacy tab starts its state over.

@@ -54,6 +54,7 @@ pub enum PersonasEvent {
 const EDIT: &str = "persona.edit:";
 const COLOR: &str = "persona.color:";
 const DELETE: &str = "persona.delete:";
+const SHORTCUT: &str = "persona.shortcut:";
 
 type AccountsJob = Pending<BackendResult<Vec<PlatformAccount>>>;
 type ProfileJob = Pending<Fetched<Option<PlatformProfileInfo>>>;
@@ -277,6 +278,12 @@ pub fn persona_menu(persona: &Persona) -> Vec<AppMenuEntry> {
         },
         AppMenuEntry::Separator,
         AppMenuEntry::item(
+            "persona.shortcut",
+            Text::key("context.menu.setGlobalShortcut"),
+            AppMenuCommand::Custom(format!("{SHORTCUT}{}", persona.id)),
+        ),
+        AppMenuEntry::Separator,
+        AppMenuEntry::item(
             "persona.delete",
             Text::key("personas.delete"),
             AppMenuCommand::Custom(format!("{DELETE}{}", persona.id)),
@@ -467,6 +474,12 @@ impl AppModel {
                 };
                 b.personas.update(&mut b.stores, persona_id, &patch);
             }
+            return true;
+        }
+        if let Some(persona_id) = id.strip_prefix(SHORTCUT) {
+            self.open_shortcut_capture(accshift_app::shortcuts::ShortcutTarget::Persona {
+                persona_id: persona_id.to_string(),
+            });
             return true;
         }
         if let Some(persona_id) = id.strip_prefix(DELETE) {

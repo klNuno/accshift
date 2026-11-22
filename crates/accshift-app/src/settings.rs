@@ -7,6 +7,7 @@
 
 use crate::i18n::{self, Locale};
 use crate::js;
+use crate::shortcuts::GlobalShortcuts;
 use crate::stores::StoreContext;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -100,6 +101,10 @@ pub struct AppSettings {
     pub account_display: AccountDisplaySettings,
     pub pin_enabled: bool,
     pub pin_hash: String,
+    /// Left out of the file while empty: a config without shortcuts keeps
+    /// the shape older versions wrote ([`crate::shortcuts`]).
+    #[serde(default, skip_serializing_if = "GlobalShortcuts::is_empty")]
+    pub global_shortcuts: GlobalShortcuts,
 }
 
 impl AppSettings {
@@ -367,6 +372,7 @@ pub fn sanitize_settings(value: &Value, ctx: &StoreContext) -> AppSettings {
         account_display: sanitize_account_display(raw, ctx),
         pin_enabled,
         pin_hash,
+        global_shortcuts: GlobalShortcuts::sanitize(field(raw, "globalShortcuts"), ctx),
     }
 }
 

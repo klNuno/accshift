@@ -34,6 +34,9 @@ pub struct Shell {
     pub window: Option<window::Host>,
     /// [`Self::close`] ran: the close button and an OS quit both call it.
     closed: bool,
+    /// The runner's way back for a global shortcut, until the app takes
+    /// it ([`AppModel::set_hotkey_registrar`]).
+    hotkeys: Option<window::hotkeys::Deliver>,
 }
 
 impl Shell {
@@ -44,12 +47,54 @@ impl Shell {
             held: Vec::new(),
             window: None,
             closed: false,
+            hotkeys: None,
         }
     }
 
     pub fn with_window(mut self, host: window::Host) -> Self {
         self.window = Some(host);
         self
+    }
+
+    /// The runner's sender of delivered shortcut ids: the app of a normal
+    /// run gets OS registrations; scenes and the bench keep the fake.
+    pub fn set_hotkey_deliver(&mut self, deliver: window::hotkeys::Deliver) {
+        self.hotkeys = Some(deliver);
+    }
+
+    /// The shortcut registrar changed on its own (the portal answered).
+    pub fn hotkeys_changed(&mut self, ctx: &egui::Context) {
+        if let Screen::App(app) = &mut self.screen {
+            app.hotkeys_changed(ctx);
+        }
+    }
+
+    /// Whether a shortcut row listens for a combination.
+    pub fn capturing_shortcut(&self) -> bool {
+        matches!(&self.screen, Screen::App(app) if app.capturing_shortcut())
+    }
+
+    /// A press in the window for the listening shortcut row; `None` for a
+    /// key a shortcut cannot use.
+    pub fn shortcut_stroke(&mut self, ctx: &egui::Context, stroke: Option<app::shortcuts::Stroke>) {
+        if let Screen::App(app) = &mut self.screen {
+            app.shortcut_stroke(ctx, stroke);
+        }
+    }
+
+    /// A shortcut could not bring the window to the front.
+    pub fn hotkey_cannot_raise(&mut self, ctx: &egui::Context) {
+        if let Screen::App(app) = &mut self.screen {
+            app.hotkey_cannot_raise(ctx);
+        }
+    }
+
+    /// A global shortcut fired: what the window does now.
+    pub fn hotkey(&mut self, ctx: &egui::Context, id: u32) -> app::shortcuts::WindowOp {
+        match &mut self.screen {
+            Screen::App(app) => app.hotkey(ctx, id),
+            _ => app::shortcuts::WindowOp::None,
+        }
     }
 
     /// Whether the window reveals itself on boot. False for a `--tray`
@@ -206,6 +251,11 @@ impl Shell {
                         run.skip(&why);
                     }
                 }
+            }
+        }
+        if let (Some(_), Screen::App(app)) = (&self.window, &mut self.screen) {
+            if let Some(deliver) = self.hotkeys.take() {
+                app.set_hotkey_registrar(Box::new(move || window::hotkeys::registrar(deliver)));
             }
         }
         let launched = self

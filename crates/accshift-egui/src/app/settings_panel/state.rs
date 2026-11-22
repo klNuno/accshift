@@ -104,6 +104,9 @@ pub struct SettingsPanel {
     pub backup: super::BackupState,
     /// The scroll offset of the tab's content.
     pub scroll: f32,
+    /// A Shortcuts row started listening: the next frame of that tab
+    /// scrolls it into view.
+    pub reveal_listening: bool,
     /// Text for the clipboard once the frame has the context.
     pub(super) clipboard: Option<String>,
 }
@@ -117,13 +120,14 @@ pub struct TabDef {
     pub accent: Option<crate::theme::Rgba>,
 }
 
-/// The sidebar's tabs: the three core ones, then each shipped platform
+/// The sidebar's tabs: the four core ones, then each shipped platform
 /// with a settings tab that is enabled, in registry order.
 pub fn visible_tabs(platforms: &[PlatformDef], enabled: &[String]) -> Vec<TabDef> {
     let mut tabs: Vec<TabDef> = [
         ("general", "settings.general"),
         ("platforms", "settings.platforms"),
         ("privacy", "settings.privacy"),
+        ("shortcuts", "settings.shortcuts"),
     ]
     .iter()
     .map(|(id, key)| TabDef {
@@ -261,6 +265,7 @@ impl SettingsPanel {
             pending_removal: None,
             backup: super::BackupState::default(),
             scroll: 0.0,
+            reveal_listening: false,
             clipboard: None,
             draft,
         };

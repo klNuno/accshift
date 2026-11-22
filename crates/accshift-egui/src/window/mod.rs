@@ -11,10 +11,15 @@ pub mod color;
 pub mod edges;
 #[cfg(windows)]
 pub mod frame;
+pub mod hotkeys;
+#[cfg(feature = "software")]
+pub mod keystroke;
 pub mod placement;
 #[cfg(all(debug_assertions, windows))]
 pub mod probe;
 pub mod tray;
+#[cfg(all(feature = "software", target_os = "linux"))]
+pub mod wayland;
 
 use accshift_app::lifecycle::boot::{BOOT_FAILSAFE, BOOT_FAILSAFE_MESSAGE, BOOT_FAILSAFE_SOURCE};
 use accshift_app::lifecycle::deep_link;

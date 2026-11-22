@@ -33,7 +33,7 @@
       "select": ".context-menu, .context-menu *"
     },
     {
-      "move": [260, 161]
+      "move": [260, 122]
     },
     {
       "wait": 300
@@ -42,7 +42,7 @@
       "shot": "account-hover"
     },
     {
-      "move": [260, 191]
+      "move": [260, 152]
     },
     {
       "wait": 500
@@ -55,7 +55,7 @@
       "select": ".context-menu, .context-menu *"
     },
     {
-      "move": [260, 230]
+      "move": [260, 191]
     },
     {
       "wait": 500

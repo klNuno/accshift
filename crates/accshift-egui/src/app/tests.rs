@@ -14,6 +14,7 @@ use super::*;
 mod backup_restore;
 mod native_regressions;
 mod real_unreadable;
+mod shortcuts;
 
 struct Scratch {
     root: PathBuf,

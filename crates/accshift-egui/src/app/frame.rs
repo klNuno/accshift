@@ -51,6 +51,7 @@ impl AppModel {
         // memory are the ones the restore replaced.
         let restart_needed = self.backup.restart_needed();
         if !restart_needed {
+            self.tick_shortcuts(&ctx);
             self.tick_deep_links(&ctx);
         }
         self.tick_updates(&ctx);
@@ -58,6 +59,7 @@ impl AppModel {
         // The window-level key handling, before any widget reads keys.
         self.track_card_focus(&ctx);
         if !restart_needed {
+            self.capture_shortcut_keys(&ctx);
             self.dispatch_keys(&ctx);
             self.dispatch_mouse_back(&ctx);
         }

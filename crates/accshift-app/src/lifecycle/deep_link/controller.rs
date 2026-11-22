@@ -1,5 +1,10 @@
 //! The deep-link controller: one link at a time walked from the URL to an
 //! account switch, through actions the shell answers.
+//!
+//! A global shortcut bound to an account takes the same walk from its parsed
+//! request ([`DeepLinkController::on_shortcut`]): the user pressed it, so it
+//! skips the deep-link setting and the confirm, and keeps the PIN refusal,
+//! the platform checks, the tab change, the lookup and the toasts.
 
 use super::link::{find_account, parse_deep_link, DeepLinkSwitchRequest};
 use crate::accounts::loading::is_platform_usable;
@@ -75,6 +80,7 @@ enum Phase {
     /// The parsed link waits for boot; it gives up after the timeout.
     WaitBootForSwitch {
         request: DeepLinkSwitchRequest,
+        shortcut: bool,
         since: Instant,
     },
     AwaitPlatformAccounts(Switch),
@@ -96,6 +102,8 @@ enum Phase {
 #[derive(Debug, Clone, PartialEq)]
 struct Switch {
     request: DeepLinkSwitchRequest,
+    /// From a global shortcut: no confirm.
+    shortcut: bool,
     platform_name: String,
     on_other_tab: bool,
     account: Option<PlatformAccount>,
@@ -109,6 +117,19 @@ impl Switch {
             .as_ref()
             .map_or("", |account| account.id.as_str());
         accounts.iter().find(|candidate| candidate.id == id)
+    }
+
+    /// The account the request names in `accounts`. A shortcut stores an
+    /// account id and takes only that exact id: once its account is gone,
+    /// a name lookup could land on another account. A link keeps the id,
+    /// username or display-name lookup.
+    fn named_in<'a>(&self, accounts: &'a [PlatformAccount]) -> Option<&'a PlatformAccount> {
+        let reference = &self.request.account_ref;
+        if self.shortcut {
+            accounts.iter().find(|account| &account.id == reference)
+        } else {
+            find_account(accounts, reference)
+        }
     }
 
     /// The name the success toast shows: display name, username or id.
@@ -129,9 +150,10 @@ impl Switch {
 /// show; else the platform's name.
 fn admit_platform(
     request: &DeepLinkSwitchRequest,
+    shortcut: bool,
     view: &DeepLinkView<'_>,
 ) -> Result<String, Text> {
-    if !view.settings.deep_links_enabled {
+    if !shortcut && !view.settings.deep_links_enabled {
         return Err(Text::key("toast.deepLinkDisabled"));
     }
     let Some(def) = view.registry.definition(&request.platform_id) else {
@@ -154,12 +176,19 @@ fn admit_platform(
     Ok(def.name.clone())
 }
 
+/// What waits for the link in flight to end.
+#[derive(Debug, Clone, PartialEq)]
+enum Incoming {
+    Url(String),
+    Shortcut(DeepLinkSwitchRequest),
+}
+
 /// One link at a time, the latest one queued.
 #[derive(Debug)]
 pub struct DeepLinkController {
     started: bool,
     phase: Phase,
-    pending: Option<String>,
+    pending: Option<Incoming>,
 }
 
 impl Default for DeepLinkController {
@@ -201,20 +230,53 @@ impl DeepLinkController {
         }
     }
 
-    /// Starts a link; while busy, only the latest one is kept for later.
+    /// A global shortcut bound to an account fired: its switch, queued like
+    /// a link.
+    pub fn on_shortcut(&mut self, request: DeepLinkSwitchRequest, now: Instant) {
+        self.handle(Incoming::Shortcut(request), now);
+    }
+
+    /// True while the switch in flight came from a global shortcut.
+    pub fn is_shortcut(&self) -> bool {
+        match &self.phase {
+            Phase::Idle | Phase::WaitBootForUrl { .. } => false,
+            Phase::WaitBootForSwitch { shortcut, .. } => *shortcut,
+            Phase::AwaitPlatformAccounts(switch)
+            | Phase::WaitLoader { switch, .. }
+            | Phase::AwaitReload(switch)
+            | Phase::AwaitConfirm(switch)
+            | Phase::AwaitTabChange(switch)
+            | Phase::WaitLoaderAfterTab { switch, .. }
+            | Phase::AwaitReloadAfterTab(switch)
+            | Phase::AwaitSwitch(switch) => switch.shortcut,
+        }
+    }
+
     fn handle_url(&mut self, url: String, now: Instant) {
+        self.handle(Incoming::Url(url), now);
+    }
+
+    /// Starts a link; while busy, only the latest one is kept for later.
+    fn handle(&mut self, incoming: Incoming, now: Instant) {
         if self.is_busy() {
-            self.pending = Some(url);
+            self.pending = Some(incoming);
             return;
         }
-        self.phase = Phase::WaitBootForUrl { url, since: now };
+        self.phase = match incoming {
+            Incoming::Url(url) => Phase::WaitBootForUrl { url, since: now },
+            Incoming::Shortcut(request) => Phase::WaitBootForSwitch {
+                request,
+                shortcut: true,
+                since: now,
+            },
+        };
     }
 
     /// Ends the link in flight and starts the queued one, if any.
     fn finish(&mut self, now: Instant) {
         self.phase = Phase::Idle;
         if let Some(next) = self.pending.take() {
-            self.handle_url(next, now);
+            self.handle(next, now);
         }
     }
 
@@ -246,17 +308,26 @@ impl DeepLinkController {
                 };
                 self.phase = Phase::WaitBootForSwitch {
                     request,
+                    shortcut: false,
                     since: now,
                 };
             }
-            Phase::WaitBootForSwitch { request, since } => {
+            Phase::WaitBootForSwitch {
+                request,
+                shortcut,
+                since,
+            } => {
                 if view.boot_ready {
-                    return self.gate(request, view, now, actions);
+                    return self.gate(request, shortcut, view, now, actions);
                 }
                 if now.duration_since(since) > BOOT_TIMEOUT {
                     return self.finish(now);
                 }
-                self.phase = Phase::WaitBootForSwitch { request, since };
+                self.phase = Phase::WaitBootForSwitch {
+                    request,
+                    shortcut,
+                    since,
+                };
             }
             Phase::WaitLoader { switch, since } => {
                 if view.active_tab != switch.request.platform_id {
@@ -270,8 +341,8 @@ impl DeepLinkController {
                     self.phase = Phase::WaitLoader { switch, since };
                     return;
                 }
-                match find_account(view.accounts, &switch.request.account_ref) {
-                    Some(account) => self.found(switch, account.clone(), actions),
+                match switch.named_in(view.accounts) {
+                    Some(account) => self.found(switch, account.clone(), view, now, actions),
                     None => {
                         actions.push(DeepLinkAction::LoadAccounts);
                         self.phase = Phase::AwaitReload(switch);
@@ -279,6 +350,11 @@ impl DeepLinkController {
                 }
             }
             Phase::WaitLoaderAfterTab { switch, since } => {
+                // The visible tab is the one the switch runs on: another tab
+                // picked meanwhile may hold an account with the same id.
+                if view.active_tab != switch.request.platform_id {
+                    return self.finish(now);
+                }
                 if view.loader_busy(since, now) {
                     self.phase = Phase::WaitLoaderAfterTab { switch, since };
                     return;
@@ -300,6 +376,7 @@ impl DeepLinkController {
     fn gate(
         &mut self,
         request: DeepLinkSwitchRequest,
+        shortcut: bool,
         view: &DeepLinkView<'_>,
         now: Instant,
         actions: &mut Vec<DeepLinkAction>,
@@ -307,7 +384,7 @@ impl DeepLinkController {
         if view.pin_locked {
             return self.finish(now);
         }
-        let platform_name = match admit_platform(&request, view) {
+        let platform_name = match admit_platform(&request, shortcut, view) {
             Ok(name) => name,
             Err(toast) => {
                 actions.push(DeepLinkAction::Toast(toast));
@@ -316,6 +393,7 @@ impl DeepLinkController {
         };
         let on_other_tab = view.active_tab != request.platform_id;
         let switch = Switch {
+            shortcut,
             platform_name,
             on_other_tab,
             account: None,
@@ -337,11 +415,12 @@ impl DeepLinkController {
         &mut self,
         switch: Switch,
         accounts: &[PlatformAccount],
+        view: &DeepLinkView<'_>,
         actions: &mut Vec<DeepLinkAction>,
         now: Instant,
     ) {
-        match find_account(accounts, &switch.request.account_ref) {
-            Some(account) => self.found(switch, account.clone(), actions),
+        match switch.named_in(accounts) {
+            Some(account) => self.found(switch, account.clone(), view, now, actions),
             None => self.not_found(&switch, actions, now),
         }
     }
@@ -357,12 +436,19 @@ impl DeepLinkController {
         self.finish(now);
     }
 
+    /// The account is found: a link asks to confirm it, a shortcut goes on.
     fn found(
         &mut self,
         mut switch: Switch,
         account: PlatformAccount,
+        view: &DeepLinkView<'_>,
+        now: Instant,
         actions: &mut Vec<DeepLinkAction>,
     ) {
+        if switch.shortcut {
+            switch.account = Some(account);
+            return self.confirmed(switch, view, now, actions);
+        }
         actions.push(DeepLinkAction::Confirm {
             account: account.clone(),
             platform_name: switch.platform_name.clone(),
@@ -422,7 +508,7 @@ impl DeepLinkController {
         let mut actions = Vec::new();
         match (std::mem::replace(&mut self.phase, Phase::Idle), answer) {
             (Phase::AwaitPlatformAccounts(switch), DeepLinkAnswer::PlatformAccounts(accounts)) => {
-                self.confirm_named(switch, &accounts, &mut actions, now);
+                self.confirm_named(switch, &accounts, view, &mut actions, now);
             }
             (Phase::AwaitReload(switch), DeepLinkAnswer::AccountsLoaded) => {
                 if view.active_tab != switch.request.platform_id {
@@ -431,7 +517,7 @@ impl DeepLinkController {
                     ));
                     self.phase = Phase::AwaitPlatformAccounts(switch);
                 } else {
-                    self.confirm_named(switch, view.accounts, &mut actions, now);
+                    self.confirm_named(switch, view.accounts, view, &mut actions, now);
                 }
             }
             (Phase::AwaitConfirm(switch), DeepLinkAnswer::Confirmed(allowed)) => {
@@ -449,9 +535,13 @@ impl DeepLinkController {
                 }
             }
             (Phase::AwaitReloadAfterTab(switch), DeepLinkAnswer::AccountsLoaded) => {
-                match switch.confirmed_in(view.accounts) {
-                    Some(account) => self.switch(switch, account.clone(), &mut actions),
-                    None => self.not_found(&switch, &mut actions, now),
+                if view.active_tab != switch.request.platform_id {
+                    self.finish(now);
+                } else {
+                    match switch.confirmed_in(view.accounts) {
+                        Some(account) => self.switch(switch, account.clone(), &mut actions),
+                        None => self.not_found(&switch, &mut actions, now),
+                    }
                 }
             }
             (Phase::AwaitSwitch(switch), DeepLinkAnswer::Switched(switched)) => {

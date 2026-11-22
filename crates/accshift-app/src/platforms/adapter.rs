@@ -593,7 +593,10 @@ impl PlatformAdapter {
                     self.state().riot_profiles.forget(account_id);
                 }
                 outcome.push(TaskEffect::Toast(toast.clone()));
-                outcome.push(TaskEffect::RemoveAccount(account_id.clone()));
+                outcome.push(TaskEffect::RemoveAccount {
+                    platform_id: platform_id.clone(),
+                    account_id: account_id.clone(),
+                });
                 Ok(())
             }
             PlatformTask::SetAccountLabel {

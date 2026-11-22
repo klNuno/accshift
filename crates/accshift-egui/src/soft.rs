@@ -21,6 +21,7 @@ use winit::event_loop::{
 use winit::monitor::MonitorHandle;
 use winit::window::{Window, WindowId};
 
+use crate::window::hotkeys::Signal;
 use crate::window::tray::{Tray, TrayAction};
 use crate::{bench, Shell};
 
@@ -35,6 +36,9 @@ pub enum UserEvent {
     VBlank,
     /// The tray icon was clicked or its menu chosen ([`crate::window::tray`]).
     Tray(TrayAction),
+    /// A global shortcut fired, or its registrar changed
+    /// ([`crate::window::hotkeys`]).
+    Hotkey(crate::window::hotkeys::Signal),
 }
 
 impl From<accesskit_winit::Event> for UserEvent {
@@ -202,6 +206,11 @@ struct Live {
     stage: Vec<[u8; 4]>,
     /// The held modifiers, for the keys egui-winit drops.
     modifiers: egui::Modifiers,
+    /// winit's held modifiers, for a shortcut capture's presses.
+    held: winit::keyboard::ModifiersState,
+    /// Raises the window with a Wayland activation token.
+    #[cfg(target_os = "linux")]
+    raiser: crate::window::wayland::Raiser,
     shown: bool,
     /// The bench's scripted wheel and keys, from the first shown frame.
     script: Option<bench::Script>,
@@ -652,14 +661,68 @@ impl Runner {
         self.close(event_loop);
     }
 
-    /// Show and focus the window again from the tray.
-    fn reveal(&mut self) {
+    /// Show and focus the window again from the tray or a shortcut.
+    /// `token`: the compositor's activation token of the press, which a
+    /// Wayland window needs to come back (winit cannot raise it there).
+    /// False when it could not: Wayland without a token, or without
+    /// xdg-activation.
+    fn reveal(&mut self, token: Option<&str>) -> bool {
+        #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+        let mut raised = true;
         if let Some(live) = &mut self.live {
             live.window.set_visible(true);
+            if live.window.is_minimized() == Some(true) {
+                live.window.set_minimized(false);
+            }
             live.window.focus_window();
+            #[cfg(target_os = "linux")]
+            if crate::window::wayland::is_wayland(&*live.window) {
+                raised = token.is_some_and(|token| live.raiser.raise(token));
+            }
+            #[cfg(not(target_os = "linux"))]
+            let _ = token;
             live.shown = true;
         }
         self.heal();
+        raised
+    }
+
+    /// The show/hide shortcut: a window in front hides, to the tray when the
+    /// app uses one (close to tray, a `--tray` launch), else minimized; any
+    /// other window comes back to the front. Wayland cannot hide a window
+    /// nor tell it is minimized: there it minimizes, and a window without
+    /// the focus counts as away; a press without an activation token (KDE)
+    /// leaves it, as nothing could bring it back
+    /// ([`toggle_plan`](crate::app::shortcuts::toggle_plan)). False
+    /// when the window could not be brought or kept within reach.
+    fn toggle_window(&mut self, token: Option<&str>) -> bool {
+        use crate::app::shortcuts::{toggle_plan, TogglePlan};
+        let Some(live) = &self.live else { return true };
+        let window = &live.window;
+        let in_front = live.shown
+            && window.is_visible() != Some(false)
+            && window.is_minimized() != Some(true)
+            && window.has_focus();
+        #[cfg(target_os = "linux")]
+        let wayland = crate::window::wayland::is_wayland(&**window);
+        #[cfg(not(target_os = "linux"))]
+        let wayland = false;
+        let can_hide = match toggle_plan(in_front, wayland, token.is_some()) {
+            TogglePlan::Reveal => return self.reveal(token),
+            TogglePlan::Keep => return false,
+            TogglePlan::Away { can_hide } => can_hide,
+        };
+        if can_hide && self.tray.is_none() && live.shell.wants_close_to_tray() {
+            self.ensure_tray();
+        }
+        if let Some(live) = &self.live {
+            if can_hide && self.tray.is_some() {
+                live.window.set_visible(false);
+            } else {
+                live.window.set_minimized(true);
+            }
+        }
+        true
     }
 
     /// The title bar's close button or the system's (Alt+F4, the taskbar):
@@ -854,6 +917,7 @@ fn context_menu_key(live: &mut Live, event: &WindowEvent) -> bool {
         WindowEvent::ModifiersChanged(held) => {
             // As egui-winit reads them.
             let held = held.state();
+            live.held = held;
             let mac = cfg!(target_os = "macos");
             live.modifiers = egui::Modifiers {
                 alt: held.alt_key(),
@@ -883,6 +947,10 @@ fn context_menu_key(live: &mut Live, event: &WindowEvent) -> bool {
         modifiers,
     });
     true
+}
+
+fn is_shortcut_press(pressed: bool, repeat: bool, synthetic: bool) -> bool {
+    pressed && !repeat && !synthetic
 }
 
 impl ApplicationHandler<UserEvent> for Runner {
@@ -956,9 +1024,18 @@ impl ApplicationHandler<UserEvent> for Runner {
             self.frame_interval = interval;
         }
 
-        let shell = init(&self.ctx, &window);
+        let mut shell = init(&self.ctx, &window);
+        let hotkeys = Mutex::new(self.proxy.clone());
+        shell.set_hotkey_deliver(Arc::new(move |signal| {
+            if let Ok(proxy) = hotkeys.lock() {
+                let _ = proxy.send_event(UserEvent::Hotkey(signal));
+            }
+        }));
         let mut info = ViewportInfo::default();
         egui_winit::update_viewport_info(&mut info, &self.ctx, &window, true);
+        #[cfg(target_os = "linux")]
+        let raiser =
+            crate::window::wayland::Raiser::new(window.clone(), event_loop.owned_display_handle());
         self.live = Some(Live {
             canvas: Canvas {
                 window: window.clone(),
@@ -981,6 +1058,9 @@ impl ApplicationHandler<UserEvent> for Runner {
             stage_zoom: 1.0,
             stage: Vec::new(),
             modifiers: egui::Modifiers::NONE,
+            held: winit::keyboard::ModifiersState::empty(),
+            #[cfg(target_os = "linux")]
+            raiser,
             shown: false,
             script: None,
         });
@@ -1030,9 +1110,31 @@ impl ApplicationHandler<UserEvent> for Runner {
                 }
             }
             UserEvent::Tray(action) => match action {
-                TrayAction::Open => self.reveal(),
+                TrayAction::Open => {
+                    self.reveal(None);
+                }
                 TrayAction::Quit => self.close(event_loop),
             },
+            UserEvent::Hotkey(Signal::Changed) => {
+                let Some(live) = &mut self.live else { return };
+                live.shell.hotkeys_changed(&self.ctx);
+                self.repaint_at(Instant::now());
+            }
+            UserEvent::Hotkey(Signal::Pressed { id, token }) => {
+                use crate::app::shortcuts::WindowOp;
+                let Some(live) = &mut self.live else { return };
+                let raised = match live.shell.hotkey(&self.ctx, id) {
+                    WindowOp::None => true,
+                    WindowOp::Reveal => self.reveal(token.as_deref()),
+                    WindowOp::Toggle => self.toggle_window(token.as_deref()),
+                };
+                if !raised {
+                    if let Some(live) = &mut self.live {
+                        live.shell.hotkey_cannot_raise(&self.ctx);
+                    }
+                }
+                self.repaint_at(Instant::now());
+            }
         }
     }
 
@@ -1078,6 +1180,25 @@ impl ApplicationHandler<UserEvent> for Runner {
         if edge_press(live, &event) {
             return;
         }
+        // A listening shortcut row reads the press as winit gives it, before
+        // egui-winit rewrites it ([`crate::window::keystroke`]).
+        if let WindowEvent::KeyboardInput {
+            event: key,
+            is_synthetic,
+            ..
+        } = &event
+        {
+            if is_shortcut_press(key.state.is_pressed(), key.repeat, *is_synthetic)
+                && live.shell.capturing_shortcut()
+            {
+                let stroke = crate::window::keystroke::stroke(
+                    key,
+                    live.held,
+                    crate::window::hotkeys::super_at_press(),
+                );
+                live.shell.shortcut_stroke(&self.ctx, stroke);
+            }
+        }
         let response = live.state.on_window_event(&live.window, &event);
         let menu_key = context_menu_key(live, &event);
         if response.repaint || menu_key {
@@ -1119,6 +1240,14 @@ impl ApplicationHandler<UserEvent> for Runner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shortcut_capture_ignores_synthetic_focus_presses() {
+        assert!(!is_shortcut_press(true, false, true));
+        assert!(!is_shortcut_press(true, true, false));
+        assert!(!is_shortcut_press(false, false, false));
+        assert!(is_shortcut_press(true, false, false));
+    }
 
     /// A presenter whose buffer fails a given number of times.
     struct Flaky {

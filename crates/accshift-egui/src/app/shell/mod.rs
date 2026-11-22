@@ -249,10 +249,11 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         (None, window)
     };
     // Media query widths are the window's, outside the stage's zoom.
-    let settings_view = fv
-        .nav
-        .show_settings
-        .then(|| settings::View::new(booted, crate::zoom::viewport(&ctx).x));
+    let settings_view = fv.nav.show_settings.then(|| {
+        let mut view = settings::View::new(booted, crate::zoom::viewport(&ctx).x);
+        view.shortcuts = app.shortcuts_view();
+        view
+    });
     let palette_commands = app.palette.is_some().then(|| app.palette_commands());
     let bulk_step = booted.bulk.bar().map(|bar| bar.step());
     // The bar's Escape while it owns the keyboard.

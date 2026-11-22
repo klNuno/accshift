@@ -8,7 +8,7 @@ use super::{tr, Frame};
 use crate::app::settings_panel::{SettingsAction, TabDef};
 use crate::theme::Rgba;
 use crate::ui::anim;
-use crate::ui::components::controls::{focus_ring, take_focus, T120, WHITE};
+use crate::ui::components::controls::{focus_ring, scroll, take_focus, T120, WHITE};
 use crate::ui::components::icon;
 use crate::ui::paint::{Border, BoxStyle, Corners, Sides};
 use crate::ui::snap;
@@ -16,6 +16,9 @@ use crate::ui::text::{self, LineHeight, TextStyle, TextTransform};
 
 /// A rail button: an 18 px line and 8 px of padding above and below.
 const NAV_ITEM_H: f32 = 34.0;
+/// The "Platforms" group label: 12 above, a 13.5 px line, 4 below and the
+/// 2 px gap the label keeps from the rows.
+const GROUP_H: f32 = 12.0 + 17.5 + 2.0;
 
 macro_rules! svg14 {
     ($body:expr) => {
@@ -34,6 +37,9 @@ const ICON_GENERAL: &[u8] = svg14!(
 const ICON_PLATFORMS: &[u8] =
     svg14!("<path d=\"M3 3h7v7H3z M14 3h7v7h-7z M14 14h7v7h-7z M3 14h7v7H3z\"/>");
 const ICON_PRIVACY: &[u8] = svg14!("<path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\"/>");
+const ICON_SHORTCUTS: &[u8] = svg14!(
+    "<rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"2\"/><path d=\"M6 8h.01 M10 8h.01 M14 8h.01 M18 8h.01 M8 12h.01 M12 12h.01 M16 12h.01 M7 16h10\"/>"
+);
 const ICON_HELP: &[u8] = svg14!(
     "<circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3\"/><line x1=\"12\" y1=\"17\" x2=\"12.01\" y2=\"17\"/>"
 );
@@ -101,17 +107,53 @@ pub(super) fn rail(ui: &mut Ui, rail: Rect, f: &Frame) -> Vec<SettingsAction> {
 }
 
 /// One button per visible tab, clipped to `list`; the first platform tab
-/// opens the "Platforms" group, labelled when the rail is wide.
+/// opens the "Platforms" group, labelled when the rail is wide. A list
+/// taller than the rail (many platforms, a short window) scrolls with the
+/// app's scrollbar and brings a newly active or newly focused tab into
+/// view: Tab walks the clipped rows too.
 fn tab_list(ui: &mut Ui, list: Rect, inner_w: f32, f: &Frame) -> Vec<SettingsAction> {
+    let first_platform = f.tabs.iter().position(|tab| tab.accent.is_some());
+    let header = |i: usize| first_platform == Some(i) && !f.narrow;
+    // Each tab's top in the list, and the list's full height.
+    let mut tops = Vec::with_capacity(f.tabs.len());
+    let mut content = 0.0;
+    for i in 0..f.tabs.len() {
+        if header(i) {
+            content += GROUP_H;
+        }
+        tops.push(content);
+        content += NAV_ITEM_H + 2.0;
+    }
+    let overflow = scroll::overflows(list.height(), content);
+    let item_w = inner_w - if overflow { scroll::WIDTH } else { 0.0 };
+    let id = rail_scroll_id();
+    let (mut offset, seen_active, seen_focus) =
+        ui.data(|d| d.get_temp::<RailScroll>(id).unwrap_or_default());
+    let focused = f
+        .tabs
+        .iter()
+        .find(|tab| ui.memory(|m| m.has_focus(tab_id(&tab.id))))
+        .map(|tab| tab.id.clone());
+    let reveal = if focused.is_some() && focused != seen_focus {
+        focused.as_deref()
+    } else if seen_active != f.active {
+        Some(f.active)
+    } else {
+        None
+    };
+    if let Some(i) = reveal.and_then(|shown| f.tabs.iter().position(|tab| tab.id == shown)) {
+        offset = scroll::nearest(offset, list.height(), tops[i], tops[i] + NAV_ITEM_H);
+    }
+    scroll::scroll(ui, list, id, &mut offset, content, f.vars);
+    ui.data_mut(|d| d.insert_temp(id, (offset, f.active.to_string(), focused)));
+
     let mut list_ui = ui.new_child(UiBuilder::new().max_rect(list));
     list_ui.set_clip_rect(list.intersect(ui.clip_rect()));
-    let first_platform = f.tabs.iter().position(|tab| tab.accent.is_some());
     let mut out = Vec::new();
-    let mut y = list.top();
     for (i, tab) in f.tabs.iter().enumerate() {
-        if first_platform == Some(i) && !f.narrow {
+        let y = list.top() + tops[i] - offset;
+        if header(i) {
             // Margin 12 above, 4 below, 9 px bold uppercase tracked 0.08em.
-            y += 12.0;
             let style = TextStyle::new(9.0, 700)
                 .line_height(LineHeight::Number(1.5))
                 .letter_spacing_em(0.08)
@@ -120,19 +162,41 @@ fn tab_list(ui: &mut Ui, list: Rect, inner_w: f32, f: &Frame) -> Vec<SettingsAct
                 .color(f.vars.fg_subtle.to_color32());
             text::paint(
                 list_ui.painter(),
-                Rect::from_min_size(pos2(list.left() + 10.0, y), vec2(inner_w - 20.0, 13.5)),
+                Rect::from_min_size(
+                    pos2(list.left() + 10.0, y - GROUP_H + 12.0),
+                    vec2(item_w - 20.0, 13.5),
+                ),
                 &tr(f.locale, "settings.platforms"),
                 &style,
             );
-            y += 17.5 + 2.0;
         }
-        let rect = Rect::from_min_size(pos2(list.left(), y), vec2(inner_w, NAV_ITEM_H));
+        let rect = Rect::from_min_size(pos2(list.left(), y), vec2(item_w, NAV_ITEM_H));
         if nav_item(&mut list_ui, rect, tab, f) {
             out.push(SettingsAction::SelectTab(tab.id.clone()));
         }
-        y += NAV_ITEM_H + 2.0;
     }
     out
+}
+
+/// The rail's offset, the active tab and the focused tab it last saw.
+type RailScroll = (f32, String, Option<String>);
+
+fn rail_scroll_id() -> Id {
+    Id::unique("settings-rail-scroll")
+}
+
+/// How far the rail's tab list is scrolled.
+#[cfg(test)]
+pub(crate) fn rail_offset(ctx: &egui::Context) -> f32 {
+    ctx.data(|d| {
+        d.get_temp::<RailScroll>(rail_scroll_id())
+            .unwrap_or_default()
+            .0
+    })
+}
+
+fn tab_id(tab: &str) -> Id {
+    Id::unique(("settings-tab", tab))
 }
 
 /// The Help and Logs buttons from `top_left`, side by side or stacked.
@@ -232,7 +296,7 @@ fn nav_item(ui: &mut Ui, rect: Rect, tab: &TabDef, f: &Frame) -> bool {
     let v = f.vars;
     let active = tab.id == f.active;
     let label = tr(f.locale, &tab.label_key);
-    let id = Id::unique(("settings-tab", tab.id.as_str()));
+    let id = tab_id(&tab.id);
     let response = ui.interact(rect, id, Sense::click());
     response.widget_info(|| WidgetInfo::selected(Role::Button, true, active, &label));
     ui.ctx().accesskit_node_builder(id, |node| {
@@ -260,6 +324,7 @@ fn nav_item(ui: &mut Ui, rect: Rect, tab: &TabDef, f: &Frame) -> bool {
             let svg = match tab.id.as_str() {
                 "platforms" => ICON_PLATFORMS,
                 "privacy" => ICON_PRIVACY,
+                "shortcuts" => ICON_SHORTCUTS,
                 _ => ICON_GENERAL,
             };
             let a = if active { 1.0 } else { 0.75 };
