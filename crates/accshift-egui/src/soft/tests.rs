@@ -2,7 +2,7 @@ use std::num::NonZeroU32;
 use std::time::Duration;
 
 use super::platform::is_shortcut_press;
-use super::present::{frame_buffer, Faults, Present, LOGGED_FAULTS};
+use super::present::{frame_buffer, holds_last_frame, Faults, Present, LOGGED_FAULTS};
 
 #[test]
 fn shortcut_capture_ignores_synthetic_focus_presses() {
@@ -289,5 +289,44 @@ fn hovered_glass_card_frame_cost() {
             presented / frames,
             size[0] * size[1],
         );
+    }
+}
+
+/// Two window buffers presented in turn (Wayland's swap): each one holds
+/// the frame before last, so it gets every pixel, and the old card leaves
+/// no glass behind.
+#[test]
+fn swapped_window_buffers_keep_no_old_card() {
+    let mut stage = Stage::new("cardext-glass-dark-100", 1.0);
+    let size = stage.pixels();
+    let mut render = renderer();
+    let mut windows = [
+        vec![[0u8; 4]; size[0] * size[1]],
+        vec![[0u8; 4]; size[0] * size[1]],
+    ];
+    let mut frames = 0usize;
+    for &(x, y) in &HOVERS {
+        for step in 0..3 {
+            let frame = stage.frame(egui::pos2(x + (step % 2) as f32, y));
+            // softbuffer's age: 0 for a buffer never presented, then 2.
+            let age = if frames < 2 { 0 } else { 2 };
+            let window = &mut windows[frames % 2];
+            let full = !holds_last_frame(age);
+            present(&mut render, window, size, &frame, &mut stage.textures, full);
+            let mut fresh = renderer();
+            let mut expected = vec![[0u8; 4]; size[0] * size[1]];
+            let mut every = stage.every_texture.clone();
+            present(&mut fresh, &mut expected, size, &frame, &mut every, true);
+            let wrong = window
+                .iter()
+                .zip(&expected)
+                .filter(|(a, b)| a.iter().zip(b.iter()).any(|(a, b)| a.abs_diff(*b) > 2))
+                .count();
+            assert_eq!(
+                wrong, 0,
+                "frame {frames} at ({x}, {y}): {wrong} pixels differ"
+            );
+            frames += 1;
+        }
     }
 }

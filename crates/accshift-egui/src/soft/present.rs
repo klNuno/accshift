@@ -144,6 +144,13 @@ pub(super) fn backdrop_op(
     })
 }
 
+/// Whether a window buffer of softbuffer age `age` holds the frame
+/// presented just before, all a partial copy builds on: 0 is a new buffer,
+/// 2 or more one of a swap chain (Wayland) that missed the frames since.
+pub(super) fn holds_last_frame(age: u8) -> bool {
+    age == 1
+}
+
 pub(super) fn read_pixels(bgra: &[[u8; 4]], size: [usize; 2]) -> Arc<egui::ColorImage> {
     let pixels = bgra
         .iter()

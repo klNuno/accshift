@@ -1068,28 +1068,32 @@ impl EguiSoftwareRender {
         })
     }
 
-    /// The cached primitives after `root` on the tiles `clip` reads, as one
-    /// number: a primitive crossing the root, or one that came or went
-    /// without leaving a dirty tile, changes it.
+    /// The cached primitives after `root` on the tiles `clip` reads, in
+    /// paint order, as one number: a primitive crossing the root, one that
+    /// came or went, or two that swapped, without leaving a dirty tile,
+    /// changes it.
     fn blur_fingerprint(&self, root: Option<usize>, clip: Option<backdrop::BackdropClip>) -> u64 {
         let [columns, rows] = self.clip_tiles(clip);
-        let mut sum = 0u64;
-        let mut count = 0u64;
-        for (&hash, prim) in &self.cached_primitives {
-            if root.is_some_and(|r| prim.z_order <= r) {
-                continue;
-            }
-            let under = prim
-                .occupied_tiles
-                .iter()
-                .any(|&[tx, ty]| columns.contains(&(tx as usize)) && rows.contains(&(ty as usize)));
-            if under {
-                // Spread each hash so a sum of a few cannot cancel out.
-                sum = sum.wrapping_add((hash as u64 | 1).wrapping_mul(0x9E37_79B9_7F4A_7C15));
-                count += 1;
-            }
-        }
-        sum ^ count.rotate_left(48)
+        let mut under: Vec<(usize, u32)> = self
+            .cached_primitives
+            .iter()
+            .filter(|(_, prim)| {
+                !root.is_some_and(|r| prim.z_order <= r)
+                    && prim.occupied_tiles.iter().any(|&[tx, ty]| {
+                        columns.contains(&(tx as usize)) && rows.contains(&(ty as usize))
+                    })
+            })
+            .map(|(&hash, prim)| (prim.z_order, hash))
+            .collect();
+        under.sort_unstable();
+        // The order matters, the paint indices themselves do not: a
+        // primitive added elsewhere shifts them all.
+        under
+            .iter()
+            .fold(0xCBF2_9CE4_8422_2325u64, |acc, &(_, hash)| {
+                (acc ^ u64::from(hash)).wrapping_mul(0x0000_0100_0000_01B3)
+            })
+            ^ (under.len() as u64).rotate_left(48)
     }
 
     /// Draws `jobs` on `buffer`, a layer nested in them as its own: it
@@ -2743,5 +2747,111 @@ mod layer_tests {
         let mut expected = vec![[0u8; 4]; w * h];
         fresh.copy_canvas_to_buffer(&mut BufferMutRef::new(&mut expected, w, h), true);
         assert!(window == expected, "the layer's pixels are gone");
+    }
+
+    #[test]
+    fn swapped_shapes_under_a_layer_blur_it_again() {
+        let classify = || {
+            alloc::boxed::Box::new(|cb: &egui::PaintCallback| {
+                cb.callback.downcast_ref::<BackdropOp>().copied()
+            })
+        };
+        let (w, h) = (192, 128);
+        let rect = |x0: f32, y0: f32, x1: f32, y1: f32| {
+            egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
+        };
+        let whole = rect(0.0, 0.0, w as f32, h as f32);
+        let cb = |op: BackdropOp, at: egui::Rect| egui::ClippedPrimitive {
+            clip_rect: whole,
+            primitive: egui::epaint::Primitive::Callback(egui::PaintCallback {
+                rect: at,
+                callback: alloc::sync::Arc::new(op),
+            }),
+        };
+        let fill = |at: egui::Rect, color: Color32| {
+            let mut mesh = Mesh::default();
+            mesh.add_colored_rect(at, color);
+            egui::ClippedPrimitive {
+                clip_rect: whole,
+                primitive: egui::epaint::Primitive::Mesh(mesh),
+            }
+        };
+        let clip = backdrop::BackdropClip {
+            min: [100.0, 40.0],
+            max: [180.0, 120.0],
+            radius: 0.0,
+        };
+        // Red and green overlap under the layer; the second frame swaps
+        // them (the same meshes, so the same cached primitives) and moves
+        // a dot far away, so the canvas changed elsewhere.
+        let jobs = |green_on_top: bool, dot: u8| {
+            let red = fill(
+                rect(110.0, 50.0, 160.0, 110.0),
+                Color32::from_rgb(220, 30, 30),
+            );
+            let green = fill(
+                rect(120.0, 60.0, 170.0, 115.0),
+                Color32::from_rgb(30, 200, 30),
+            );
+            let (under, over) = if green_on_top {
+                (red, green)
+            } else {
+                (green, red)
+            };
+            vec![
+                fill(whole, Color32::from_rgb(30, 30, 60)),
+                cb(BackdropOp::Root, whole),
+                fill(whole, Color32::from_rgb(40, 50, 70)),
+                under,
+                over,
+                fill(rect(10.0, 10.0, 20.0, 20.0), Color32::from_rgb(dot, 200, 0)),
+                cb(
+                    BackdropOp::Begin {
+                        sigma: 2.0,
+                        opacity: 1.0,
+                        saturate: 1.0,
+                        clip: Some(clip),
+                    },
+                    rect(100.0, 40.0, 180.0, 120.0),
+                ),
+                cb(BackdropOp::End, rect(100.0, 40.0, 180.0, 120.0)),
+            ]
+        };
+        let texture = || {
+            let mut delta = egui::TexturesDelta::default();
+            delta.set.insert(
+                egui::TextureId::Managed(0),
+                [egui::epaint::ImageDelta::full(
+                    egui::ImageData::Color(alloc::sync::Arc::new(egui::ColorImage::filled(
+                        [1, 1],
+                        Color32::WHITE,
+                    ))),
+                    egui::TextureOptions::NEAREST,
+                )]
+                .into_iter()
+                .collect(),
+            );
+            delta
+        };
+        let shown = |render: &mut EguiSoftwareRender, jobs: &[egui::ClippedPrimitive]| {
+            let mut tex = texture();
+            render.render_to_canvas(w, h, jobs, &tex, 1.0);
+            tex.clear();
+            let mut window = vec![[0u8; 4]; w * h];
+            render.copy_canvas_to_buffer(&mut BufferMutRef::new(&mut window, w, h), true);
+            window
+        };
+        let mut render = EguiSoftwareRender::new(ColorFieldOrder::Rgba).with_backdrop(classify());
+        shown(&mut render, &jobs(true, 0));
+        let swapped = shown(&mut render, &jobs(false, 90));
+        let mut fresh = EguiSoftwareRender::new(ColorFieldOrder::Rgba).with_backdrop(classify());
+        let expected = shown(&mut fresh, &jobs(false, 90));
+        // Inside the layer's box, where only its blur shows.
+        let wrong = (42..118)
+            .flat_map(|y| (102..178).map(move |x| y * w + x))
+            .filter(|&i| swapped[i] != expected[i])
+            .count();
+        assert_eq!(wrong, 0, "the layer still blurs the old order");
+        assert_eq!(render.blur_runs, 2);
     }
 }

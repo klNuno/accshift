@@ -12,7 +12,7 @@ use crate::bench;
 #[cfg(target_os = "linux")]
 use super::platform::resize_edge;
 use super::platform::{os_wants_full_paint, show_window};
-use super::present::{frame_buffer, read_pixels};
+use super::present::{frame_buffer, holds_last_frame, read_pixels};
 use super::{Live, Runner, HIDDEN_FRAME_INTERVAL};
 
 impl Runner {
@@ -180,7 +180,7 @@ impl Runner {
                 || show
                 || overlay_active
                 || live.overlay_shown
-                || buffer.age() == 0
+                || !holds_last_frame(buffer.age())
                 || os_wants_full_paint(&live.window);
             // SAFETY: [u8; 4] has the size of u32 and a weaker alignment.
             let pixels = unsafe {
