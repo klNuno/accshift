@@ -167,7 +167,10 @@ mod imp {
             let mut prev: libc::sigaction = unsafe { std::mem::zeroed() };
             // SAFETY: a null action only reads the current disposition.
             let read = unsafe { libc::sigaction(sig, std::ptr::null(), &mut prev) } == 0;
-            if read && prev.sa_sigaction == libc::SIG_IGN {
+            // `nohup` leaves SIGHUP ignored and expects it to stay so. SIGINT
+            // and SIGTERM always close cleanly, even when a shell without job
+            // control started the app in the background with them ignored.
+            if sig == libc::SIGHUP && read && prev.sa_sigaction == libc::SIG_IGN {
                 continue;
             }
             if unsafe { libc::sigaction(sig, &action, &mut prev) } != 0 {
@@ -371,6 +374,28 @@ mod tests {
                 libc::signal(libc::SIGHUP, libc::SIG_DFL);
             }
             assert_eq!(now.sa_sigaction, libc::SIG_IGN);
+        }
+
+        // A shell without job control starts background jobs with SIGINT
+        // ignored: `kill -INT` must still close the app cleanly.
+        #[test]
+        fn an_ignored_sigint_still_triggers_orderly_quit() {
+            let _lock = test_lock(libc::SIGINT);
+            unsafe {
+                libc::signal(libc::SIGINT, libc::SIG_IGN);
+            }
+            let (tx, rx) = mpsc::channel();
+            let guard = install(move || {
+                let _ = tx.send(());
+            })
+            .expect("signal handler installed");
+            assert_eq!(unsafe { libc::raise(libc::SIGINT) }, 0);
+            rx.recv_timeout(Duration::from_secs(2))
+                .expect("signal callback fired");
+            drop(guard);
+            unsafe {
+                libc::signal(libc::SIGINT, libc::SIG_DFL);
+            }
         }
 
         #[test]
