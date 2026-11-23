@@ -8,7 +8,9 @@
 //! and scale, builds its screen, waits until the screen is ready (every
 //! avatar uploaded), then injects its steps as egui raw input on the wall
 //! clock, like the reference runner does over CDP. A `shot` reads back the
-//! frame the renderer presented and writes `<out>/<id>/<shot>.png`.
+//! frame the renderer presented and writes `<out>/<id>/<shot>.png`. A scene
+//! with `record` writes every frame instead, on a clock of its own
+//! (`record.rs`), for the README clips.
 //!
 //! Failures (a scene the egui side cannot render yet, a shot of the wrong
 //! size, a write error) are printed and counted; the process exits non-zero
@@ -16,6 +18,8 @@
 
 use std::path::PathBuf;
 
+#[cfg(any(test, feature = "harness"))]
+mod record;
 #[cfg(any(test, feature = "harness"))]
 mod scenes;
 #[cfg(any(test, feature = "harness"))]
