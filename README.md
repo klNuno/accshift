@@ -23,9 +23,9 @@ Click the file for your computer. Updates then install from inside the app.
 
 | Your computer | Download |
 | --- | --- |
-| Windows | [Installer (.exe)](https://github.com/klNuno/accshift/releases/latest/download/accshift-windows-x64-setup.exe) |
+| Windows (x64) | [Installer (.exe)](https://github.com/klNuno/accshift/releases/latest/download/accshift-windows-x64-setup.exe) |
 | Mac with Apple Silicon (M1 or later) | [Disk image (.dmg)](https://github.com/klNuno/accshift/releases/latest/download/accshift-macos-arm64.dmg) |
-| Linux | [Debian / Ubuntu (.deb)](https://github.com/klNuno/accshift/releases/latest/download/accshift-linux-amd64.deb) · [Fedora / openSUSE (.rpm)](https://github.com/klNuno/accshift/releases/latest/download/accshift-linux-x86_64.rpm) · [AppImage](https://github.com/klNuno/accshift/releases/latest/download/accshift-linux-x86_64.AppImage) |
+| Linux (x64) | [Debian / Ubuntu (.deb)](https://github.com/klNuno/accshift/releases/latest/download/accshift-linux-amd64.deb) · [Fedora / openSUSE (.rpm)](https://github.com/klNuno/accshift/releases/latest/download/accshift-linux-x86_64.rpm) · [AppImage](https://github.com/klNuno/accshift/releases/latest/download/accshift-linux-x86_64.AppImage) |
 | Stream Deck (Windows) | [Plugin (.streamDeckPlugin)](https://github.com/klNuno/accshift/releases/latest/download/accshift-streamdeck.streamDeckPlugin) |
 
 - **Windows**: run the installer. Windows may show "Windows protected your

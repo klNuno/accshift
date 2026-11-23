@@ -624,14 +624,12 @@ jobs:
 
       - name: Add the code signing policy
         if: needs.build-windows.outputs.signed == 'true'
-        env:
-          REPO: ${{ github.repository }}
         run: |
-          cat >> RELEASE_NOTES.md <<EOF
+          cat >> RELEASE_NOTES.md <<'EOF'
 
           ## Code signing policy
 
-          Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). The Windows installer and executables are signed; see the [code signing policy](https://github.com/$REPO#code-signing-policy).
+          Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). The Windows installer and executables are signed, and every signing request is approved by hand.
           EOF
           cat RELEASE_NOTES.md
 
