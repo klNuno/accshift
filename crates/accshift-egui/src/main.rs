@@ -133,6 +133,10 @@ fn main() {
     // its own creation before boot starts (about 11 ms in the bench). The
     // saved geometry is read before the thread starts, and the legacy read
     // arrives once the config is migrated (app/session.rs).
+    // The probe's folders are a scratch copy: no telemetry from it, and the
+    // keyring sweep would read every real entry as an orphan. Neither does a
+    // bench run, nor does it register the scheme or run the maintenance.
+    let quiet = probing || bench_build;
     bench::mark("backend");
     let session = real.as_ref().map(|backend| {
         accshift_egui::app::session::start_with(
@@ -146,8 +150,18 @@ fn main() {
                     None => legacy_web_storage::read_for_boot(ctx, BUNDLE_IDENTIFIER),
                 }
             },
-            |backend| backend.begin_session(),
-            |_| {},
+            move |backend| {
+                backend.begin_session();
+                if !quiet {
+                    backend.start_telemetry();
+                }
+            },
+            move |backend| {
+                if !quiet {
+                    register_schemes(backend);
+                    let _ = backend.spawn_maintenance();
+                }
+            },
         )
     });
     bench::mark("saved_window");
@@ -242,15 +256,6 @@ fn main() {
                         Some(&read.notes.join("; ")),
                     );
                 }
-                // The rest of `setup`, in its order, on the migrated
-                // config. The probe's folders are a scratch copy: no
-                // telemetry from it, and the keyring sweep would read every
-                // real entry as an orphan. Neither does a bench run, nor
-                // does it register the scheme or run the maintenance.
-                let quiet = probing || bench_build;
-                if !quiet {
-                    backend.start_telemetry();
-                }
                 #[cfg(windows)]
                 let hwnd = hwnd(handle).map_or(0, |h| h as isize);
                 #[cfg(not(windows))]
@@ -265,10 +270,6 @@ fn main() {
                     ))),
                     scenes,
                 );
-                if !quiet {
-                    register_schemes(&backend);
-                    let _ = backend.spawn_maintenance();
-                }
                 shell.with_window(
                     window::Host::new(backend, hwnd)
                         .focus_on_show(!quiet)

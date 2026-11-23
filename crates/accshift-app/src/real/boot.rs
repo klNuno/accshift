@@ -64,13 +64,12 @@ impl RealBackend {
         logging::install_panic_hook(self.ctx.clone());
     }
 
-    /// The startup maintenance: arms the keyring index, then on a
-    /// background thread re-encrypts legacy plaintext snapshots, purges the
-    /// plaintext backups, sweeps Riot rollback copies, deletes the WebView2
-    /// caches older installs left and frees orphaned keyring entries, each locked
-    /// step under the cross-process write lock. Call
-    /// once after [`Self::begin_session`]. Touches the real keyring, so
-    /// tests never call it.
+    /// The startup maintenance: on a background thread arms the keyring index,
+    /// re-encrypts legacy plaintext snapshots, purges the plaintext backups,
+    /// sweeps Riot rollback copies, deletes the WebView2 caches older installs
+    /// left and frees orphaned keyring entries, each locked step under the
+    /// cross-process write lock. Call once after [`Self::begin_session`].
+    /// Touches the real keyring, so tests never call it.
     pub fn spawn_maintenance(&self) -> std::thread::JoinHandle<()> {
         spawn_snapshot_upgrade(self.ctx.clone())
     }
@@ -83,8 +82,8 @@ impl RealBackend {
 }
 
 fn spawn_snapshot_upgrade(upgrade_ctx: AppCtx) -> std::thread::JoinHandle<()> {
-    accshift_core::secrets::init(&upgrade_ctx);
     std::thread::spawn(move || {
+        accshift_core::secrets::init(&upgrade_ctx);
         let mut maintenance = SystemMaintenance {
             ctx: upgrade_ctx,
             failures: Vec::new(),
