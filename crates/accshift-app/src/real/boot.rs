@@ -12,17 +12,27 @@ use std::time::Duration;
 /// `app_runtime::BootState`: whether the UI reported its first frame done.
 #[derive(Debug, Default)]
 pub struct BootState {
-    completed: AtomicBool,
+    /// The UI hydrated and is ready for the window to show.
+    ready: AtomicBool,
+    /// `Backend::finish_boot` ran its first-completion log and telemetry.
+    recorded: AtomicBool,
 }
 
 impl BootState {
-    /// True the first time only.
+    /// Marks boot ready for the window to show without claiming the
+    /// first-completion record of [`Self::mark_completed`].
+    pub fn mark_ready(&self) {
+        self.ready.store(true, Ordering::SeqCst);
+    }
+
+    /// True the first time only. Also marks [`Self::is_completed`].
     pub fn mark_completed(&self) -> bool {
-        !self.completed.swap(true, Ordering::SeqCst)
+        self.ready.store(true, Ordering::SeqCst);
+        !self.recorded.swap(true, Ordering::SeqCst)
     }
 
     pub fn is_completed(&self) -> bool {
-        self.completed.load(Ordering::SeqCst)
+        self.ready.load(Ordering::SeqCst)
     }
 }
 
@@ -360,5 +370,15 @@ mod tests {
                 "keyring",
             ]
         );
+    }
+
+    #[test]
+    fn boot_state_mark_ready_preserves_first_completion() {
+        let state = BootState::default();
+        assert!(!state.is_completed());
+        state.mark_ready();
+        assert!(state.is_completed());
+        assert!(state.mark_completed());
+        assert!(!state.mark_completed());
     }
 }

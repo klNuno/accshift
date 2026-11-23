@@ -74,12 +74,21 @@ impl AppModel {
         self.mark_frame(&ctx);
     }
 
-    /// Lands the boot job once it is done.
+    /// Lands the boot job once it is done. On frame 0 of a launch that started
+    /// [`super::EarlyBoot`] before the window existed, wait briefly so a boot
+    /// payload finishing a couple milliseconds later still lands on frame 0
+    /// instead of painting a blank hidden frame and waiting a frame interval.
     fn poll_boot(&mut self, ctx: &Context) {
         let Some(job) = &mut self.boot_job else {
             return;
         };
-        match job.poll() {
+        let poll = if self.frames == 0 && self.wait_early_boot {
+            self.wait_early_boot = false;
+            job.poll_timeout(Duration::from_millis(50))
+        } else {
+            job.poll()
+        };
+        match poll {
             Poll::Waiting => {}
             Poll::Ready(result) => {
                 self.boot_job = None;

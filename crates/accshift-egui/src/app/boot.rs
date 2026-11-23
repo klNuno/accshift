@@ -200,8 +200,10 @@ impl AppModel {
         legacy: Option<LegacyLocalStorage>,
         early: Option<EarlyBoot>,
     ) -> AppModel {
+        let real = Arc::clone(&backend);
         let backend: Arc<dyn Backend> = backend;
         let mut model = AppModel::from_backend(ctx, backend, Clock::wall(), early);
+        model.real_backend = Some(real);
         model.legacy = legacy;
         model.os_reduced_motion = os_prefers_reduced_motion();
         model.updates = updates::Updates::real(Instant::now());
@@ -231,6 +233,7 @@ impl AppModel {
     ) -> AppModel {
         let wake = ctx.clone();
         let jobs = Jobs::new(Arc::clone(&backend), 2, move || wake.request_repaint());
+        let wait_early_boot = early.is_some();
         let boot_job = Some(match early {
             Some(early) => {
                 let _ = early.wake.set(ctx.clone());
@@ -248,6 +251,7 @@ impl AppModel {
         overlay_ctx.all_styles_mut(|style| style.interaction.interact_radius = 0.0);
         AppModel {
             backend,
+            real_backend: None,
             #[cfg(any(test, feature = "harness"))]
             mock: None,
             #[cfg(any(test, feature = "harness"))]
@@ -255,6 +259,7 @@ impl AppModel {
             jobs,
             clock,
             boot_job,
+            wait_early_boot,
             legacy: None,
             boot_error: None,
             booted: None,
@@ -347,14 +352,18 @@ impl AppModel {
         let themes_unread = payload.custom_themes_incomplete;
         let hydrated = self.hydrate(payload, &detected);
         self.booted = Some(self.boot_state(ctx, hydrated));
+        // Mark the window ready synchronously so Host::take_show sees it on
+        // this same frame instead of racing the background job pool.
+        if let Some(real) = &self.real_backend {
+            real.boot_state().mark_ready();
+        }
         if themes_unread {
             self.unsee_themes();
         }
         for toast in boot_toasts.into_iter().flatten() {
             self.toasts.push(toast, Instant::now());
         }
-        // The backend's boot marks and startup event; the real shell shows
-        // the window here. Fire and forget.
+        // The backend's boot marks and startup event; fire and forget.
         drop(self.jobs.run(|backend| backend.finish_boot("egui", None)));
         self.onboarding.start(&self.jobs);
     }

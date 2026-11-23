@@ -135,17 +135,20 @@ fn main() {
     // arrives once the config is migrated (app/session.rs).
     bench::mark("backend");
     let session = real.as_ref().map(|backend| {
-        accshift_egui::app::session::start(backend, move |backend| {
-            let ctx = backend.context().as_ref();
-            let legacy = match legacy_root {
-                Some(root) => legacy_web_storage::read_for_boot_with(ctx, || {
-                    legacy_web_storage::read_in(&root, BUNDLE_IDENTIFIER)
-                }),
-                None => legacy_web_storage::read_for_boot(ctx, BUNDLE_IDENTIFIER),
-            };
-            backend.begin_session();
-            legacy
-        })
+        accshift_egui::app::session::start_with(
+            backend,
+            move |backend| {
+                let ctx = backend.context().as_ref();
+                match legacy_root {
+                    Some(root) => legacy_web_storage::read_for_boot_with(ctx, || {
+                        legacy_web_storage::read_in(&root, BUNDLE_IDENTIFIER)
+                    }),
+                    None => legacy_web_storage::read_for_boot(ctx, BUNDLE_IDENTIFIER),
+                }
+            },
+            |backend| backend.begin_session(),
+            |_| {},
+        )
     });
     bench::mark("saved_window");
     let saved = session.as_ref().map(|session| session.saved);
