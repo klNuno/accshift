@@ -1,5 +1,5 @@
 use super::{
-    clear_integrated_browser_cache_with, copy_game_settings_with, forget_account_with,
+    clear_integrated_browser_cache_with, copy_game_settings, forget_account_with,
     parse_launch_options, remove_loginuser_entry, steam_id_to_account_id,
 };
 use std::fs;
@@ -264,7 +264,7 @@ fn copy_game_settings_creates_target_when_absent() {
     // Destination account dir exists but has no copy of app 730 yet.
     fs::create_dir_all(root.join("userdata").join("2")).unwrap();
 
-    copy_game_settings_with(&root, FROM_ID, TO_ID, "730", || false).unwrap();
+    copy_game_settings(&root, FROM_ID, TO_ID, "730").unwrap();
 
     let target = root.join("userdata").join("2").join("730");
     assert_eq!(
@@ -296,7 +296,7 @@ fn copy_game_settings_overwrites_existing_target() {
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("old.cfg"), b"old").unwrap();
 
-    copy_game_settings_with(&root, FROM_ID, TO_ID, "730", || false).unwrap();
+    copy_game_settings(&root, FROM_ID, TO_ID, "730").unwrap();
 
     // The new payload replaced the old one; the stale file is gone.
     assert_eq!(fs::read_to_string(target.join("new.cfg")).unwrap(), "new");
@@ -412,12 +412,23 @@ fn forget_account_refuses_an_elevated_steam_without_writing() {
 #[test]
 fn copy_game_settings_rejects_non_numeric_app_id() {
     let root = copy_test_root("badid");
-    assert!(copy_game_settings_with(&root, FROM_ID, TO_ID, "../evil", || false).is_err());
+    assert!(copy_game_settings(&root, FROM_ID, TO_ID, "../evil").is_err());
     let _ = fs::remove_dir_all(&root);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
-fn copy_game_settings_refuses_while_steam_runs() {
+fn copy_game_settings_works_while_steam_runs() {
+    use std::os::unix::fs::symlink;
+    use std::process::{Command, Stdio};
+
+    const STEAM_FIXTURE: &str = "ACCSHIFT_TEST_STEAM_FIXTURE";
+    if std::env::var_os(STEAM_FIXTURE).is_some() {
+        // The parent holds stdin open until the copy completes.
+        let _ = std::io::stdin().read_line(&mut String::new());
+        return;
+    }
+
     let root = copy_test_root("running");
     let src = root.join("userdata").join("1").join("730");
     fs::create_dir_all(&src).unwrap();
@@ -426,11 +437,34 @@ fn copy_game_settings_refuses_while_steam_runs() {
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("old.cfg"), b"old").unwrap();
 
-    let result = copy_game_settings_with(&root, FROM_ID, TO_ID, "730", || true);
+    // Linux uses the link's basename for the process name. Run just this test
+    // in the child so the fixture uses the same binary on every distribution.
+    let fake_steam = root.join("steam");
+    symlink(std::env::current_exe().unwrap(), &fake_steam).unwrap();
+    let (_, module) = module_path!().split_once("::").unwrap();
+    let test_name = format!("{module}::copy_game_settings_works_while_steam_runs");
+    let mut steam = Command::new(&fake_steam)
+        .args(["--exact", &test_name])
+        .env(STEAM_FIXTURE, "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    let comm = fs::read_to_string(format!("/proc/{}/comm", steam.id()));
+    let probe_saw_steam = super::is_steam_running();
+    let result = copy_game_settings(&root, FROM_ID, TO_ID, "730");
+    let stayed_running = steam.try_wait().unwrap().is_none();
+    assert!(steam.wait().unwrap().success());
 
-    assert!(result.is_err());
-    assert!(target.join("old.cfg").exists());
-    assert!(!target.join("new.cfg").exists());
+    assert_eq!(comm.unwrap().trim(), "steam");
+    assert!(
+        stayed_running,
+        "the fake Steam process exited during the copy"
+    );
+    assert!(probe_saw_steam, "the fake Steam process was not detected");
+    result.unwrap();
+    assert_eq!(fs::read(target.join("new.cfg")).unwrap(), b"new");
+    assert!(!target.join("old.cfg").exists());
     let _ = fs::remove_dir_all(&root);
 }
 

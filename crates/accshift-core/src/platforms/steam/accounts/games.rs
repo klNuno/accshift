@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::super::vdf::vdf_tokenize_line;
-use super::{is_steam_running, steam_id_to_account_id};
+use super::steam_id_to_account_id;
 use crate::error::AppError;
 use crate::fs_utils;
 use crate::os;
@@ -150,41 +150,17 @@ pub fn open_userdata_with_path(steam_path: &Path, steam_id: &str) -> Result<(), 
     os::open_folder(&canonical)
 }
 
+/// Copies one game's `userdata/<id>/<appid>` folder to another account on
+/// this disk. A running Steam does not block it, as in 1.0.5. The copy stages
+/// the new folder first and tries to restore the previous one if the swap fails.
 pub fn copy_game_settings(
     steam_path: &Path,
     from_steam_id: &str,
     to_steam_id: &str,
     app_id: &str,
 ) -> Result<(), AppError> {
-    copy_game_settings_with(
-        steam_path,
-        from_steam_id,
-        to_steam_id,
-        app_id,
-        is_steam_running,
-    )
-}
-
-/// `copy_game_settings` with the Steam probe injected, so the refusal can be
-/// tested without a real client.
-pub(super) fn copy_game_settings_with(
-    steam_path: &Path,
-    from_steam_id: &str,
-    to_steam_id: &str,
-    app_id: &str,
-    steam_running: impl FnOnce() -> bool,
-) -> Result<(), AppError> {
     if !app_id.chars().all(|c| c.is_ascii_digit()) || app_id.is_empty() {
         return Err(AppError::FileRead("Invalid app id".into()));
-    }
-    // A running Steam rewrites userdata from memory and Steam Cloud on exit,
-    // so a copy made now would report success and then be undone.
-    if steam_running() {
-        return Err(AppError::FileRead(
-            "Steam is running and would overwrite the copied settings. Close Steam, then copy \
-             again."
-                .into(),
-        ));
     }
 
     let from_root = steam_user_data_path(steam_path, from_steam_id)?;
