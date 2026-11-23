@@ -10,17 +10,17 @@ mutating operations.
 Windows
 The desktop installer ships the CLI next to the app and adds the install
 directory to your user `PATH`, so `accshift` works in any new terminal right
-after install. A standalone `accshift-cli_<version>_x64.exe` binary is also
+after install. A standalone [`accshift-cli-windows-x64.exe`](https://github.com/klNuno/accshift/releases/latest/download/accshift-cli-windows-x64.exe) binary is also
 available on [Releases](https://github.com/klNuno/accshift/releases).
 
 Linux
 The deb and rpm packages install the CLI to `/usr/bin` alongside the app. A
-standalone `accshift-cli_<version>_linux_x86_64` binary is also on Releases.
+standalone [`accshift-cli-linux-x86_64`](https://github.com/klNuno/accshift/releases/latest/download/accshift-cli-linux-x86_64) binary is also on Releases.
 
 macOS
 The `.app` bundles the CLI inside `Contents/MacOS`. Symlink it onto your `PATH`,
 for example into `/usr/local/bin`. A standalone
-`accshift-cli_<version>_macos_aarch64` binary is also on Releases.
+[`accshift-cli-macos-arm64`](https://github.com/klNuno/accshift/releases/latest/download/accshift-cli-macos-arm64) binary is also on Releases.
 
 Building from source (`cargo build --release -p accshift-cli`) produces the binary at
 `<target-directory>/release/accshift`, or `accshift.exe` on Windows. The target

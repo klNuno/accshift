@@ -40,7 +40,8 @@ jobs:
           identifier: klNuno.Accshift
           release-tag: ${{ github.event.release.tag_name || inputs.tag }}
           # The release attaches Linux, macOS and CLI artifacts too; only the
-          # Windows NSIS installer belongs in the manifest.
-          installers-regex: '^Accshift_[0-9.]+_x64-setup\.exe$'
+          # Windows NSIS installer belongs in the manifest. Up to 2.0.0 its name
+          # held the version (scripts/release-assets.mjs renames it since).
+          installers-regex: '^(Accshift_[0-9.]+_x64|accshift-windows-x64)-setup\.exe$'
           max-versions-to-keep: 3
           token: ${{ secrets.WINGET_TOKEN }}
