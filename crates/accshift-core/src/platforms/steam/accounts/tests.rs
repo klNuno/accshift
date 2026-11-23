@@ -416,24 +416,20 @@ fn copy_game_settings_rejects_non_numeric_app_id() {
     let _ = fs::remove_dir_all(&root);
 }
 
-// A running Steam must not block the copy, as in 1.0.5. A copy of `sleep`
-// named `steam` makes the real probe see Steam running.
 #[cfg(target_os = "linux")]
 #[test]
 fn copy_game_settings_works_while_steam_runs() {
-    use std::os::unix::process::CommandExt;
+    use std::os::unix::fs::symlink;
+    use std::process::{Command, Stdio};
+
+    const STEAM_FIXTURE: &str = "ACCSHIFT_TEST_STEAM_FIXTURE";
+    if std::env::var_os(STEAM_FIXTURE).is_some() {
+        // The parent holds stdin open until the copy completes.
+        let _ = std::io::stdin().read_line(&mut String::new());
+        return;
+    }
 
     let root = copy_test_root("running");
-    let fake_steam = root.join("steam");
-    fs::copy("/bin/sleep", &fake_steam).unwrap();
-    let mut steam = std::process::Command::new(&fake_steam)
-        // Multicall coreutils selects `sleep` from argv[0]. Linux still names the process `steam`.
-        .arg0("sleep")
-        .arg("30")
-        .spawn()
-        .unwrap();
-    let probe_saw_steam = super::is_steam_running();
-
     let src = root.join("userdata").join("1").join("730");
     fs::create_dir_all(&src).unwrap();
     fs::write(src.join("new.cfg"), b"new").unwrap();
@@ -441,10 +437,30 @@ fn copy_game_settings_works_while_steam_runs() {
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("old.cfg"), b"old").unwrap();
 
+    // Linux uses the link's basename for the process name. Run just this test
+    // in the child so the fixture uses the same binary on every distribution.
+    let fake_steam = root.join("steam");
+    symlink(std::env::current_exe().unwrap(), &fake_steam).unwrap();
+    let (_, module) = module_path!().split_once("::").unwrap();
+    let test_name = format!("{module}::copy_game_settings_works_while_steam_runs");
+    let mut steam = Command::new(&fake_steam)
+        .args(["--exact", &test_name])
+        .env(STEAM_FIXTURE, "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    let comm = fs::read_to_string(format!("/proc/{}/comm", steam.id()));
+    let probe_saw_steam = super::is_steam_running();
     let result = copy_game_settings(&root, FROM_ID, TO_ID, "730");
-    let _ = steam.kill();
-    let _ = steam.wait();
+    let stayed_running = steam.try_wait().unwrap().is_none();
+    assert!(steam.wait().unwrap().success());
 
+    assert_eq!(comm.unwrap().trim(), "steam");
+    assert!(
+        stayed_running,
+        "the fake Steam process exited during the copy"
+    );
     assert!(probe_saw_steam, "the fake Steam process was not detected");
     result.unwrap();
     assert_eq!(fs::read(target.join("new.cfg")).unwrap(), b"new");
