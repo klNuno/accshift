@@ -193,6 +193,14 @@ impl Runner {
                 window_px
             };
             let mut textures = std::mem::take(&mut live.textures);
+            // Only an overlay's backdrop blur reads the stage's root
+            // pixels: without one, a glass layer skips their composite.
+            let overlay_backdrop = overlay_draw.as_ref().is_some_and(|(prims, _)| {
+                prims
+                    .iter()
+                    .any(|p| matches!(p.primitive, egui::epaint::Primitive::Callback(_)))
+            });
+            live.render.keep_root_frame(overlay_backdrop);
             live.render.render_to_canvas(
                 canvas_px[0],
                 canvas_px[1],
@@ -227,10 +235,9 @@ impl Runner {
             };
             if let Some((overlay_prims, overlay_ppp)) = &overlay_draw {
                 let mut overlay_textures = std::mem::take(&mut live.overlay_textures);
-                let has_backdrop = overlay_prims
-                    .iter()
-                    .any(|p| matches!(p.primitive, egui::epaint::Primitive::Callback(_)));
-                let root = has_backdrop.then(|| live.render.root_pixels()).flatten();
+                let root = overlay_backdrop
+                    .then(|| live.render.root_pixels())
+                    .flatten();
                 let backdrop_root = match root.as_deref() {
                     Some(root) if zoomed => {
                         // Kept across frames: it only reallocates on a resize.

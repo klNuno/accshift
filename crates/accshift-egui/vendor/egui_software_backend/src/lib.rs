@@ -99,6 +99,8 @@ pub struct EguiSoftwareRender {
     overlay_blurs: Vec<Option<OverlayBlur>>,
     /// How many layer backdrops `render_overlay` has blurred.
     overlay_blur_runs: usize,
+    /// How many first-layer backdrops `render_to_canvas` has blurred.
+    blur_runs: usize,
     #[cfg(feature = "raster_stats")]
     pub stats: RasterStats,
 }
@@ -288,9 +290,104 @@ struct Backdrop {
     root_frame: Option<Vec<[u8; 4]>>,
     /// The filtered element alone, before it landed (same key as `filtered`).
     root_filtered: Vec<[u8; 4]>,
+    /// What `out` holds from the last frame (accshift patch: a hovered
+    /// glass card copied the whole canvas into `out`, then `out` into the
+    /// window, on every frame).
+    out_kind: OutKind,
+    /// The regions of `out` that differ from what it was copied from (the
+    /// canvas, or `filtered`): where the layers landed and the jobs after
+    /// them drew, as `[x, y, width, height]`.
+    touched: Vec<Region>,
+    /// The regions of `out` this frame changed, `None` for all of it.
+    damage: Option<Vec<Region>>,
+    /// Once the layers are gone, the regions the window buffer takes back
+    /// from the canvas besides its dirty tiles.
+    restore: Vec<Region>,
+    /// The cached primitives under the first layer's box when it was
+    /// blurred ([`EguiSoftwareRender::blur_fingerprint`]).
+    blur_fingerprint: u64,
+    /// The caller needs no `root_pixels` this frame: a single layer skips
+    /// the full composite that keeps them.
+    skip_root_frame: bool,
+    /// `root_frame` was skipped though a layer or a filter changed the
+    /// frame: the cached primitives alone would be wrong.
+    root_frame_skipped: bool,
 }
 
 type FilterKey = (usize, usize, [u32; 3], Option<usize>);
+
+/// `[x, y, width, height]` in device pixels.
+type Region = [usize; 4];
+
+/// What `Backdrop::out` holds.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum OutKind {
+    /// Nothing worth keeping.
+    #[default]
+    None,
+    /// The canvas with the layers landed ([`EguiSoftwareRender::compose_backdrop`]).
+    Layers,
+    /// `filtered` with the jobs after the filter ([`EguiSoftwareRender::compose_filter`]).
+    Filter,
+}
+
+/// Pixels a drawn mesh may reach past its vertices' box: the rasterizer's
+/// rounding, kept generous since a region too small leaves a stale pixel.
+const DRAW_MARGIN: usize = 2;
+
+/// `span` as a region.
+fn region([columns, rows]: &[Range<usize>; 2]) -> Region {
+    [columns.start, rows.start, columns.len(), rows.len()]
+}
+
+/// `span` grown by `margin` pixels on each side, inside `width` x `height`.
+fn grown(
+    [columns, rows]: [Range<usize>; 2],
+    margin: usize,
+    width: usize,
+    height: usize,
+) -> [Range<usize>; 2] {
+    if columns.is_empty() || rows.is_empty() {
+        return [0..0, 0..0];
+    }
+    [
+        columns.start.saturating_sub(margin)..(columns.end + margin).min(width),
+        rows.start.saturating_sub(margin)..(rows.end + margin).min(height),
+    ]
+}
+
+/// `regions` without the empty ones and the ones another holds.
+fn distinct(mut regions: Vec<Region>) -> Vec<Region> {
+    regions.retain(|r| r[2] > 0 && r[3] > 0);
+    regions.sort_unstable();
+    regions.dedup();
+    let holds = |a: &Region, b: &Region| {
+        a[0] <= b[0] && a[1] <= b[1] && a[0] + a[2] >= b[0] + b[2] && a[1] + a[3] >= b[1] + b[3]
+    };
+    let kept: Vec<bool> = (0..regions.len())
+        .map(|i| {
+            !regions
+                .iter()
+                .enumerate()
+                .any(|(j, other)| j != i && holds(other, &regions[i]))
+        })
+        .collect();
+    regions
+        .into_iter()
+        .zip(kept)
+        .filter_map(|(r, keep)| keep.then_some(r))
+        .collect()
+}
+
+/// Copies `regions` of `src` into `dst`, both `width` pixels wide.
+fn copy_regions(dst: &mut [[u8; 4]], src: &[[u8; 4]], width: usize, regions: &[Region]) {
+    for &[x, y, w, h] in regions {
+        for row in y..y + h {
+            let span = row * width + x..row * width + x + w;
+            dst[span.clone()].copy_from_slice(&src[span]);
+        }
+    }
+}
 
 impl EguiSoftwareRender {
     /// Bytes the renderer holds between frames: the primitive cache (its
@@ -342,6 +439,7 @@ impl EguiSoftwareRender {
             backdrop: Backdrop::default(),
             overlay_blurs: Vec::new(),
             overlay_blur_runs: 0,
+            blur_runs: 0,
             #[cfg(feature = "raster_stats")]
             stats: Default::default(),
         }
@@ -543,7 +641,9 @@ impl EguiSoftwareRender {
             .map(|&(i, _)| i)
             .next_back();
         self.backdrop.root_frame = None;
+        self.backdrop.root_frame_skipped = false;
         let was_shown = self.backdrop.shown;
+        let was_kind = self.backdrop.out_kind;
         self.backdrop.active = false;
         if let Some((
             f,
@@ -583,7 +683,15 @@ impl EguiSoftwareRender {
             );
             self.backdrop.active = true;
         }
-        self.backdrop.force_full = was_shown && !self.backdrop.active;
+        // The layers left: the window buffer gets back the canvas where they
+        // were. A filter changed every pixel.
+        let gone = was_shown && !self.backdrop.active;
+        self.backdrop.restore = if gone && was_kind == OutKind::Layers {
+            core::mem::take(&mut self.backdrop.touched)
+        } else {
+            Vec::new()
+        };
+        self.backdrop.force_full = gone && was_kind != OutKind::Layers;
         self.backdrop.shown = self.backdrop.active;
         if !self.backdrop.active {
             // Three frames' worth of pixels that only a layer or a filter
@@ -594,6 +702,9 @@ impl EguiSoftwareRender {
             self.backdrop.root_filtered = Vec::new();
             self.backdrop.key = None;
             self.backdrop.filter_key = None;
+            self.backdrop.out_kind = OutKind::None;
+            self.backdrop.touched = Vec::new();
+            self.backdrop.damage = None;
         }
 
         self.free_textures(textures_delta);
@@ -603,11 +714,23 @@ impl EguiSoftwareRender {
     /// present, as they rendered: filter and layers included (used by an
     /// unscaled overlay pass so a stand-in desktop stays sharp under the
     /// overlay's backdrop blur, which must see the shell the stage showed).
+    /// None after a frame drawn with [`Self::keep_root_frame`] off and a
+    /// layer or a filter.
     pub fn root_pixels(&self) -> Option<Vec<[u8; 4]>> {
+        if self.backdrop.root_frame_skipped {
+            return None;
+        }
         match &self.backdrop.root_frame {
             Some(frame) => Some(frame.clone()),
             None => self.backdrop.last_root.map(|r| self.composite_after(r)),
         }
+    }
+
+    /// Whether the next frames keep what [`Self::root_pixels`] returns
+    /// (on by default). Off, a frame with a single layer composites only
+    /// the pixels that changed.
+    pub fn keep_root_frame(&mut self, keep: bool) {
+        self.backdrop.skip_root_frame = !keep;
     }
 
     /// Drops the blurs `render_overlay` kept, once no overlay shows.
@@ -742,8 +865,13 @@ impl EguiSoftwareRender {
     /// (the backdrop root's pixels so far: cached primitives after `root`,
     /// or the whole canvas) blurred, takes its own jobs, and lands on the
     /// frame; the jobs up to the next layer draw on top. The first layer's
-    /// blur is kept for the next frame; a later one's backdrop holds the
-    /// layers before it, so it is blurred again each frame.
+    /// blur is kept for the next frame while the primitives under its box
+    /// stay; a later one's backdrop holds the layers before it, so it is
+    /// blurred again each frame.
+    ///
+    /// `out` keeps the last frame: only the canvas's dirty tiles and the
+    /// regions the layers touched, this frame or the last, are copied from
+    /// the canvas and drawn again (`damage`).
     fn compose_backdrop(
         &mut self,
         paint_jobs: &[egui::ClippedPrimitive],
@@ -753,13 +881,50 @@ impl EguiSoftwareRender {
         canvas_changed: bool,
     ) {
         let (width, height) = (self.canvas.width, self.canvas.height);
+        // Every pixel the layers and the jobs after them write to.
+        let mut touched = Vec::with_capacity(layers.len() * 2);
+        for (n, layer) in layers.iter().enumerate() {
+            let jobs = paint_jobs.get(layer.begin + 1..layer.end).unwrap_or(&[]);
+            let span = match layer.op {
+                BackdropOp::Group { .. } => group_span(jobs, pixels_per_point, width, height),
+                BackdropOp::Begin { clip, .. } => {
+                    layer_span(clip, jobs, pixels_per_point, width, height)
+                }
+                _ => continue,
+            };
+            let next = layers.get(n + 1).map_or(paint_jobs.len(), |l| l.begin);
+            let after = paint_jobs.get(layer.end + 1..next).unwrap_or(&[]);
+            let drawn = group_span(after, pixels_per_point, width, height);
+            touched.push(region(&span));
+            touched.push(region(&grown(drawn, DRAW_MARGIN, width, height)));
+        }
+        let touched = distinct(touched);
+
         let mut out = core::mem::take(&mut self.backdrop.out);
-        out.clear();
-        out.extend_from_slice(&self.canvas.data);
+        let size_kept = out.len() == width * height && !self.redraw_everything_this_frame;
+        let damage = if size_kept && self.backdrop.out_kind == OutKind::Layers {
+            // Last frame's `out` is the canvas outside its touched regions.
+            let mut regions = self.dirty_regions();
+            regions.extend_from_slice(&self.backdrop.touched);
+            regions.extend_from_slice(&touched);
+            let regions = distinct(regions);
+            copy_regions(&mut out, &self.canvas.data, width, &regions);
+            Some(regions)
+        } else {
+            out.clear();
+            out.extend_from_slice(&self.canvas.data);
+            // The window buffer holds the last canvas when no layer showed.
+            (!self.backdrop.shown && !self.redraw_everything_this_frame).then(|| {
+                let mut regions = self.dirty_regions();
+                regions.extend_from_slice(&touched);
+                distinct(regions)
+            })
+        };
         // A later layer's backdrop, and the root's frame for an overlay:
         // the root's pixels with what came since landed on them. The frame
         // itself serves when there is no root.
-        let mut under = root.map(|r| self.composite_after(r));
+        let keep_under = layers.len() > 1 || !self.backdrop.skip_root_frame;
+        let mut under = root.filter(|_| keep_under).map(|r| self.composite_after(r));
         for (n, layer) in layers.iter().enumerate() {
             let jobs = paint_jobs.get(layer.begin + 1..layer.end).unwrap_or(&[]);
             let (pixels, opacity, span) = match layer.op {
@@ -783,7 +948,11 @@ impl EguiSoftwareRender {
                             backdrop::begin_key(sigma, saturate, clip),
                             root,
                         );
-                        if canvas_changed || self.backdrop.key != Some(key) {
+                        let fingerprint = self.blur_fingerprint(root, clip);
+                        if self.backdrop.key != Some(key)
+                            || self.backdrop.blur_fingerprint != fingerprint
+                            || self.dirty_under(clip, canvas_changed)
+                        {
                             // A clipped backdrop reads its box only: the
                             // root's tiles there are enough.
                             let source: Cow<[[u8; 4]]> = match root {
@@ -794,6 +963,8 @@ impl EguiSoftwareRender {
                                 &source, width, height, clip, sigma, saturate,
                             );
                             self.backdrop.key = Some(key);
+                            self.backdrop.blur_fingerprint = fingerprint;
+                            self.blur_runs += 1;
                         }
                         // Only the span lands: the rest of a fresh buffer
                         // stays untouched zero pages.
@@ -825,7 +996,100 @@ impl EguiSoftwareRender {
             );
         }
         self.backdrop.out = out;
+        self.backdrop.out_kind = OutKind::Layers;
+        self.backdrop.touched = touched;
+        self.backdrop.damage = damage;
+        self.backdrop.root_frame_skipped = root.is_some() && under.is_none();
         self.backdrop.root_frame = under;
+    }
+
+    /// The canvas tiles the last `render_to_canvas` recomposited, one
+    /// region per run of them in a tile row.
+    fn dirty_regions(&self) -> Vec<Region> {
+        let (width, height) = (self.canvas.width, self.canvas.height);
+        let [tiles_x, tiles_y] = self.tiles_dim;
+        let dirty = |tx: usize, ty: usize| {
+            self.dirty_tiles
+                .get(tx + ty * tiles_x)
+                .is_some_and(|mask| mask & Self::DIRTY_TILE_MASK != 0)
+        };
+        let mut regions = Vec::new();
+        for ty in 0..tiles_y {
+            let mut tx = 0;
+            while tx < tiles_x {
+                if !dirty(tx, ty) {
+                    tx += 1;
+                    continue;
+                }
+                let run_start = tx;
+                while tx < tiles_x && dirty(tx, ty) {
+                    tx += 1;
+                }
+                let x0 = run_start * TILE_SIZE;
+                let x1 = (tx * TILE_SIZE).min(width);
+                let y0 = ty * TILE_SIZE;
+                let y1 = (y0 + TILE_SIZE).min(height);
+                regions.push([x0, y0, x1 - x0, y1 - y0]);
+            }
+        }
+        regions
+    }
+
+    /// The tiles `clip` reads ([`Self::composite_after_in`]), all of them
+    /// without a clip.
+    fn clip_tiles(&self, clip: Option<backdrop::BackdropClip>) -> [Range<usize>; 2] {
+        let Some(clip) = clip else {
+            return [0..self.tiles_dim[0], 0..self.tiles_dim[1]];
+        };
+        let tiles = |lo: f32, hi: f32, n: usize| {
+            let lo = (lo.floor().max(0.0) as usize / TILE_SIZE).min(n);
+            let hi = (hi.ceil().max(0.0) as usize).div_ceil(TILE_SIZE).min(n);
+            lo..hi
+        };
+        [
+            tiles(clip.min[0], clip.max[0], self.tiles_dim[0]),
+            tiles(clip.min[1], clip.max[1], self.tiles_dim[1]),
+        ]
+    }
+
+    /// Whether this frame recomposited a tile the backdrop under `clip`
+    /// reads.
+    fn dirty_under(&self, clip: Option<backdrop::BackdropClip>, canvas_changed: bool) -> bool {
+        if clip.is_none() {
+            return canvas_changed;
+        }
+        let [columns, rows] = self.clip_tiles(clip);
+        rows.into_iter().any(|ty| {
+            columns.clone().any(|tx| {
+                self.dirty_tiles
+                    .get(tx + ty * self.tiles_dim[0])
+                    .is_some_and(|mask| mask & Self::DIRTY_TILE_MASK != 0)
+            })
+        })
+    }
+
+    /// The cached primitives after `root` on the tiles `clip` reads, as one
+    /// number: a primitive crossing the root, or one that came or went
+    /// without leaving a dirty tile, changes it.
+    fn blur_fingerprint(&self, root: Option<usize>, clip: Option<backdrop::BackdropClip>) -> u64 {
+        let [columns, rows] = self.clip_tiles(clip);
+        let mut sum = 0u64;
+        let mut count = 0u64;
+        for (&hash, prim) in &self.cached_primitives {
+            if root.is_some_and(|r| prim.z_order <= r) {
+                continue;
+            }
+            let under = prim
+                .occupied_tiles
+                .iter()
+                .any(|&[tx, ty]| columns.contains(&(tx as usize)) && rows.contains(&(ty as usize)));
+            if under {
+                // Spread each hash so a sum of a few cannot cancel out.
+                sum = sum.wrapping_add((hash as u64 | 1).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+                count += 1;
+            }
+        }
+        sum ^ count.rotate_left(48)
     }
 
     /// Draws `jobs` on `buffer`, a layer nested in them as its own: it
@@ -890,6 +1154,9 @@ impl EguiSoftwareRender {
 
     /// The filter of `paint_jobs[f]` on the element from `root` on, landed
     /// on what came before `root`, then the jobs after `f` drawn on top.
+    /// While the filtered pixels stay, `out` keeps the last frame and only
+    /// the regions the jobs after `f` drew, this frame or the last, are
+    /// drawn again.
     fn compose_filter(
         &mut self,
         paint_jobs: &[egui::ClippedPrimitive],
@@ -902,7 +1169,8 @@ impl EguiSoftwareRender {
         let (width, height) = (self.canvas.width, self.canvas.height);
         let bits = [sigma.to_bits(), saturate.to_bits(), scale.to_bits()];
         let key = (width, height, bits, root);
-        if canvas_changed || self.backdrop.filter_key != Some(key) {
+        let refilter = canvas_changed || self.backdrop.filter_key != Some(key);
+        if refilter {
             let filtered = match root {
                 Some(r) => {
                     let element = self.composite_where(|z| z > r);
@@ -922,17 +1190,34 @@ impl EguiSoftwareRender {
             self.backdrop.filtered = filtered;
             self.backdrop.filter_key = Some(key);
         }
-        let mut out = core::mem::take(&mut self.backdrop.out);
-        out.clear();
-        out.extend_from_slice(&self.backdrop.filtered);
         let after = paint_jobs.get(f + 1..).unwrap_or(&[]);
+        let drawn = group_span(after, pixels_per_point, width, height);
+        let touched = distinct(vec![region(&grown(drawn, DRAW_MARGIN, width, height))]);
+        let mut out = core::mem::take(&mut self.backdrop.out);
+        let damage = if !refilter
+            && self.backdrop.out_kind == OutKind::Filter
+            && out.len() == width * height
+        {
+            let mut regions = self.backdrop.touched.clone();
+            regions.extend_from_slice(&touched);
+            let regions = distinct(regions);
+            copy_regions(&mut out, &self.backdrop.filtered, width, &regions);
+            Some(regions)
+        } else {
+            out.clear();
+            out.extend_from_slice(&self.backdrop.filtered);
+            None
+        };
         self.draw_jobs_direct(
             &mut BufferMutRef::new(&mut out, width, height),
             after,
             pixels_per_point,
         );
         self.backdrop.out = out;
-        if root.is_some() {
+        self.backdrop.out_kind = OutKind::Filter;
+        self.backdrop.touched = touched;
+        self.backdrop.damage = damage;
+        if root.is_some() && !self.backdrop.skip_root_frame {
             let mut frame = self.backdrop.root_filtered.clone();
             self.draw_jobs_direct(
                 &mut BufferMutRef::new(&mut frame, width, height),
@@ -941,6 +1226,7 @@ impl EguiSoftwareRender {
             );
             self.backdrop.root_frame = Some(frame);
         }
+        self.backdrop.root_frame_skipped = root.is_some() && self.backdrop.skip_root_frame;
     }
 
     /// The cached primitives painted after `after`, over transparent.
@@ -1122,49 +1408,36 @@ impl EguiSoftwareRender {
     /// Added for the accshift spike. Unlike `blit_canvas_to_buffer` this
     /// overwrites instead of blending, so the buffer needs no clear: the
     /// canvas already holds the final premultiplied pixels over transparent.
+    /// Under a backdrop layer or filter the regions are the ones its frame
+    /// changed, and after one the regions it covered come back too.
     pub fn copy_canvas_to_buffer(&self, buffer: &mut BufferMutRef, full: bool) -> Vec<[usize; 4]> {
         let width = self.canvas.width;
         let height = self.canvas.height;
         assert_eq!(buffer.data.len(), width * height);
         assert_eq!(self.canvas.data.len(), width * height);
         if self.backdrop.active {
-            buffer.data.copy_from_slice(&self.backdrop.out);
-            return vec![[0, 0, width, height]];
+            return match &self.backdrop.damage {
+                Some(regions) if !full => {
+                    copy_regions(buffer.data, &self.backdrop.out, width, regions);
+                    regions.clone()
+                }
+                _ => {
+                    buffer.data.copy_from_slice(&self.backdrop.out);
+                    vec![[0, 0, width, height]]
+                }
+            };
         }
         if full || self.backdrop.force_full {
             buffer.data.copy_from_slice(&self.canvas.data);
             return vec![[0, 0, width, height]];
         }
-        let [tiles_x, tiles_y] = self.tiles_dim;
-        let dirty = |tx: usize, ty: usize| {
-            self.dirty_tiles
-                .get(tx + ty * tiles_x)
-                .is_some_and(|mask| mask & Self::DIRTY_TILE_MASK != 0)
-        };
-        let mut rects = Vec::new();
-        for ty in 0..tiles_y {
-            let mut tx = 0;
-            while tx < tiles_x {
-                if !dirty(tx, ty) {
-                    tx += 1;
-                    continue;
-                }
-                let run_start = tx;
-                while tx < tiles_x && dirty(tx, ty) {
-                    tx += 1;
-                }
-                let x0 = run_start * TILE_SIZE;
-                let x1 = (tx * TILE_SIZE).min(width);
-                let y0 = ty * TILE_SIZE;
-                let y1 = (y0 + TILE_SIZE).min(height);
-                for y in y0..y1 {
-                    let row = y * width + x0..y * width + x1;
-                    buffer.data[row.clone()].copy_from_slice(&self.canvas.data[row]);
-                }
-                rects.push([x0, y0, x1 - x0, y1 - y0]);
-            }
+        let mut regions = self.dirty_regions();
+        if !self.backdrop.restore.is_empty() {
+            regions.extend_from_slice(&self.backdrop.restore);
+            regions = distinct(regions);
         }
-        rects
+        copy_regions(buffer.data, &self.canvas.data, width, &regions);
+        regions
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2345,5 +2618,130 @@ mod layer_tests {
         assert_ne!(moved, first);
         frame(&mut render, &striped(1), 3.0);
         assert_eq!(render.overlay_blur_runs, 3, "so is a changed filter");
+    }
+
+    #[test]
+    fn a_still_layer_copies_only_what_changed() {
+        let classify = || {
+            alloc::boxed::Box::new(|cb: &egui::PaintCallback| {
+                cb.callback.downcast_ref::<BackdropOp>().copied()
+            })
+        };
+        let (w, h) = (192, 128);
+        let rect = |x0: f32, y0: f32, x1: f32, y1: f32| {
+            egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
+        };
+        let whole = rect(0.0, 0.0, w as f32, h as f32);
+        let cb = |op: BackdropOp, at: egui::Rect| egui::ClippedPrimitive {
+            clip_rect: whole,
+            primitive: egui::epaint::Primitive::Callback(egui::PaintCallback {
+                rect: at,
+                callback: alloc::sync::Arc::new(op),
+            }),
+        };
+        let fill = |at: egui::Rect, color: Color32| {
+            let mut mesh = Mesh::default();
+            mesh.add_colored_rect(at, color);
+            egui::ClippedPrimitive {
+                clip_rect: whole,
+                primitive: egui::epaint::Primitive::Mesh(mesh),
+            }
+        };
+        let clip = backdrop::BackdropClip {
+            min: [140.0, 70.0],
+            max: [180.0, 110.0],
+            radius: 6.0,
+        };
+        // A shell, a dot far from the layer that changes, the layer over
+        // stripes, and a label drawn after it.
+        let jobs = |dot: u8| {
+            vec![
+                fill(whole, Color32::from_rgb(30, 30, 60)),
+                cb(BackdropOp::Root, whole),
+                fill(rect(0.0, 0.0, 192.0, 128.0), Color32::from_rgb(40, 50, 70)),
+                fill(
+                    rect(130.0, 60.0, 150.0, 128.0),
+                    Color32::from_rgb(220, 40, 40),
+                ),
+                fill(rect(10.0, 10.0, 20.0, 20.0), Color32::from_rgb(dot, 200, 0)),
+                cb(
+                    BackdropOp::Begin {
+                        sigma: 4.0,
+                        opacity: 0.9,
+                        saturate: 1.15,
+                        clip: Some(clip),
+                    },
+                    rect(140.0, 70.0, 180.0, 110.0),
+                ),
+                fill(
+                    rect(140.0, 70.0, 180.0, 110.0),
+                    Color32::from_rgba_premultiplied(10, 10, 10, 120),
+                ),
+                cb(BackdropOp::End, rect(140.0, 70.0, 180.0, 110.0)),
+                fill(rect(150.0, 80.0, 170.5, 90.5), Color32::WHITE),
+            ]
+        };
+        let texture = || {
+            let mut delta = egui::TexturesDelta::default();
+            delta.set.insert(
+                egui::TextureId::Managed(0),
+                [egui::epaint::ImageDelta::full(
+                    egui::ImageData::Color(alloc::sync::Arc::new(egui::ColorImage::filled(
+                        [1, 1],
+                        Color32::WHITE,
+                    ))),
+                    egui::TextureOptions::NEAREST,
+                )]
+                .into_iter()
+                .collect(),
+            );
+            delta
+        };
+        let mut render = EguiSoftwareRender::new(ColorFieldOrder::Rgba).with_backdrop(classify());
+        render.keep_root_frame(false);
+        let mut window = vec![[0u8; 4]; w * h];
+        let mut tex = texture();
+        for (n, dot) in [0u8, 0, 90, 90, 180].into_iter().enumerate() {
+            render.render_to_canvas(w, h, &jobs(dot), &tex, 1.0);
+            tex.clear();
+            let regions =
+                render.copy_canvas_to_buffer(&mut BufferMutRef::new(&mut window, w, h), n == 0);
+            let mut fresh =
+                EguiSoftwareRender::new(ColorFieldOrder::Rgba).with_backdrop(classify());
+            let mut fresh_tex = texture();
+            fresh.render_to_canvas(w, h, &jobs(dot), &fresh_tex, 1.0);
+            fresh_tex.clear();
+            let mut expected = vec![[0u8; 4]; w * h];
+            fresh.copy_canvas_to_buffer(&mut BufferMutRef::new(&mut expected, w, h), true);
+            assert!(window == expected, "frame {n}: the window holds the frame");
+            assert!(render.root_pixels().is_none(), "no root frame was kept");
+            let presented: usize = regions.iter().map(|r| r[2] * r[3]).sum();
+            if n > 0 {
+                assert!(
+                    presented < w * h / 2,
+                    "frame {n} presented {presented} of {} pixels",
+                    w * h
+                );
+            }
+        }
+        assert_eq!(
+            render.blur_runs, 1,
+            "a dot outside the layer's box never blurs it again"
+        );
+        // Asked for, the root frame is there again.
+        render.keep_root_frame(true);
+        render.render_to_canvas(w, h, &jobs(180), &tex, 1.0);
+        assert!(render.root_pixels().is_some());
+        // Once the layer goes, the window gets the canvas back where it was.
+        let plain = &jobs(180)[..5];
+        render.render_to_canvas(w, h, plain, &tex, 1.0);
+        render.copy_canvas_to_buffer(&mut BufferMutRef::new(&mut window, w, h), false);
+        let mut fresh = EguiSoftwareRender::new(ColorFieldOrder::Rgba).with_backdrop(classify());
+        let mut fresh_tex = texture();
+        fresh.render_to_canvas(w, h, plain, &fresh_tex, 1.0);
+        fresh_tex.clear();
+        let mut expected = vec![[0u8; 4]; w * h];
+        fresh.copy_canvas_to_buffer(&mut BufferMutRef::new(&mut expected, w, h), true);
+        assert!(window == expected, "the layer's pixels are gone");
     }
 }
