@@ -154,10 +154,6 @@ fn main() {
                 backend.begin_session();
                 if !quiet {
                     backend.start_telemetry();
-                }
-            },
-            move |backend| {
-                if !quiet {
                     register_schemes(backend);
                     let _ = backend.spawn_maintenance();
                 }

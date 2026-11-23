@@ -230,8 +230,12 @@ fn an_in_flight_early_boot_finishing_shortly_after_frame_zero_starts_lands_on_fr
     let mock = mock();
     let (early, task) = early_boot();
     let mut app = AppModel::from_backend(&ctx, mock.clone(), Clock::wall(), Some(early));
+    // The production wait is short and a loaded runner may wake the worker
+    // late: the test widens it, so it passes whatever the scheduling and
+    // fails without the wait (frame 0 starts well before the 20 ms sleep).
+    app.early_boot_wait = Some(std::time::Duration::from_secs(30));
     let worker = std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::thread::sleep(std::time::Duration::from_millis(20));
         task.run(mock.as_ref());
     });
     frame(&mut app, &ctx);
@@ -266,7 +270,6 @@ fn session_start_with_runs_hooks_in_order_around_config_migration() {
 
     let e1 = Arc::clone(&events);
     let e2 = Arc::clone(&events);
-    let e3 = Arc::clone(&events);
     let legacy_in_after = legacy_path.clone();
 
     let session = super::super::session::start_with(
@@ -282,24 +285,14 @@ fn session_start_with_runs_hooks_in_order_around_config_migration() {
             );
             e2.lock().unwrap().push("after_migrate");
         },
-        move |_| {
-            e3.lock().unwrap().push("after_ready");
-        },
     );
 
     assert_eq!(session.legacy.recv().unwrap().map(|read| read.notes), None);
-    {
-        let seen = events.lock().unwrap();
-        assert!(
-            seen.starts_with(&["read_legacy", "after_migrate"]),
-            "{seen:?}"
-        );
-    }
-    session.thread.join().unwrap();
     assert_eq!(
         *events.lock().unwrap(),
-        vec!["read_legacy", "after_migrate", "after_ready"]
+        vec!["read_legacy", "after_migrate"]
     );
+    session.thread.join().unwrap();
 
     let mut app = AppModel::real(&ctx, backend, None, Some(session.early));
     frame(&mut app, &ctx);

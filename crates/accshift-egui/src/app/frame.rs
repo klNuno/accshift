@@ -82,11 +82,10 @@ impl AppModel {
         let Some(job) = &mut self.boot_job else {
             return;
         };
-        let poll = if self.frames == 0 && self.wait_early_boot {
-            self.wait_early_boot = false;
-            job.poll_timeout(Duration::from_millis(50))
-        } else {
-            job.poll()
+        let wait = self.early_boot_wait.take().filter(|_| self.frames == 0);
+        let poll = match wait {
+            Some(wait) => job.poll_timeout(wait),
+            None => job.poll(),
         };
         match poll {
             Poll::Waiting => {}

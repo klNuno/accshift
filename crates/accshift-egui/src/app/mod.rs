@@ -262,10 +262,10 @@ pub struct AppModel {
     jobs: Jobs,
     clock: Clock,
     boot_job: Option<Pending<BootResult>>,
-    /// True when `boot_job` came from an [`EarlyBoot`] started before the
-    /// window existed: frame 0 waits briefly for it instead of painting a
-    /// blank hidden frame and sleeping a full frame interval.
-    wait_early_boot: bool,
+    /// Set when `boot_job` came from an [`EarlyBoot`] started before the
+    /// window existed: frame 0 waits up to this long for it instead of
+    /// painting a blank hidden frame and sleeping a full frame interval.
+    early_boot_wait: Option<std::time::Duration>,
     /// The WebView2 `localStorage` a v0.x install left, read before the log
     /// session began (main.rs), migrated into the stores at boot.
     legacy: Option<LegacyLocalStorage>,

@@ -3,7 +3,7 @@
 //! payload's storage snapshot and the UI state built on them.
 
 use std::sync::{mpsc, Arc, OnceLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use accshift_app::actions::dialogs::AppDialogs;
 use accshift_app::actions::keyboard::KeyboardController;
@@ -48,6 +48,11 @@ pub(super) struct Boot {
 }
 
 pub(super) type BootResult = BackendResult<Boot>;
+
+/// How long frame 0 waits for an [`EarlyBoot`] still in flight: long enough
+/// for a payload a few milliseconds late, short enough that a slow disk shows
+/// the window with its loading state instead of a stall.
+const EARLY_BOOT_WAIT: Duration = Duration::from_millis(50);
 
 /// What the boot payload hydrates before the UI state is built on it.
 struct Hydrated {
@@ -233,7 +238,7 @@ impl AppModel {
     ) -> AppModel {
         let wake = ctx.clone();
         let jobs = Jobs::new(Arc::clone(&backend), 2, move || wake.request_repaint());
-        let wait_early_boot = early.is_some();
+        let early_boot_wait = early.is_some().then_some(EARLY_BOOT_WAIT);
         let boot_job = Some(match early {
             Some(early) => {
                 let _ = early.wake.set(ctx.clone());
@@ -259,7 +264,7 @@ impl AppModel {
             jobs,
             clock,
             boot_job,
-            wait_early_boot,
+            early_boot_wait,
             legacy: None,
             boot_error: None,
             booted: None,
