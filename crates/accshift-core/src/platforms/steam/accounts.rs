@@ -13,7 +13,7 @@ use crate::os;
 mod games;
 pub use games::{copy_game_settings, get_copyable_games, open_userdata_with_path, CopyableGame};
 #[cfg(test)]
-use games::{copy_game_settings_with, extract_appid_and_name, load_library_paths};
+use games::{extract_appid_and_name, load_library_paths};
 pub(crate) use games::{
     list_account_games, load_app_names, steam_user_data_path, NON_GAME_APP_IDS,
 };
