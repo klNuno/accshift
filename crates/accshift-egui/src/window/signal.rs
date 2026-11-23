@@ -1,4 +1,5 @@
-//! Unix `SIGTERM` and `SIGINT` handling: turns a termination signal into a
+//! Unix `SIGTERM`, `SIGINT` and `SIGHUP` handling: turns a termination
+//! signal (a session logout, `kill`, Ctrl+C, a closed terminal) into a
 //! wake on the winit event loop so the app runs its normal close sequence
 //! (window geometry, pending store writes, telemetry session end, single
 //! instance release) before exiting.
@@ -83,10 +84,25 @@ mod imp {
         }
     }
 
+    /// The signals that run the close sequence. `SIGHUP` too: its default
+    /// action ends the process on the spot, so a closed terminal or a session
+    /// that hangs up would lose the pending writes. A signal the parent left
+    /// ignored (`nohup`, a background job's `SIGINT`) stays ignored.
+    const SIGNALS: [libc::c_int; 3] = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP];
+
+    /// Puts back the dispositions `install` replaced, last first.
+    fn restore(previous: &[(libc::c_int, libc::sigaction)]) {
+        for (sig, prev) in previous.iter().rev() {
+            // SAFETY: `prev` is the disposition `sigaction` returned for `sig`.
+            unsafe {
+                let _ = libc::sigaction(*sig, prev, std::ptr::null_mut());
+            }
+        }
+    }
+
     pub struct Guard {
         write_fd: libc::c_int,
-        prev_term: libc::sigaction,
-        prev_int: libc::sigaction,
+        previous: Vec<(libc::c_int, libc::sigaction)>,
         thread: Option<JoinHandle<()>>,
     }
 
@@ -94,10 +110,7 @@ mod imp {
         fn drop(&mut self) {
             // Restore previous dispositions before closing the pipe so no
             // later signal invokes `handle_signal` against a closed fd.
-            unsafe {
-                let _ = libc::sigaction(libc::SIGTERM, &self.prev_term, std::ptr::null_mut());
-                let _ = libc::sigaction(libc::SIGINT, &self.prev_int, std::ptr::null_mut());
-            }
+            restore(&self.previous);
             SIGNAL_WRITE_FD.retire();
             // Closing the write end wakes the watcher thread with EOF.
             unsafe {
@@ -149,28 +162,24 @@ mod imp {
             libc::sigemptyset(&mut action.sa_mask);
         }
 
-        let mut prev_term: libc::sigaction = unsafe { std::mem::zeroed() };
-        let mut prev_int: libc::sigaction = unsafe { std::mem::zeroed() };
-        let term_ok = unsafe { libc::sigaction(libc::SIGTERM, &action, &mut prev_term) } == 0;
-        if !term_ok {
-            SIGNAL_WRITE_FD.retire();
-            unsafe {
-                let _ = libc::close(read_fd);
-                let _ = libc::close(write_fd);
+        let mut previous = Vec::with_capacity(SIGNALS.len());
+        for sig in SIGNALS {
+            let mut prev: libc::sigaction = unsafe { std::mem::zeroed() };
+            // SAFETY: a null action only reads the current disposition.
+            let read = unsafe { libc::sigaction(sig, std::ptr::null(), &mut prev) } == 0;
+            if read && prev.sa_sigaction == libc::SIG_IGN {
+                continue;
             }
-            return None;
-        }
-        let int_ok = unsafe { libc::sigaction(libc::SIGINT, &action, &mut prev_int) } == 0;
-        if !int_ok {
-            unsafe {
-                let _ = libc::sigaction(libc::SIGTERM, &prev_term, std::ptr::null_mut());
+            if unsafe { libc::sigaction(sig, &action, &mut prev) } != 0 {
+                restore(&previous);
+                SIGNAL_WRITE_FD.retire();
+                unsafe {
+                    let _ = libc::close(read_fd);
+                    let _ = libc::close(write_fd);
+                }
+                return None;
             }
-            SIGNAL_WRITE_FD.retire();
-            unsafe {
-                let _ = libc::close(read_fd);
-                let _ = libc::close(write_fd);
-            }
-            return None;
+            previous.push((sig, prev));
         }
 
         let thread = match std::thread::Builder::new()
@@ -202,10 +211,7 @@ mod imp {
             }) {
             Ok(thread) => thread,
             Err(_) => {
-                unsafe {
-                    let _ = libc::sigaction(libc::SIGTERM, &prev_term, std::ptr::null_mut());
-                    let _ = libc::sigaction(libc::SIGINT, &prev_int, std::ptr::null_mut());
-                }
+                restore(&previous);
                 SIGNAL_WRITE_FD.retire();
                 unsafe {
                     let _ = libc::close(read_fd);
@@ -217,8 +223,7 @@ mod imp {
 
         Some(Guard {
             write_fd,
-            prev_term,
-            prev_int,
+            previous,
             thread: Some(thread),
         })
     }
@@ -238,6 +243,20 @@ mod imp {
 }
 
 pub use imp::{install, received, Guard};
+
+/// Serializes the tests that install the handler: the dispositions and the
+/// pipe slot are process-wide. Also puts `sig` back to its default action, so
+/// a test run that inherited it ignored still sees the handler take it.
+#[cfg(all(test, unix))]
+pub(crate) fn test_lock(sig: libc::c_int) -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: `SIG_DFL` is a valid disposition for any catchable signal.
+    unsafe {
+        libc::signal(sig, libc::SIG_DFL);
+    }
+    guard
+}
 
 #[cfg(test)]
 mod tests {
@@ -295,16 +314,11 @@ mod tests {
     #[cfg(unix)]
     mod unix_tests {
         use super::*;
-        use std::sync::{mpsc, Mutex, OnceLock};
+        use std::sync::mpsc;
         use std::time::Duration;
 
-        fn signal_test_lock() -> &'static Mutex<()> {
-            static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-            LOCK.get_or_init(|| Mutex::new(()))
-        }
-
         fn assert_signal_triggers_quit(sig: libc::c_int) {
-            let _lock = signal_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+            let _lock = test_lock(sig);
             let (tx, rx) = mpsc::channel();
             let guard = install(move || {
                 let _ = tx.send(());
@@ -329,9 +343,39 @@ mod tests {
             assert_signal_triggers_quit(libc::SIGINT);
         }
 
+        // Regression: `SIGHUP` kept its default action, which ends the
+        // process before the close sequence flushes the pending writes.
+        #[test]
+        fn sighup_triggers_orderly_quit_callback() {
+            assert_signal_triggers_quit(libc::SIGHUP);
+        }
+
+        #[test]
+        fn a_signal_the_parent_left_ignored_stays_ignored() {
+            let _lock = test_lock(libc::SIGHUP);
+            unsafe {
+                libc::signal(libc::SIGHUP, libc::SIG_IGN);
+            }
+            let (tx, rx) = mpsc::channel();
+            let guard = install(move || {
+                let _ = tx.send(());
+            })
+            .expect("signal handler installed");
+            assert_eq!(unsafe { libc::raise(libc::SIGHUP) }, 0);
+            assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
+            assert!(!received());
+            drop(guard);
+            let mut now: libc::sigaction = unsafe { std::mem::zeroed() };
+            unsafe {
+                libc::sigaction(libc::SIGHUP, std::ptr::null(), &mut now);
+                libc::signal(libc::SIGHUP, libc::SIG_DFL);
+            }
+            assert_eq!(now.sa_sigaction, libc::SIG_IGN);
+        }
+
         #[test]
         fn dropping_guard_without_signal_exits_watcher_cleanly() {
-            let _lock = signal_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+            let _lock = test_lock(libc::SIGTERM);
             let (tx, rx) = mpsc::channel();
             let guard = install(move || {
                 let _ = tx.send(());

@@ -145,7 +145,8 @@ pub fn restore_position(window: &egui_winit::winit::window::Window, saved: &conf
 }
 
 /// The OS is ending the session (Windows `WM_ENDSESSION`, or Unix
-/// `SIGTERM`/`SIGINT`): a close request quits instead of hiding to the tray.
+/// `SIGTERM`/`SIGINT`/`SIGHUP`): a close request quits instead of hiding to
+/// the tray.
 pub fn session_ending() -> bool {
     #[cfg(windows)]
     return frame::session_ending();
