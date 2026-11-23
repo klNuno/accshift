@@ -72,13 +72,26 @@ epaint = { path = "crates/accshift-egui/vendor/epaint" }
 panic = "unwind"
 codegen-units = 1
 lto = "fat"
-opt-level = "z"
+opt-level = "s"
 strip = true
 
 [profile.release.package.egui_software_backend]
 opt-level = 3
 
 [profile.release.package.epaint]
+opt-level = 3
+
+# Avatar SVG raster and blur, off the UI thread but on the way to `ready`.
+[profile.release.package.accshift-egui]
+opt-level = 3
+
+[profile.release.package.resvg]
+opt-level = 3
+
+[profile.release.package.tiny-skia]
+opt-level = 3
+
+[profile.release.package.tiny-skia-path]
 opt-level = 3
 
 # The `windows` bindings crate alone needs about 2 GB of RAM at opt-level 2
