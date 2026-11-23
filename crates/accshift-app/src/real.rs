@@ -66,17 +66,15 @@ pub struct RealBackend {
 }
 
 impl RealBackend {
-    /// On the user's real app directories, with the HTTP client built up
-    /// front and telemetry pointed at the build-time endpoint
+    /// On the user's real app directories, with the HTTP client built lazily
+    /// on first use and telemetry pointed at the build-time endpoint
     /// (`accshift_core::telemetry::TELEMETRY_URL`). The queue itself starts
     /// with [`Self::start_telemetry`].
     pub fn new() -> Result<Self, String> {
-        let backend = Self::build(
+        Ok(Self::build(
             Arc::new(EguiAppContext::new()?),
             Some(accshift_core::telemetry::TELEMETRY_URL.to_string()),
-        );
-        backend.http_client()?;
-        Ok(backend)
+        ))
     }
 
     /// On any directory layout (tests, a parity scratch folder). The HTTP
@@ -551,4 +549,22 @@ impl Backend for RealBackend {
 #[cfg_attr(windows, allow(dead_code))]
 pub(crate) fn not_registered(command: &str) -> BackendError {
     BackendError::new(format!("Command {command} not found"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RealBackend;
+
+    #[test]
+    fn real_backend_new_defers_http_client_until_first_use() {
+        let backend = RealBackend::new().unwrap();
+        assert!(
+            backend.http.get().is_none(),
+            "RealBackend::new must not build the HTTP client eagerly on the launch path"
+        );
+        let first: *const reqwest::Client = backend.http_client().unwrap();
+        assert!(backend.http.get().is_some());
+        let second: *const reqwest::Client = backend.http_client().unwrap();
+        assert_eq!(first, second);
+    }
 }

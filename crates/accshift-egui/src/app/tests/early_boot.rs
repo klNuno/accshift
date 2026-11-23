@@ -223,3 +223,78 @@ fn the_legacy_read_is_handed_over_once_the_config_is_migrated() {
     let toasts = format!("{:?}", app.toasts().toasts());
     assert!(toasts.contains("legacyConfigMigrated"), "{toasts}");
 }
+
+#[test]
+fn an_in_flight_early_boot_finishing_shortly_after_frame_zero_starts_lands_on_frame_zero() {
+    let ctx = Context::default();
+    let mock = mock();
+    let (early, task) = early_boot();
+    let mut app = AppModel::from_backend(&ctx, mock.clone(), Clock::wall(), Some(early));
+    // The production wait is short and a loaded runner may wake the worker
+    // late: the test widens it, so it passes whatever the scheduling and
+    // fails without the wait (frame 0 starts well before the 20 ms sleep).
+    app.early_boot_wait = Some(std::time::Duration::from_secs(30));
+    let worker = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        task.run(mock.as_ref());
+    });
+    frame(&mut app, &ctx);
+    worker.join().unwrap();
+    assert!(app.booted().is_some());
+    assert!(app.boot_error().is_none());
+}
+
+#[test]
+fn real_model_marks_boot_state_ready_synchronously_on_first_frame() {
+    let ctx = Context::default();
+    let dir = release_folder("sync-ready");
+    let backend = Arc::new(RealBackend::with_context(dir));
+    let (early, task) = early_boot();
+    task.run(backend.as_ref());
+    let mut app = AppModel::real(&ctx, Arc::clone(&backend), None, Some(early));
+    assert!(!backend.boot_state().is_completed());
+    frame(&mut app, &ctx);
+    assert!(app.booted().is_some());
+    assert!(backend.boot_state().is_completed());
+}
+
+#[test]
+fn session_start_with_runs_hooks_in_order_around_config_migration() {
+    use std::sync::Mutex;
+
+    let ctx = Context::default();
+    let dir = release_folder("start-with");
+    let legacy_path = accshift_core::storage::legacy_config_path(dir.as_ref()).unwrap();
+    let backend = Arc::new(RealBackend::with_context(dir));
+    let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+
+    let e1 = Arc::clone(&events);
+    let e2 = Arc::clone(&events);
+    let legacy_in_after = legacy_path.clone();
+
+    let session = super::super::session::start_with(
+        &backend,
+        move |_| {
+            e1.lock().unwrap().push("read_legacy");
+            None
+        },
+        move |_| {
+            assert!(
+                !legacy_in_after.exists(),
+                "after_migrate must see the migrated config"
+            );
+            e2.lock().unwrap().push("after_migrate");
+        },
+    );
+
+    assert_eq!(session.legacy.recv().unwrap().map(|read| read.notes), None);
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec!["read_legacy", "after_migrate"]
+    );
+    session.thread.join().unwrap();
+
+    let mut app = AppModel::real(&ctx, backend, None, Some(session.early));
+    frame(&mut app, &ctx);
+    assert!(app.booted().is_some());
+}

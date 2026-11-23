@@ -19,6 +19,13 @@ fn main() {
         "ole32.dll",
         "oleaut32.dll",
         "combase.dll",
+        "comdlg32.dll",
+        "crypt32.dll",
+        "pdh.dll",
+        "powrprof.dll",
+        "psapi.dll",
+        "ws2_32.dll",
+        "bcrypt.dll",
     ] {
         println!("cargo:rustc-link-arg-bins=/DELAYLOAD:{dll}");
     }

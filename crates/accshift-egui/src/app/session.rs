@@ -36,15 +36,38 @@ pub fn start(
     backend: &Arc<RealBackend>,
     before_boot: impl FnOnce(&RealBackend) -> Option<LegacyRead> + Send + 'static,
 ) -> Session {
+    start_with(backend, before_boot, |_| {})
+}
+
+/// Like [`start`], splitting the work before the model exists into two
+/// phases that keep the startup ordering while overlapping disk I/O:
+/// 1. `read_legacy` (before the panic hook is installed) and
+///    `migrate_config_early` run first so nothing reads the config
+///    mid-migration.
+/// 2. The boot payload runs on a helper thread in parallel with
+///    `after_migrate` (log session, panic hook, telemetry, URL schemes, the
+///    keyring index and the maintenance). [`Session::legacy`] is sent only
+///    once `after_migrate` returns, and the UI thread waits for it before it
+///    builds the model: no action can run before that setup is done.
+pub fn start_with(
+    backend: &Arc<RealBackend>,
+    read_legacy: impl FnOnce(&RealBackend) -> Option<LegacyRead> + Send + 'static,
+    after_migrate: impl FnOnce(&RealBackend) + Send + 'static,
+) -> Session {
     let saved = config::load_window(backend.context().as_ref());
     let (early, task) = early_boot();
     let (tx, legacy) = mpsc::channel();
     let backend = Arc::clone(backend);
     let thread = std::thread::spawn(move || {
-        let legacy = before_boot(&backend);
+        let legacy = read_legacy(&backend);
         backend.migrate_config_early();
+        let boot_backend = Arc::clone(&backend);
+        let boot_thread = std::thread::spawn(move || {
+            task.run(boot_backend.as_ref());
+        });
+        after_migrate(&backend);
         let _ = tx.send(legacy);
-        task.run(backend.as_ref());
+        let _ = boot_thread.join();
     });
     Session {
         saved,

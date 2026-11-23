@@ -7,9 +7,10 @@
 //! runtime: every backend method blocks, so threads are the whole story.
 
 use crate::backend::Backend;
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 type Task = Box<dyn FnOnce(&dyn Backend) + Send + 'static>;
 type Wake = Arc<dyn Fn() + Send + Sync + 'static>;
@@ -138,6 +139,25 @@ impl<T> Pending<T> {
             }
             Err(TryRecvError::Empty) => Poll::Waiting,
             Err(TryRecvError::Disconnected) => {
+                self.done = true;
+                Poll::Gone
+            }
+        }
+    }
+
+    /// Waits up to `timeout` for the result: the result once, [`Poll::Waiting`]
+    /// on timeout, or [`Poll::Gone`] if already taken or disconnected.
+    pub fn poll_timeout(&mut self, timeout: Duration) -> Poll<T> {
+        if self.done {
+            return Poll::Gone;
+        }
+        match self.rx.recv_timeout(timeout) {
+            Ok(value) => {
+                self.done = true;
+                Poll::Ready(value)
+            }
+            Err(RecvTimeoutError::Timeout) => Poll::Waiting,
+            Err(RecvTimeoutError::Disconnected) => {
                 self.done = true;
                 Poll::Gone
             }

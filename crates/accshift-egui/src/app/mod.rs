@@ -254,6 +254,7 @@ type SubmenuJob = Pending<BackendResult<Vec<AppMenuEntry>>>;
 /// The application model. See the module documentation.
 pub struct AppModel {
     backend: Arc<dyn Backend>,
+    real_backend: Option<Arc<accshift_app::real::RealBackend>>,
     #[cfg(any(test, feature = "harness"))]
     mock: Option<Arc<MockBackend>>,
     #[cfg(any(test, feature = "harness"))]
@@ -261,6 +262,10 @@ pub struct AppModel {
     jobs: Jobs,
     clock: Clock,
     boot_job: Option<Pending<BootResult>>,
+    /// Set when `boot_job` came from an [`EarlyBoot`] started before the
+    /// window existed: frame 0 waits up to this long for it instead of
+    /// painting a blank hidden frame and sleeping a full frame interval.
+    early_boot_wait: Option<std::time::Duration>,
     /// The WebView2 `localStorage` a v0.x install left, read before the log
     /// session began (main.rs), migrated into the stores at boot.
     legacy: Option<LegacyLocalStorage>,
