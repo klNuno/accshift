@@ -290,7 +290,10 @@ fn session_start_with_runs_hooks_in_order_around_config_migration() {
     assert_eq!(session.legacy.recv().unwrap().map(|read| read.notes), None);
     {
         let seen = events.lock().unwrap();
-        assert!(seen.starts_with(&["read_legacy", "after_migrate"]), "{seen:?}");
+        assert!(
+            seen.starts_with(&["read_legacy", "after_migrate"]),
+            "{seen:?}"
+        );
     }
     session.thread.join().unwrap();
     assert_eq!(
