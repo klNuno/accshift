@@ -526,6 +526,9 @@ pub struct SceneRun {
     /// The recorded frame whose screenshot is on its way: its index and
     /// what to draw over it.
     pending_frame: Option<(u64, Overlay)>,
+    /// The steps ran out on the frame in flight: the recording ends once
+    /// its screenshot is in.
+    record_ending: bool,
 }
 
 impl SceneRun {
@@ -544,6 +547,7 @@ impl SceneRun {
             links: Vec::new(),
             record: None,
             pending_frame: None,
+            record_ending: false,
         }
     }
 
@@ -708,6 +712,13 @@ impl SceneRun {
     /// the steps due by then run, and its screenshot asked for.
     fn record_frame(&mut self, ctx: &egui::Context, raw: &mut RawInput, wall: f64) {
         self.collect_frame();
+        if self.record_ending && self.pending_frame.is_none() {
+            self.record_ending = false;
+            self.end_recording();
+            self.index += 1;
+            self.phase = Phase::Next;
+            return;
+        }
         let Some(rec) = &mut self.record else { return };
         let due = rec.start_wall + rec.frame_time();
         if self.pending_frame.is_some() || wall < due {
@@ -724,11 +735,11 @@ impl SceneRun {
         let index = self.index;
         self.run_ops(ctx, raw, at);
         if self.index != index {
-            // The steps ran out: the scene is over.
+            // The steps ran out, the last one on this frame: take it, then
+            // end the recording once its screenshot is in.
             self.index = index;
-            self.end_recording();
-            self.index += 1;
-            return;
+            self.phase = Phase::Running;
+            self.record_ending = true;
         }
         let Some(rec) = &mut self.record else { return };
         self.pending_frame = Some((rec.frame, rec.overlay(at)));
