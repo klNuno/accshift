@@ -647,5 +647,76 @@ mod tests {
             drop(shell);
             let _ = std::fs::remove_dir_all(&dir.0);
         }
+
+        /// The runner's path for a Unix termination signal, end to end: the
+        /// installed handler wakes the loop (here a channel stands for the
+        /// event loop proxy), which runs [`Shell::close`]. A store write still
+        /// pending lands on disk.
+        #[cfg(unix)]
+        fn a_signal_flushes_a_pending_write(sig: libc::c_int, tag: &str) {
+            use accshift_app::backend::Backend;
+            use accshift_app::storage::CLIENT_STORE_SETTINGS;
+            use std::time::Duration;
+
+            let _lock = crate::window::signal::test_lock(sig);
+            let dir = scratch(tag);
+            let backend = Arc::new(RealBackend::with_context(dir.clone()));
+            let ctx = egui::Context::default();
+            let mut app = crate::AppModel::real(&ctx, backend.clone(), None, None);
+            app.wait_boot(&ctx).expect("boot on scratch dir");
+            backend.boot_state().mark_completed();
+            {
+                let booted = app.booted_mut().expect("booted");
+                let mut next = booted.stores.settings().clone();
+                next.close_to_tray = true;
+                booted.stores.save_settings(&next);
+            }
+            let mut shell = Shell::new(Screen::App(Box::new(app)), None)
+                .with_window(Host::new(backend.clone(), 0));
+
+            let (quit_tx, quit_rx) = std::sync::mpsc::channel();
+            let guard = crate::window::signal::install(move || {
+                let _ = quit_tx.send(());
+            })
+            .expect("signal handler installed");
+            assert_eq!(unsafe { libc::raise(sig) }, 0);
+            quit_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the handler woke the loop");
+            // A close request now quits instead of hiding to the tray.
+            assert!(crate::window::session_ending());
+            let mut hidden = 0;
+            shell.close(Some(geometry(1040.0)), || hidden += 1);
+            drop(guard);
+
+            assert_eq!(hidden, 1);
+            let snapshot = backend
+                .load_client_storage_snapshot()
+                .expect("snapshot on disk");
+            assert_eq!(
+                snapshot
+                    .stores
+                    .get(CLIENT_STORE_SETTINGS)
+                    .and_then(|v| v.get("closeToTray"))
+                    .and_then(|v| v.as_bool()),
+                Some(true),
+                "the write pending at the signal must be on disk"
+            );
+            drop(shell);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn sigterm_flushes_a_pending_write_to_disk() {
+            a_signal_flushes_a_pending_write(libc::SIGTERM, "sigterm-flush");
+        }
+
+        // Regression: `SIGHUP` (a closed terminal, a session hanging up) kept
+        // its default action and ended the process with the write unsaved.
+        #[cfg(unix)]
+        #[test]
+        fn sighup_flushes_a_pending_write_to_disk() {
+            a_signal_flushes_a_pending_write(libc::SIGHUP, "sighup-flush");
+        }
     }
 }

@@ -4,6 +4,8 @@
 //! closing under it. An export waits behind the same boundary.
 
 use super::super::settings_panel::SettingsAction;
+use super::held::HeldCommands;
+use super::pump;
 use super::*;
 use accshift_app::i18n::{translate, Locale};
 use serde_json::json;
@@ -68,13 +70,38 @@ fn frame(app: &mut AppModel, ctx: &Context) {
     output.textures_delta.clear();
 }
 
+/// Frames until `condition` holds: [`pump::until`].
+#[track_caller]
 fn pump_until(app: &mut AppModel, ctx: &Context, condition: impl Fn(&AppModel) -> bool) {
-    let deadline = Instant::now() + std::time::Duration::from_secs(3);
-    while !condition(app) {
-        assert!(Instant::now() < deadline, "the condition never held");
-        frame(app, ctx);
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
+    pump::until(app, ctx, frame, condition);
+}
+
+#[test]
+fn a_slow_frame_is_not_a_hang() {
+    // Regression (SLOW_FRAME): the wait's deadline counted the frames
+    // themselves. On a loaded runner one debug frame outlasted it, and a
+    // condition two frames away "never held" though nothing was stuck.
+    let ctx = Context::default();
+    let (mut app, mock) = restore_app(&ctx);
+    let mut held = HeldCommands::new(&mock);
+    // The panel's mount job cannot land before the first frame polls it.
+    held.hold("steam_has_api_key");
+    app.toggle_settings_panel();
+    let limit = std::time::Duration::from_millis(50);
+    pump::within(
+        &mut app,
+        &ctx,
+        limit,
+        |app, ctx| {
+            frame(app, ctx);
+            held.release("steam_has_api_key");
+            // The frame outlasts the limit, and asks for the next one itself:
+            // however late the job lands, no wait for it counts as idle.
+            std::thread::sleep(limit * 3);
+            ctx.request_repaint();
+        },
+        |a| a.settings_panel.as_ref().is_some_and(|p| p.hydrated),
+    );
 }
 
 fn note(app: &AppModel) -> String {
@@ -154,6 +181,71 @@ fn a_restore_waits_for_a_running_save_and_holds_new_writes() {
     assert!(!app.booted().unwrap().stores.storage().has_unsaved());
     assert!(!app.backup.card.error, "{}", app.backup.card.notice);
     assert!(app.backup.card.notice.contains("pre-restore-1"));
+}
+
+/// Well inside the next deadline the app asks a frame for on its own (a
+/// toast's expiry, seconds away), so a wait that needs a frame nobody asked
+/// for does not hold within it.
+const NO_TIMER: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Answers the note write in flight in place of the mock, whose held call is
+/// then released: the answer is in before the next frame and no wake came
+/// with it, as when the job's wake brought a frame drawn before this one.
+fn answer_note_write(app: &mut AppModel, held: &mut HeldCommands) {
+    let (_, pending) = app
+        .saves
+        .iter_mut()
+        .find(|(store, _)| *store == "client.account-card-notes")
+        .expect("no note write in flight");
+    let (answer, answered) = std::sync::mpsc::channel();
+    answer.send(Ok(None)).unwrap();
+    // The held call's own Pending is dropped before its release: its
+    // answer then has no one to go to, and its job wakes nothing.
+    *pending = Pending::from_receiver(answered);
+    held.release(SAVE);
+}
+
+#[test]
+fn a_write_ending_under_the_boundary_wakes_the_restore() {
+    // Regression (DRAIN_WAKE): the frame that reports a write runs the
+    // boundary's drain before it, and asked for no frame after: the restore
+    // waited for an unrelated deadline or the next mouse move.
+    let ctx = Context::default();
+    let (mut app, mock) = restore_app(&ctx);
+    let mut held = HeldCommands::new(&mock);
+    frame(&mut app, &ctx);
+    held.hold(SAVE);
+    set_note(&mut app, "typed before");
+    pump_until(&mut app, &ctx, |_| mock.waiting(SAVE) == 1);
+    app.start_backup_restore("C:/b.json".into(), String::new());
+    held.hold("backup_restore");
+    answer_note_write(&mut app, &mut held);
+    pump::within(&mut app, &ctx, NO_TIMER, frame, |_| {
+        mock.waiting("backup_restore") == 1
+    });
+    held.release("backup_restore");
+    pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
+}
+
+#[test]
+fn a_note_typed_while_its_store_writes_is_written_when_that_write_ends() {
+    // Regression (DRAIN_WAKE): a write due while its store still wrote was
+    // left out of the timed repaint, and the frame that reported the write
+    // asked for none: it waited for an unrelated deadline or the next input.
+    let ctx = Context::default();
+    let (mut app, mock) = restore_app(&ctx);
+    let mut held = HeldCommands::new(&mock);
+    frame(&mut app, &ctx);
+    held.hold(SAVE);
+    set_note(&mut app, "first");
+    pump_until(&mut app, &ctx, |_| mock.waiting(SAVE) == 1);
+    set_note(&mut app, "second");
+    answer_note_write(&mut app, &mut held);
+    pump::within(&mut app, &ctx, NO_TIMER, frame, |_| mock.seen(SAVE) == 2);
+    pump_until(&mut app, &ctx, |a| {
+        !a.booted().unwrap().stores.storage().has_unsaved()
+    });
+    assert_eq!(note(&app), "second");
 }
 
 #[test]
@@ -353,11 +445,7 @@ fn a_picker_that_fails_says_why() {
             app.import_backup();
         }
         pump_until(&mut app, &ctx, |_| mock.seen(command) == 1);
-        let deadline = Instant::now() + std::time::Duration::from_secs(3);
-        while !app.backup.card.error && Instant::now() < deadline {
-            frame(&mut app, &ctx);
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
+        pump_until(&mut app, &ctx, |a| a.backup.card.error);
         assert!(
             app.backup.card.error && app.backup.card.notice.contains(odd),
             "PICKER_ERROR: {command} said {:?}",
@@ -770,12 +858,12 @@ fn a_restore_whose_theme_cannot_be_read_keeps_it_selected_until_it_loads() {
     assert!(mock.fail("list_custom_themes", None));
     focus(&mut app, &ctx, false);
     focus(&mut app, &ctx, true);
-    let deadline = Instant::now() + std::time::Duration::from_secs(3);
-    while app.booted().unwrap().registry.document("mine").is_none() {
-        assert!(Instant::now() < deadline, "the theme never loaded");
-        focus(&mut app, &ctx, true);
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
+    pump::until(
+        &mut app,
+        &ctx,
+        |app, ctx| focus(app, ctx, true),
+        |a| a.booted().unwrap().registry.document("mine").is_some(),
+    );
     let b = app.booted().unwrap();
     assert_eq!(b.stores.settings().theme_id, "mine");
     assert_ne!(b.theme.vars.bg_card, before, "the theme does not draw");
@@ -807,15 +895,7 @@ fn theme_restore_app(
 fn refocus_until(app: &mut AppModel, ctx: &Context, loaded: impl Fn(&AppModel) -> bool) {
     focus(app, ctx, false);
     focus(app, ctx, true);
-    let deadline = Instant::now() + std::time::Duration::from_secs(3);
-    while !loaded(app) {
-        assert!(
-            Instant::now() < deadline,
-            "the themes were not read again on the next focus"
-        );
-        focus(app, ctx, true);
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
+    pump::until(app, ctx, |app, ctx| focus(app, ctx, true), loaded);
 }
 
 #[test]
@@ -1260,11 +1340,11 @@ fn a_panel_edit_made_during_the_restore_never_lands_over_it() {
     mock.release("backup_restore");
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
     assert!(!app.backup.card.error, "{}", app.backup.card.notice);
-    // Past the panel's save debounce.
-    let until = Instant::now() + std::time::Duration::from_millis(400);
-    while Instant::now() < until {
+    // Until the panel has no save left to run: one still queued runs at
+    // its deadline, which the app asks a frame for.
+    pump_until(&mut app, &ctx, |a| a.settings_panel_deadline().is_none());
+    for _ in 0..3 {
         frame(&mut app, &ctx);
-        std::thread::sleep(std::time::Duration::from_millis(5));
     }
     let panel = app.settings_panel.as_ref().unwrap().draft.language;
     let stored = app.booted().unwrap().stores.settings().language;

@@ -663,3 +663,40 @@ fn a_setup_that_fails_after_quitting_the_launcher_starts_it_again() {
     assert_eq!(result, Ok(7));
     assert!(!restarted);
 }
+
+#[test]
+fn a_local_config_without_owed_names_still_loads() {
+    let _guard = crate::config::config_io_test_mutex()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let root = std::env::temp_dir().join(format!(
+        "accshift-battlenet-owed-legacy-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let ctx = TestCtx { root: root.clone() };
+    // A local file as 2.0.1 leaves it with nothing owed (the field is skipped
+    // when empty) or as 2.0.0 left it, before the field existed.
+    let local = crate::storage::local_config_path(&ctx).unwrap();
+    std::fs::create_dir_all(local.parent().unwrap()).unwrap();
+    std::fs::write(
+        &local,
+        r#"{"steam":{"path_override":""},"battleNet":{"path_override":"D:/Games/Battle.net"}}"#,
+    )
+    .unwrap();
+
+    let config = crate::config::load_config(&ctx);
+    assert_eq!(config.battle_net.path_override, "D:/Games/Battle.net");
+    assert!(config.battle_net.owed_saved_accounts.is_empty());
+    let (merged, owed) = with_owed_saved_accounts(&ctx, vec!["new@example.com".to_string()]);
+    assert!(owed.is_empty());
+    assert_eq!(merged, vec!["new@example.com".to_string()]);
+
+    // The first owed list lands beside the fields already there.
+    owe_saved_accounts(&ctx, &["old@example.com".to_string()]);
+    let config = crate::config::load_config(&ctx);
+    assert_eq!(config.battle_net.path_override, "D:/Games/Battle.net");
+    assert_eq!(config.battle_net.owed_saved_accounts, ["old@example.com"]);
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -71,7 +71,7 @@ image-webp = "0.2"
 [target.'cfg(not(windows))'.dependencies]
 egui = { version = "0.37", features = ["default_fonts"] }
 
-# Unix termination signals (window/signal.rs): SIGTERM and SIGINT run the same
+# Unix termination signals (window/signal.rs): SIGTERM, SIGINT and SIGHUP run the same
 # orderly shutdown as a normal quit. `libc` is already in the workspace graph.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

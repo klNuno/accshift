@@ -1,3 +1,5 @@
+use super::held::HeldCommands;
+use super::pump;
 use super::*;
 use egui::{pos2, vec2, Id, RawInput, Rect, Sense, ViewportId};
 use serde_json::json;
@@ -110,26 +112,16 @@ fn frame(app: &mut AppModel, ctx: &Context, focused: bool, minimized: bool) {
     output.textures_delta.clear();
 }
 
+/// Focused frames until `condition` holds: [`pump::until`].
+#[track_caller]
 fn pump_until(app: &mut AppModel, ctx: &Context, condition: impl Fn(&AppModel) -> bool) {
-    let deadline = Instant::now() + std::time::Duration::from_secs(10);
-    while !condition(app) {
-        assert!(
-            Instant::now() < deadline,
-            "condition did not become true within 10 s"
-        );
-        frame(app, ctx, true, false);
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
+    pump::until(app, ctx, |app, ctx| frame(app, ctx, true, false), condition);
 }
 
 /// Frames until no external refresh runs, accounts it reloads included.
+#[track_caller]
 fn wait_refresh_over(app: &mut AppModel, ctx: &Context) {
-    let deadline = Instant::now() + std::time::Duration::from_secs(10);
-    while app.external_refresh.running() {
-        assert!(Instant::now() < deadline, "the refresh never ended");
-        frame(app, ctx, true, false);
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
+    pump_until(app, ctx, |a| !a.external_refresh.running());
 }
 
 #[test]
@@ -152,42 +144,6 @@ fn native_external_storage_on_focus_refreshes_stores_and_accounts() {
     assert_eq!(b.stores.view_mode(), ViewMode::List);
     assert_eq!(b.locale.code(), "fr");
     assert_eq!(b.accounts.loading.loader.current_account(), "external");
-}
-
-/// Commands held at the mock for one test, released when it drops. A failed
-/// assertion then unwinds through the release: otherwise a worker stays parked
-/// at the hold and `Jobs::drop`, joining it, hangs the suite.
-struct HeldCommands {
-    mock: Arc<MockBackend>,
-    commands: Vec<&'static str>,
-}
-
-impl HeldCommands {
-    /// Declare it after the app so it drops first.
-    fn new(mock: &Arc<MockBackend>) -> Self {
-        Self {
-            mock: mock.clone(),
-            commands: Vec::new(),
-        }
-    }
-
-    fn hold(&mut self, command: &'static str) {
-        self.commands.push(command);
-        assert!(self.mock.hold(command), "{command} could not be held");
-    }
-
-    fn release(&mut self, command: &str) {
-        self.commands.retain(|held| *held != command);
-        self.mock.release(command);
-    }
-}
-
-impl Drop for HeldCommands {
-    fn drop(&mut self) {
-        for command in self.commands.drain(..) {
-            self.mock.release(command);
-        }
-    }
 }
 
 /// Waits until a call of `command` sits at its hold in the mock.

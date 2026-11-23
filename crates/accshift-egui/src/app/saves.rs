@@ -92,6 +92,7 @@ impl AppModel {
                 .run(move |backend| backend.save_client_storage_store(store_id, &save.value));
             self.saves.push((store_id, pending));
         }
+        let mut reported = false;
         self.saves.retain_mut(|(id, pending)| {
             let result = match pending.poll() {
                 Poll::Waiting => return true,
@@ -103,7 +104,15 @@ impl AppModel {
                 self.backup.save_failed(error);
             }
             b.stores.finish_save(id, &result);
+            reported = true;
             false
         });
+        // The job's wake brought this frame and is spent. A write that ends
+        // frees its store, whose next write the timed repaint above left
+        // out and may be due already, and a backup's drain ran earlier in
+        // this frame: without one more frame both wait for the next input.
+        if reported {
+            ctx.request_repaint();
+        }
     }
 }
