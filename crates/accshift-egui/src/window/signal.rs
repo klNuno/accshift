@@ -86,8 +86,8 @@ mod imp {
 
     /// The signals that run the close sequence. `SIGHUP` too: its default
     /// action ends the process on the spot, so a closed terminal or a session
-    /// that hangs up would lose the pending writes. A signal the parent left
-    /// ignored (`nohup`, a background job's `SIGINT`) stays ignored.
+    /// that hangs up would lose the pending writes. An ignored `SIGHUP`
+    /// stays ignored so `nohup` keeps working.
     const SIGNALS: [libc::c_int; 3] = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP];
 
     /// Puts back the dispositions `install` replaced, last first.
