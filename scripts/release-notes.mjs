@@ -1,141 +1,194 @@
-// Builds the release notes from the commits of a release range.
+// Release notes in Boite's layout: a download per OS, then every commit of the
+// release, grouped by conventional type, linked and credited.
 //
-//   node scripts/release-notes.mjs <range> [out-file]
+//   node scripts/release-notes.mjs <releases.json> <out-file> <assets-dir>
 //
-// Each commit subject becomes one entry, its conventional type stripped, under
-// "## Changes" or "## Fixes". Body lines starting with "- " become details.
+// RELEASE_TAG and GITHUB_REPOSITORY are required. releases.json is the output
+// of `gh api --paginate --slurp repos/<owner>/<repo>/releases`: the previous
+// release is the last one published that is an ancestor of HEAD.
 //
-// A commit reverted inside the range never shipped, so it leaves the notes
-// together with its revert. When that revert is a squash that also carried
-// other work, its "* type: subject" lines for feat, fix, perf and refactor are
-// listed instead, with the squash's PR number. A revert of a commit from an
-// earlier release stays: users saw that change go.
+// A commit reverted inside the range never shipped: it leaves with its revert.
+// When that revert is a squash that also carried other work, its
+// "* feat|fix|perf|refactor: subject" lines are listed instead.
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const TYPE_PREFIX = /^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([^)]+\))?!?:\s*/i;
+export function previousRelease(releases, current, ancestor) {
+  return releases
+    .filter((release) => !release.draft && !release.prerelease && release.tag_name !== current)
+    .filter((release) => /^v\d+\.\d+\.\d+$/.test(release.tag_name))
+    .sort((a, b) => (b.published_at ?? "").localeCompare(a.published_at ?? ""))
+    .find((release) => ancestor(release.tag_name))?.tag_name;
+}
+
+function escapeMarkdown(text) {
+  return text.replace(/[\\`*_[\]<>]/g, "\\$&");
+}
+
+const SECTIONS = [
+  ["feat", "Features"],
+  ["fix", "Fixes"],
+  ["perf", "Performance"],
+];
+
+// A GitHub noreply address names the account: `@login` links its profile and
+// lists it among the release's contributors. Any other address shows the name.
+function credit(author) {
+  const match = /^(.*?)\s*<([^>]*)>$/.exec(author.trim());
+  const name = match ? match[1] : author.trim();
+  const login = /^(?:\d+\+)?([\w-]+)@users\.noreply\.github\.com$/i.exec(match?.[2] ?? "")?.[1];
+  return login ? `@${login}` : escapeMarkdown(name);
+}
+
+function credits(authors = []) {
+  const names = [...new Set(authors.map(credit).filter(Boolean))];
+  return names.length > 0 ? ` by ${names.join(", ")}` : "";
+}
+
+function commitType(subject) {
+  return /^(\w+)(?:\([^)]*\))?!?: /.exec(subject)?.[1];
+}
+
 // Only a whole line, as git revert writes it, with an optional PR number.
 const REVERTS = /^\s*This reverts commit ([0-9a-f]{7,40})(?: \(#\d+\))?\.?\s*$/gim;
-const SQUASHED = /^\* (feat|fix|perf|refactor)(\([^)]+\))?!?:\s*(.+)$/i;
-const PR_NUMBER = /\s\(#\d+\)$/;
+const SQUASHED = /^\* ((?:feat|fix|perf|refactor)(?:\([^)]*\))?!?: .+)$/;
 
-export function parseLog(raw) {
-  return raw
-    .split("\x1e")
-    .filter((record) => record.trim() !== "")
-    .map((record) => {
-      const [hash = "", subject = "", body = ""] = record.split("\x1f");
-      return { hash: hash.trim(), subject: subject.trim(), body };
-    })
-    .filter((commit) => commit.subject !== "");
-}
-
-function normalizeSubject(subject) {
-  const normalized = subject.trim().replace(TYPE_PREFIX, "");
-  return normalized.trim() === "" ? subject.trim() : normalized;
-}
-
-function sectionOf(subject, normalized) {
-  if (/^(fix|hotfix)(\([^)]+\))?!?:/i.test(subject) || /^(fix|hotfix|bugfix)\b/i.test(normalized)) {
-    return "Fixes";
-  }
-  return "Changes";
-}
-
-// A "- " line opens a detail; the indented lines under it wrap that detail.
-function details(body) {
-  const found = [];
-  let open = false;
-  for (const line of body.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("- ")) {
-      found.push(trimmed.slice(2).trim());
-      open = true;
-    } else if (open && trimmed !== "" && /^\s/.test(line)) {
-      found[found.length - 1] += ` ${trimmed}`;
-    } else {
-      open = false;
-    }
-  }
-  return found;
-}
-
-// The commits of the range a revert names, and whether it also names one
-// outside the range (a change users already got, so its removal is news).
-function revertTargets(commit, commits) {
-  const prefixes = [...commit.body.matchAll(REVERTS)].map((match) => match[1].toLowerCase());
-  const owner = (prefix) => commits.find((other) => other !== commit && other.hash.toLowerCase().startsWith(prefix));
-  const targets = prefixes.map(owner).filter(Boolean);
-  return { targets, revertsShipped: targets.length < prefixes.length };
-}
-
-// Walks newest first, so a revert that is itself reverted cancels nothing.
-// Maps each revert of an in-range commit to whether it keeps its own entry.
-function cancelReverts(commits) {
+/** Commits newest first, as git log lists them. Returns the entries to list. */
+export function dropReverted(commits) {
   const cancelled = new Set();
-  const revertsInRange = new Map();
-  for (const commit of [...commits].reverse()) {
-    if (cancelled.has(commit)) continue;
-    const { targets, revertsShipped } = revertTargets(commit, commits);
-    if (targets.length === 0) continue;
-    revertsInRange.set(commit, revertsShipped);
-    for (const target of targets) cancelled.add(target);
-  }
-  return { cancelled, revertsInRange };
-}
-
-function squashedEntries(commit) {
-  const pr = commit.subject.match(PR_NUMBER)?.[0] ?? "";
-  return commit.body
-    .split(/\r?\n/)
-    .map((line) => line.trim().match(SQUASHED))
-    .filter(Boolean)
-    .map((match) => {
-      const subject = `${match[1]}${match[2] ?? ""}: ${match[3].trim()}`;
-      const normalized = `${match[3].trim()}${pr}`;
-      return { section: sectionOf(subject, normalized), subject: normalized, details: [] };
-    });
-}
-
-export function buildNotes(commits) {
-  const { cancelled, revertsInRange } = cancelReverts(commits);
-  const grouped = { Changes: [], Fixes: [] };
+  const entries = new Map();
   for (const commit of commits) {
     if (cancelled.has(commit)) continue;
-    const own = {
-      section: sectionOf(commit.subject, normalizeSubject(commit.subject)),
-      subject: normalizeSubject(commit.subject),
-      details: details(commit.body),
-    };
-    const entries = revertsInRange.has(commit)
-      ? [...(revertsInRange.get(commit) ? [own] : []), ...squashedEntries(commit)]
-      : [own];
-    for (const entry of entries) grouped[entry.section].push(entry);
+    const prefixes = [...(commit.body ?? "").matchAll(REVERTS)].map((match) => match[1].toLowerCase());
+    const targets = prefixes
+      .map((prefix) => commits.find((other) => other !== commit && other.sha.toLowerCase().startsWith(prefix)))
+      .filter(Boolean);
+    if (targets.length === 0) continue;
+    for (const target of targets) cancelled.add(target);
+    // A revert of a change users already got stays: they saw it go.
+    const own = targets.length < prefixes.length ? [commit] : [];
+    const pr = / \(#\d+\)$/.exec(commit.subject)?.[0] ?? "";
+    const squashed = (commit.body ?? "")
+      .split(/\r?\n/)
+      .map((line) => SQUASHED.exec(line.trim())?.[1])
+      .filter(Boolean)
+      .map((subject) => ({ ...commit, subject: subject + pr }));
+    entries.set(commit, [...own, ...squashed]);
   }
-
-  const lines = [];
-  for (const section of ["Changes", "Fixes"]) {
-    if (grouped[section].length === 0) continue;
-    lines.push(`## ${section}`, "");
-    for (const entry of grouped[section]) {
-      lines.push(entry.details.length > 0 ? `- ${entry.subject}: ${entry.details.join("; ")}` : `- ${entry.subject}`);
-    }
-    lines.push("");
-  }
-  const text = lines.join("\n").trim();
-  return text === "" ? "## Changes\n\n- No changelog entries found." : text;
+  return commits.filter((commit) => !cancelled.has(commit)).flatMap((commit) => entries.get(commit) ?? [commit]);
 }
 
-function main([range, out]) {
-  if (!range) throw new Error("usage: node scripts/release-notes.mjs <range> [out-file]");
-  const raw = execFileSync("git", ["log", "--reverse", "--pretty=format:%H%x1f%s%x1f%b%x1e", range], {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
+const MACOS_NOTE =
+  "macOS: the app is not notarized yet. After copying Accshift.app to Applications, run `xattr -cr /Applications/Accshift.app` once.";
+const STREAMDECK_NOTE =
+  "Stream Deck: open the plugin with Stream Deck 7.1 or later, then turn on Settings > General > Integrations > Allow the accshift CLI in accshift.";
+
+/** Only manual downloads belong here; signatures and updater payloads stay in Assets. */
+function downloadNotes(repository, tag, files) {
+  const base = `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}`;
+  const link = (label, name) => (files.includes(name) ? `[${label}](${base}/${encodeURIComponent(name)})` : "");
+  const rows = [
+    ["Windows (x64)", [link("Installer (.exe)", "accshift-windows-x64-setup.exe")]],
+    ["macOS (Apple Silicon)", [link("Disk image (.dmg)", "accshift-macos-arm64.dmg")]],
+    [
+      "Linux (x64)",
+      [
+        link("Debian / Ubuntu (.deb)", "accshift-linux-amd64.deb"),
+        link("Fedora / openSUSE (.rpm)", "accshift-linux-x86_64.rpm"),
+        link("AppImage", "accshift-linux-x86_64.AppImage"),
+      ],
+    ],
+    ["Stream Deck (Windows)", [link("Plugin (.streamDeckPlugin)", "accshift-streamdeck.streamDeckPlugin")]],
+    [
+      "Command line",
+      [
+        link("Windows", "accshift-cli-windows-x64.exe"),
+        link("macOS", "accshift-cli-macos-arm64"),
+        link("Linux", "accshift-cli-linux-x86_64"),
+      ],
+    ],
+  ].filter(([, links]) => links.some(Boolean));
+  if (rows.length === 0) return "";
+  const notes = [
+    files.includes("accshift-macos-arm64.dmg") ? MACOS_NOTE : "",
+    files.includes("accshift-streamdeck.streamDeckPlugin") ? STREAMDECK_NOTE : "",
+  ].filter(Boolean);
+  return [
+    "## Downloads",
+    [
+      "| Platform | Download |",
+      "| --- | --- |",
+      ...rows.map(([platform, links]) => `| ${platform} | ${links.filter(Boolean).join(" · ")} |`),
+    ].join("\n"),
+    notes.map((note) => `- ${note}`).join("\n"),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+export function releaseNotes(commits, repository, tag, previous, files = []) {
+  const url = `https://github.com/${repository}`;
+  const entry = ({ sha, subject, authors }) =>
+    `- ${escapeMarkdown(subject)} ([${sha.slice(0, 7)}](${url}/commit/${sha}))${credits(authors)}`;
+  const listed = dropReverted(commits);
+  const known = new Set(SECTIONS.map(([type]) => type));
+  const groups = [
+    ...SECTIONS.map(([type, title]) => [title, listed.filter((commit) => commitType(commit.subject) === type)]),
+    ["Other changes", listed.filter((commit) => !known.has(commitType(commit.subject) ?? ""))],
+  ].filter(([, group]) => group.length > 0);
+  const changes = groups.map(([title, group]) => `### ${title}\n\n${group.map(entry).join("\n")}`).join("\n\n");
+  const compare = previous
+    ? `[Full diff](${url}/compare/${encodeURIComponent(previous)}...${encodeURIComponent(tag)})`
+    : "";
+  const downloads = downloadNotes(repository, tag, files);
+  return `${[downloads, "## What's changed", changes || "No code changes.", compare].filter(Boolean).join("\n\n")}\n`;
+}
+
+function git(args) {
+  return execFileSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+}
+
+function main([releasesFile, out, assets]) {
+  const tag = process.env.RELEASE_TAG;
+  const repository = process.env.GITHUB_REPOSITORY;
+  if (!releasesFile || !out || !assets) {
+    throw new Error("usage: node scripts/release-notes.mjs <releases.json> <out-file> <assets-dir>");
+  }
+  if (!tag || !/^[\w.-]+\/[\w.-]+$/.test(repository ?? "")) {
+    throw new Error("RELEASE_TAG and GITHUB_REPOSITORY (owner/repository) are required");
+  }
+  const releases = JSON.parse(readFileSync(releasesFile, "utf8")).flat();
+  const previous = previousRelease(releases, tag, (candidate) => {
+    try {
+      execFileSync("git", ["merge-base", "--is-ancestor", `refs/tags/${candidate}`, "HEAD"], { stdio: "pipe" });
+      return true;
+    } catch (error) {
+      if (error.status === 1) return false;
+      throw new Error(`cannot resolve published release ${candidate}: ${error.stderr}`);
+    }
   });
-  const notes = buildNotes(parseLog(raw));
-  if (out) writeFileSync(out, `${notes}\n`);
-  console.log(notes);
+  const range = previous ? `refs/tags/${previous}..HEAD` : "HEAD";
+  // One NUL-ended record per commit, fields split by US, co-authors by RS.
+  const commits = git([
+    "log",
+    "--no-merges",
+    "-z",
+    "--format=%H%x1f%s%x1f%an <%ae>%x1f%(trailers:key=Co-authored-by,valueonly,separator=%x1e)%x1f%b",
+    range,
+  ])
+    .split("\0")
+    .filter((record) => record.trim() !== "")
+    .map((record) => {
+      const [sha = "", subject = "", author = "", coauthors = "", body = ""] = record.replace(/^\n/, "").split("\x1f");
+      const authors = [author, ...coauthors.split("\x1e")].map((name) => name.trim()).filter(Boolean);
+      return { sha: sha.trim(), subject: subject.trim(), authors, body };
+    });
+  const files = readdirSync(assets, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name);
+  writeFileSync(out, releaseNotes(commits, repository, tag, previous, files));
+  console.log(`Changelog: ${commits.length} commits since ${previous ?? "the first commit"}`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main(process.argv.slice(2));

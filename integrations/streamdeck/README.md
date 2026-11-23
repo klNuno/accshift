@@ -12,7 +12,7 @@ account, press it and accshift switches to that account.
 
 ## Install
 
-Each accshift release attaches `accshift-streamdeck_<version>.streamDeckPlugin`;
+Each accshift release attaches [`accshift-streamdeck.streamDeckPlugin`](https://github.com/klNuno/accshift/releases/latest/download/accshift-streamdeck.streamDeckPlugin);
 open it with Stream Deck installed. The plugin's version follows the app's
 (`manifest.json` holds it with a fourth `.0`, checked against the release
 tag).
