@@ -1,3 +1,4 @@
+use super::held::HeldCommands;
 use super::pump;
 use super::*;
 use egui::{pos2, vec2, Id, RawInput, Rect, Sense, ViewportId};
@@ -143,42 +144,6 @@ fn native_external_storage_on_focus_refreshes_stores_and_accounts() {
     assert_eq!(b.stores.view_mode(), ViewMode::List);
     assert_eq!(b.locale.code(), "fr");
     assert_eq!(b.accounts.loading.loader.current_account(), "external");
-}
-
-/// Commands held at the mock for one test, released when it drops. A failed
-/// assertion then unwinds through the release: otherwise a worker stays parked
-/// at the hold and `Jobs::drop`, joining it, hangs the suite.
-struct HeldCommands {
-    mock: Arc<MockBackend>,
-    commands: Vec<&'static str>,
-}
-
-impl HeldCommands {
-    /// Declare it after the app so it drops first.
-    fn new(mock: &Arc<MockBackend>) -> Self {
-        Self {
-            mock: mock.clone(),
-            commands: Vec::new(),
-        }
-    }
-
-    fn hold(&mut self, command: &'static str) {
-        self.commands.push(command);
-        assert!(self.mock.hold(command), "{command} could not be held");
-    }
-
-    fn release(&mut self, command: &str) {
-        self.commands.retain(|held| *held != command);
-        self.mock.release(command);
-    }
-}
-
-impl Drop for HeldCommands {
-    fn drop(&mut self) {
-        for command in self.commands.drain(..) {
-            self.mock.release(command);
-        }
-    }
 }
 
 /// Waits until a call of `command` sits at its hold in the mock.

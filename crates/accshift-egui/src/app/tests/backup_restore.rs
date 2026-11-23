@@ -4,6 +4,7 @@
 //! closing under it. An export waits behind the same boundary.
 
 use super::super::settings_panel::SettingsAction;
+use super::held::HeldCommands;
 use super::pump;
 use super::*;
 use accshift_app::i18n::{translate, Locale};
@@ -82,8 +83,9 @@ fn a_slow_frame_is_not_a_hang() {
     // condition two frames away "never held" though nothing was stuck.
     let ctx = Context::default();
     let (mut app, mock) = restore_app(&ctx);
+    let mut held = HeldCommands::new(&mock);
     // The panel's mount job cannot land before the first frame polls it.
-    assert!(mock.hold("steam_has_api_key"));
+    held.hold("steam_has_api_key");
     app.toggle_settings_panel();
     let limit = std::time::Duration::from_millis(50);
     pump::within(
@@ -92,9 +94,11 @@ fn a_slow_frame_is_not_a_hang() {
         limit,
         |app, ctx| {
             frame(app, ctx);
-            mock.release("steam_has_api_key");
-            // The frame outlasts the limit; the job lands meanwhile.
+            held.release("steam_has_api_key");
+            // The frame outlasts the limit, and asks for the next one itself:
+            // however late the job lands, no wait for it counts as idle.
             std::thread::sleep(limit * 3);
+            ctx.request_repaint();
         },
         |a| a.settings_panel.as_ref().is_some_and(|p| p.hydrated),
     );
@@ -183,10 +187,23 @@ fn a_restore_waits_for_a_running_save_and_holds_new_writes() {
 /// toast's expiry, seconds away), so a wait that needs a frame nobody asked
 /// for does not hold within it.
 const NO_TIMER: std::time::Duration = std::time::Duration::from_millis(500);
-/// Long enough for a released mocked call to deliver its result and wake
-/// the app, and for a note's debounce to run out. Too short only lets the
-/// regressions below pass without their fix, never fail with it.
-const LANDED: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Answers the note write in flight in place of the mock, whose held call is
+/// then released: the answer is in before the next frame and no wake came
+/// with it, as when the job's wake brought a frame drawn before this one.
+fn answer_note_write(app: &mut AppModel, held: &mut HeldCommands) {
+    let (_, pending) = app
+        .saves
+        .iter_mut()
+        .find(|(store, _)| *store == "client.account-card-notes")
+        .expect("no note write in flight");
+    let (answer, answered) = std::sync::mpsc::channel();
+    answer.send(Ok(None)).unwrap();
+    // The held call's own Pending is dropped before its release: its
+    // answer then has no one to go to, and its job wakes nothing.
+    *pending = Pending::from_receiver(answered);
+    held.release(SAVE);
+}
 
 #[test]
 fn a_write_ending_under_the_boundary_wakes_the_restore() {
@@ -195,20 +212,18 @@ fn a_write_ending_under_the_boundary_wakes_the_restore() {
     // waited for an unrelated deadline or the next mouse move.
     let ctx = Context::default();
     let (mut app, mock) = restore_app(&ctx);
+    let mut held = HeldCommands::new(&mock);
     frame(&mut app, &ctx);
-    assert!(mock.hold(SAVE));
+    held.hold(SAVE);
     set_note(&mut app, "typed before");
     pump_until(&mut app, &ctx, |_| mock.waiting(SAVE) == 1);
     app.start_backup_restore("C:/b.json".into(), String::new());
-    assert!(mock.hold("backup_restore"));
-    mock.release(SAVE);
-    // The write's result and its wake are in before the next frame, which
-    // then has nothing left to wake it.
-    std::thread::sleep(LANDED);
+    held.hold("backup_restore");
+    answer_note_write(&mut app, &mut held);
     pump::within(&mut app, &ctx, NO_TIMER, frame, |_| {
         mock.waiting("backup_restore") == 1
     });
-    mock.release("backup_restore");
+    held.release("backup_restore");
     pump_until(&mut app, &ctx, |a| !a.backup.holds_writes());
 }
 
@@ -219,15 +234,13 @@ fn a_note_typed_while_its_store_writes_is_written_when_that_write_ends() {
     // asked for none: it waited for an unrelated deadline or the next input.
     let ctx = Context::default();
     let (mut app, mock) = restore_app(&ctx);
+    let mut held = HeldCommands::new(&mock);
     frame(&mut app, &ctx);
-    assert!(mock.hold(SAVE));
+    held.hold(SAVE);
     set_note(&mut app, "first");
     pump_until(&mut app, &ctx, |_| mock.waiting(SAVE) == 1);
     set_note(&mut app, "second");
-    mock.release(SAVE);
-    // Past the second note's debounce too: only the frame that reports the
-    // first write can start the second.
-    std::thread::sleep(LANDED);
+    answer_note_write(&mut app, &mut held);
     pump::within(&mut app, &ctx, NO_TIMER, frame, |_| mock.seen(SAVE) == 2);
     pump_until(&mut app, &ctx, |a| {
         !a.booted().unwrap().stores.storage().has_unsaved()

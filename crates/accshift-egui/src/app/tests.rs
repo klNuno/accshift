@@ -13,6 +13,7 @@ use super::*;
 
 mod backup_restore;
 mod early_boot;
+mod held;
 mod native_regressions;
 mod pump;
 mod real_unreadable;
