@@ -1,53 +1,44 @@
-<a href="https://mtsu.dev"><img align="right" src="https://mtsu.dev/press/mtsu-icon-1024.png" width="48" alt="MTSU"></a>
-
-<h1 align="center">
-  <a href="https://github.com/klNuno/accshift/releases/latest">
-    <img src="./.github/assets/social-card.png" alt="accshift: switch game accounts in one click. No passwords stored. Free and open source for Windows, macOS and Linux." width="100%" />
-  </a>
-</h1>
-
 <p align="center">
-  <a href="https://github.com/klNuno/accshift/releases/latest"><img src="https://img.shields.io/github/v/release/klNuno/accshift?display_name=tag&label=release&color=8b5cf6" alt="Latest release" /></a>
-  <a href="https://github.com/klNuno/accshift/releases"><img src="https://img.shields.io/github/downloads/klNuno/accshift/total?color=8b5cf6" alt="Downloads" /></a>
-  <a href="#supported-platforms"><img src="https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-0078D6" alt="Windows, macOS and Linux" /></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/github/license/klNuno/accshift?color=0078D6" alt="License" /></a>
-  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-egui-DEA584?logo=rust&logoColor=white" alt="Rust and egui" /></a>
+  <img src="crates/accshift-egui/icons/128x128@2x.png" alt="accshift logo" width="80" height="80" />
+</p>
+<h1 align="center">accshift</h1>
+<p align="center">
+  <a href="#download">Download</a> ·
+  <a href="https://github.com/klNuno/accshift/wiki">User guide</a> ·
+  <a href="docs/README.md">Documentation</a>
 </p>
 
-<p align="center">
-  <a href="#installation"><b>Download</b></a>
-  &nbsp;·&nbsp;
-  <a href="#features"><b>Features</b></a>
-  &nbsp;·&nbsp;
-  <a href="#supported-platforms"><b>Platforms</b></a>
-  &nbsp;·&nbsp;
-  <a href="#cli"><b>CLI</b></a>
-  &nbsp;·&nbsp;
-  <a href="#privacy"><b>Privacy</b></a>
-  &nbsp;·&nbsp;
-  <a href="https://github.com/klNuno/accshift/wiki"><b>Wiki</b></a>
-</p>
+accshift switches game accounts in one click. Pick an account and the launcher
+restarts already signed in. It never asks for your password: it saves the
+session the launcher already keeps, and encrypts it on your machine. Free and
+open source for Windows, macOS and Linux.
 
 <p align="center">
   <img src="./.github/assets/demo-switch.webp" alt="accshift in the Glass Dark theme: switching Steam accounts from the grid, searching, opening a folder, the Roblox tab, the list view, then switching back from the Ctrl+K command palette" width="100%" />
 </p>
 
-Pick an account and the launcher restarts already signed in. accshift never
-asks for your password: it saves the session the launcher already keeps, and
-encrypts it on your machine.
+## Download
 
-## Installation
+Click the file for your computer. Updates then install from inside the app.
 
-Grab the build for your OS from the
-[latest release](https://github.com/klNuno/accshift/releases/latest):
+| Your computer | Download |
+| --- | --- |
+| Windows | [Installer (.exe)](https://github.com/klNuno/accshift/releases/latest/download/accshift-windows-x64-setup.exe) |
+| Mac with Apple Silicon (M1 or later) | [Disk image (.dmg)](https://github.com/klNuno/accshift/releases/latest/download/accshift-macos-arm64.dmg) |
+| Linux | [Debian / Ubuntu (.deb)](https://github.com/klNuno/accshift/releases/latest/download/accshift-linux-amd64.deb) · [Fedora / openSUSE (.rpm)](https://github.com/klNuno/accshift/releases/latest/download/accshift-linux-x86_64.rpm) · [AppImage](https://github.com/klNuno/accshift/releases/latest/download/accshift-linux-x86_64.AppImage) |
+| Stream Deck (Windows) | [Plugin (.streamDeckPlugin)](https://github.com/klNuno/accshift/releases/latest/download/accshift-streamdeck.streamDeckPlugin) |
 
-- **Windows**: the `-setup.exe` installer
-- **macOS** (Apple Silicon): `.dmg`, unsigned for now. Run
-  `xattr -cr /Applications/Accshift.app` once if Gatekeeper complains.
-- **Linux**: `.deb`, `.rpm` or AppImage
-- **CLI only**: a standalone binary for each OS, see [docs/cli.md](./docs/cli.md)
+- **Windows**: run the installer. Windows may show "Windows protected your
+  PC" because the app is not signed yet: click **More info**, then **Run
+  anyway**. With winget: `winget install klNuno.Accshift`.
+- **Mac**: open the disk image and drag Accshift to Applications. The app is
+  not notarized yet, so run `xattr -cr /Applications/Accshift.app` once in
+  Terminal before the first launch.
+- **Linux**: open the `.deb` or `.rpm` with your software center. For the
+  AppImage, allow it to run as a program (`chmod +x`), then open it.
 
-Updates install from inside the app.
+The command-line tool, checksums and older versions are on the
+[releases page](https://github.com/klNuno/accshift/releases).
 
 ## Supported platforms
 
@@ -63,78 +54,28 @@ Updates install from inside the app.
 | Jagex Launcher  |  Beta   |       |       |
 | Discord         |  Beta   |       |       |
 
-Beta means the integration is built and working on my machine, but too few users
-have reported back for me to call it stable. Expect bugs, and
-[open an issue](https://github.com/klNuno/accshift/issues/new/choose) if you hit
-one, or to ask for a platform that is not listed.
-
-Most of these are a JSON descriptor rather than code, so you can add a launcher
-of your own without compiling anything. The format, the sandbox rules and the
-dry run are in [docs/platform-descriptors.md](./docs/platform-descriptors.md).
+Beta means built and working, but too few users have reported back to call it
+stable. [Open an issue](https://github.com/klNuno/accshift/issues/new/choose)
+for a bug or a missing platform. Most platforms are a JSON descriptor, so you
+can add a launcher without compiling anything
+([docs/platform-descriptors.md](./docs/platform-descriptors.md)).
 
 ## Features
 
-- **One-click switching** from the grid, or from the `Ctrl+K` (`Cmd+K` on macOS) command palette
-  without touching the mouse.
-- **Personas** group one account per platform under a single identity and
-  switch them all at once.
-- **Streamer mode** blurs account names and avatars while OBS, Streamlabs,
-  XSplit, Wirecast or Twitch Studio is running.
-- **CLI and deep links** (`accshift://`) for scripts and automation.
-- **Stream Deck plugin** (Windows): one key per account, attached to each
-  release ([details](integrations/streamdeck/README.md)).
-- Optional **PIN lock**, on launch and after a period of inactivity.
-- **7 languages**: English, Spanish, French, Portuguese, Brazilian Portuguese,
+- Switch from the grid, or from the `Ctrl+K` (`Cmd+K` on macOS) command palette.
+- Personas group one account per platform and switch them all at once.
+- Folders, search, drag and drop, card colors and private notes for large
+  libraries.
+- Light, Dark, Midnight, acrylic and Liquid Glass themes, all editable files
+  ([docs/theming.md](./docs/theming.md)).
+- Steam: copy game settings between accounts, bulk edit launch options, ban
+  tracking, online or invisible switch, switch and launch a game.
+- Streamer mode blurs names and avatars while OBS or another streaming app
+  runs.
+- Global shortcuts, a PIN lock, a [CLI](./docs/cli.md), `accshift://` deep
+  links and a [Stream Deck plugin](integrations/streamdeck/README.md).
+- 7 languages: English, Spanish, French, Portuguese, Brazilian Portuguese,
   Russian and Simplified Chinese.
-
-### Organize a large library
-
-Folders, search, drag and drop reordering, card colors and private notes for
-large account collections.
-
-<p align="center">
-  <img src="./.github/assets/demo-organize.webp" alt="Recoloring an account card from the right-click menu, then opening and leaving a folder of smurf accounts" width="100%" />
-</p>
-
-### Every launcher, every theme
-
-The same grid for each platform, in Light, Dark or Midnight, with light and
-dark acrylic variants and an experimental Liquid Glass theme. Themes are files
-you can edit, import and export ([docs/theming.md](./docs/theming.md)).
-
-<p align="center">
-  <img src="./.github/assets/demo-themes.webp" alt="Changing the app theme from the settings panel: Light, Midnight, Dark, then back to Glass Dark" width="100%" />
-</p>
-
-### Steam goes further
-
-- Copy any game's settings from one account to another.
-- Copy account info in one click: username, SteamID64, CS2 friend code,
-  profile URL.
-- **Bulk edit** several accounts at once: hide the game news popup at launch,
-  toggle do not disturb, set launch options for any game.
-- Game and community ban tracking.
-- Switch in online or invisible mode, or switch and launch a game directly
-  (the last game chosen is remembered).
-- **CS2 Bridge**: let an app that tracks your accounts show CS2 level, XP
-  progression and the weekly drop inside accshift. See
-  [CS2-Bridge](https://github.com/klNuno/accshift/wiki/CS2-Bridge).
-
-## CLI
-
-`accshift` also ships as a command-line binary for scripts, Stream Deck macros
-and AI automation. It reads and writes the same config as the GUI, and running
-both at once is safe thanks to an exclusive lock on mutating operations.
-
-```bash
-accshift platforms                       # platforms known to this build
-accshift list <platform>                 # accounts for a platform
-accshift switch <platform> <account-id>  # switch, same as a click in the app
-```
-
-Output is a table in a terminal and JSON when piped, so scripts get a stable
-contract without an extra flag. Install steps, every flag, the versioned JSON
-envelope and the exit codes are in [docs/cli.md](./docs/cli.md).
 
 ## Privacy
 
@@ -144,9 +85,8 @@ envelope and the exit codes are in [docs/cli.md](./docs/cli.md).
   Service on Linux, Keychain on macOS. The threat model and what the PIN lock
   covers are in the [security policy](./.github/SECURITY.md).
 - **Telemetry is anonymous counters, opt-out, plus an enhanced tier you opt
-  into.** Two switches in Settings, Privacy; both off and nothing is ever sent
-  again. Nothing is sent before you answer the first-launch screen, and no
-  feature depends on it.
+  into.** Both are switches in Settings, Privacy. Nothing is sent before you
+  answer the first-launch screen, and no feature depends on it.
 
 <details>
 <summary>What is sent, and what never is</summary>
@@ -163,66 +103,41 @@ country code from it and never stores the address.
 real payload, says where the data is stored and how to export or delete it. The
 client is in
 [`crates/accshift-core/src/telemetry/`](./crates/accshift-core/src/telemetry)
-and the server in [`server/`](./server), both readable in a sitting.
+and the server in [`server/`](./server).
 
 </details>
 
-## Code signing policy
+## Development
 
-Free code signing provided by [SignPath.io](https://about.signpath.io/),
-certificate by [SignPath Foundation](https://signpath.org/).
-
-- Committers and reviewers: [klNuno](https://github.com/klNuno)
-- Approvers: [klNuno](https://github.com/klNuno)
-
-Signed files are built by the [release workflow](./.github/workflows/release.yml)
-from this repository, and every signing request is approved by hand. Privacy
-policy: [Privacy](#privacy) above, with every telemetry event listed in
-[docs/analytics.md](./docs/analytics.md).
-
-## Building from source
+The app is Rust, drawn with egui. Install stable Rust, then:
 
 ```bash
-cargo run -p accshift-egui                              # run the app
+cargo run -p accshift-egui                                            # run the app
 pnpm install && node crates/accshift-egui/bundle/bundle.mjs --build   # installers for your OS
 ```
 
-Setup, coding standards and how to propose a new platform are in the
-[contributing guide](./.github/CONTRIBUTING.md). Technical references live in
-[docs/](./docs/README.md).
+The [contributing guide](./.github/CONTRIBUTING.md) covers setup, checks and
+how to propose a platform; [docs/](./docs/README.md) holds the technical
+references.
 
 <details>
 <summary>Project structure</summary>
 
 ```text
 crates/
-  accshift-core/                  # platform logic, config, storage, OS
-    src/
-      platforms/steam riot ...    # hand-written platforms
-      platforms/descriptor/       # JSON-described platforms and their engine
-      os/windows linux macos      # per-OS primitives (sysinfo/open/keyring)
-      context.rs                  # AppContext trait (the app's folders)
-      lock.rs                     # fs4 exclusive lock
-      runtime.rs                  # tokio block_on helper
-      config storage logging themes
-  accshift-cli/                   # CLI binary (list, switch, platforms)
-  accshift-app/                   # UI-free app logic: backend, stores, i18n, updater
-  accshift-theme/                 # theme engine: tokens, CSS variables
-  accshift-egui/                  # the GUI (accshift-gui), drawn with egui
-    src/screens ui app window     # screens, widgets, app state, native window
-    tauri.conf.json bundle/       # installer config, packed by the Tauri bundler
-    parity/                       # UI scenes and mock data for regression shots
+  accshift-core/    # platform logic, config, storage, per-OS primitives
+  accshift-cli/     # the accshift command (list, switch, platforms)
+  accshift-app/     # UI-free app logic: backend, stores, i18n, updater
+  accshift-theme/   # theme engine: tokens, CSS variables
+  accshift-egui/    # the GUI (accshift-gui) and its installer config
+integrations/
+  streamdeck/       # the Stream Deck plugin
+server/             # the telemetry worker
 ```
 
 </details>
 
-## Disclaimer
+## License
 
-<sub>
-This project is not affiliated with Valve (Counter-Strike 2, Dota 2), Blizzard
-(Overwatch 2, Diablo IV, WoW, Call of Duty), Riot Games (Valorant, League of
-Legends, TFT), Epic Games (Fortnite, Rocket League), Ubisoft (Rainbow Six
-Siege, The Division 2), Roblox Corporation, CD PROJEKT (GOG) (Cyberpunk 2077,
-The Witcher 3), Jagex (RuneScape, Old School RuneScape), or Discord. Use at
-your own risk.
-</sub>
+[MIT](LICENSE). Not affiliated with Valve, Blizzard, Riot Games, Epic Games,
+Ubisoft, Roblox Corporation, CD PROJEKT, Jagex or Discord. Use at your own risk.
