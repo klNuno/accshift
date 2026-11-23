@@ -151,8 +151,8 @@ pub fn open_userdata_with_path(steam_path: &Path, steam_id: &str) -> Result<(), 
 }
 
 /// Copies one game's `userdata/<id>/<appid>` folder to another account on
-/// this disk. A running Steam does not block it, as in 1.0.5. The new folder
-/// is staged first; if the swap fails, the previous folder is put back.
+/// this disk. A running Steam does not block it, as in 1.0.5. The copy stages
+/// the new folder first and tries to restore the previous one if the swap fails.
 pub fn copy_game_settings(
     steam_path: &Path,
     from_steam_id: &str,

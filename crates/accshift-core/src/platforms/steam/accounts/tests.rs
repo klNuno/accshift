@@ -421,10 +421,14 @@ fn copy_game_settings_rejects_non_numeric_app_id() {
 #[cfg(target_os = "linux")]
 #[test]
 fn copy_game_settings_works_while_steam_runs() {
+    use std::os::unix::process::CommandExt;
+
     let root = copy_test_root("running");
     let fake_steam = root.join("steam");
     fs::copy("/bin/sleep", &fake_steam).unwrap();
     let mut steam = std::process::Command::new(&fake_steam)
+        // Multicall coreutils selects `sleep` from argv[0]. Linux still names the process `steam`.
+        .arg0("sleep")
         .arg("30")
         .spawn()
         .unwrap();
