@@ -1,3 +1,4 @@
+use super::pump;
 use super::*;
 use egui::{pos2, vec2, Id, RawInput, Rect, Sense, ViewportId};
 use serde_json::json;
@@ -110,26 +111,16 @@ fn frame(app: &mut AppModel, ctx: &Context, focused: bool, minimized: bool) {
     output.textures_delta.clear();
 }
 
+/// Focused frames until `condition` holds: [`pump::until`].
+#[track_caller]
 fn pump_until(app: &mut AppModel, ctx: &Context, condition: impl Fn(&AppModel) -> bool) {
-    let deadline = Instant::now() + std::time::Duration::from_secs(10);
-    while !condition(app) {
-        assert!(
-            Instant::now() < deadline,
-            "condition did not become true within 10 s"
-        );
-        frame(app, ctx, true, false);
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
+    pump::until(app, ctx, |app, ctx| frame(app, ctx, true, false), condition);
 }
 
 /// Frames until no external refresh runs, accounts it reloads included.
+#[track_caller]
 fn wait_refresh_over(app: &mut AppModel, ctx: &Context) {
-    let deadline = Instant::now() + std::time::Duration::from_secs(10);
-    while app.external_refresh.running() {
-        assert!(Instant::now() < deadline, "the refresh never ended");
-        frame(app, ctx, true, false);
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
+    pump_until(app, ctx, |a| !a.external_refresh.running());
 }
 
 #[test]
