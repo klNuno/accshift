@@ -234,7 +234,7 @@ thread_local! {
 }
 
 /// Test seam: an error when a test made `step` on `path` fail.
-pub(super) fn injected(step: Step, path: &Path) -> Result<(), String> {
+fn injected(step: Step, path: &Path) -> Result<(), String> {
     #[cfg(test)]
     if FAULTS.with(|f| f.borrow().iter().any(|(s, p)| *s == step && p == path)) {
         return Err(format!("{step:?} of {} failed (test)", path.display()));

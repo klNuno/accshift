@@ -27,7 +27,7 @@ impl ReadBudget {
     }
 
     /// Counts `bytes` read from `path`, or fails once they pass the limit.
-    pub(super) fn spend(&mut self, bytes: u64, path: &Path) -> Result<(), String> {
+    fn spend(&mut self, bytes: u64, path: &Path) -> Result<(), String> {
         if bytes > self.0 {
             return Err(too_big_at(path));
         }
