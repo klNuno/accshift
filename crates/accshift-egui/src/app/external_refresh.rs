@@ -84,18 +84,7 @@ impl AppModel {
         if self.booted.is_none() {
             return;
         }
-        let window = ctx.input(|i| {
-            let vp = i.viewport();
-            (
-                vp.focused.unwrap_or(i.focused),
-                vp.minimized.unwrap_or(false),
-            )
-        });
-        let trigger = self
-            .external_refresh
-            .window
-            .replace(window)
-            .is_some_and(|previous| (!previous.0 && window.0) || (previous.1 && !window.1));
+        let trigger = self.window_came_back(ctx);
         // The pending stage is the web lifecycle's in-flight guard. A single
         // restoration can produce both focus and visibility notifications.
         // A restore replaces the files: no refresh starts until it is over.
@@ -142,6 +131,21 @@ impl AppModel {
             },
             RefreshJob::Accounts => self.accounts_still_loading(),
         };
+    }
+
+    /// The window gained the focus or was restored since the last frame.
+    fn window_came_back(&mut self, ctx: &Context) -> bool {
+        let window = ctx.input(|i| {
+            let vp = i.viewport();
+            (
+                vp.focused.unwrap_or(i.focused),
+                vp.minimized.unwrap_or(false),
+            )
+        });
+        self.external_refresh
+            .window
+            .replace(window)
+            .is_some_and(|previous| (!previous.0 && window.0) || (previous.1 && !window.1))
     }
 
     /// The manifest read: starts reading what changed since the stores were
