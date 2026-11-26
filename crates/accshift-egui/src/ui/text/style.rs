@@ -18,6 +18,23 @@ pub enum LineHeight {
     Px(f32),
 }
 
+impl LineHeight {
+    /// A `line-height` value: `normal`, a number, a percentage of the font
+    /// size or a length.
+    fn from_css(value: &str) -> Option<Self> {
+        if value == "normal" {
+            return Some(Self::Normal);
+        }
+        if let Ok(n) = value.parse::<f32>() {
+            return Some(Self::Number(n));
+        }
+        if let Some(p) = value.strip_suffix('%') {
+            return Some(Self::Number(p.trim().parse::<f32>().ok()? / 100.0));
+        }
+        Some(Self::Px(css::px(value)?))
+    }
+}
+
 /// CSS `text-transform`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TextTransform {
@@ -192,17 +209,7 @@ impl TextStyle {
                         v => v.parse().ok()?,
                     }
                 }
-                "line-height" => {
-                    style.line_height = if value == "normal" {
-                        LineHeight::Normal
-                    } else if let Ok(n) = value.parse::<f32>() {
-                        LineHeight::Number(n)
-                    } else if let Some(p) = value.strip_suffix('%') {
-                        LineHeight::Number(p.trim().parse::<f32>().ok()? / 100.0)
-                    } else {
-                        LineHeight::Px(css::px(value)?)
-                    }
-                }
+                "line-height" => style.line_height = LineHeight::from_css(value)?,
                 "letter-spacing" => spacing = Some(value.to_string()),
                 "text-transform" => {
                     style.transform = match value {
@@ -229,15 +236,8 @@ impl TextStyle {
                 _ => {}
             }
         }
-        // `em` resolves against the element's own font size.
         if let Some(v) = spacing {
-            style.letter_spacing = match v.as_str() {
-                "normal" | "0" => 0.0,
-                v => match v.strip_suffix("em") {
-                    Some(em) => em.trim().parse::<f32>().ok()? * style.size,
-                    None => css::px(v)?,
-                },
-            };
+            style.letter_spacing = letter_spacing(&v, style.size)?;
         }
         Some(style)
     }
@@ -349,6 +349,18 @@ impl LineBox {
             height: height / scale,
             baseline: (ascent + half_leading) / scale,
         }
+    }
+}
+
+/// A `letter-spacing` value in px: `em` resolves against the element's own
+/// font `size`.
+fn letter_spacing(value: &str, size: f32) -> Option<f32> {
+    match value {
+        "normal" | "0" => Some(0.0),
+        v => match v.strip_suffix("em") {
+            Some(em) => Some(em.trim().parse::<f32>().ok()? * size),
+            None => css::px(v),
+        },
     }
 }
 

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use egui::epaint::text::{Glyph, Row};
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{pos2, vec2, Align, Color32, Context, FontFamily, FontId, Galley, Painter, Pos2, Rect};
 
@@ -129,27 +130,7 @@ fn layout_at(
     }
     // Symbols no face of the stack has go to Chromium's per-block fallback
     // faces: one family per kind, the stack's faces first.
-    let kinds = fallback_kinds(&text);
-    let mut fallback_families: [Option<FontFamily>; Fallback::SLOTS] = Default::default();
-    for &kind in &kinds {
-        let Some(slot) = kind.slot() else {
-            continue;
-        };
-        if fallback_families[slot].is_none() {
-            let family = resolve_fallback(
-                ctx,
-                &style.family,
-                style.weight,
-                style.size * ctx.pixels_per_point(),
-                kind,
-            )?;
-            if !ctx.fonts(|f| f.definitions().families.contains_key(&family)) {
-                ctx.request_repaint();
-                return None;
-            }
-            fallback_families[slot] = Some(family);
-        }
-    }
+    let fallback_families = bound_fallback_families(ctx, style, &text)?;
     let family_of = |kind: Fallback| {
         kind.slot()
             .and_then(|slot| fallback_families[slot].clone())
@@ -205,6 +186,14 @@ fn layout_at(
         job
     };
     let job = |lead: f32| job_for(&text, lead);
+    // A row laid out again on its own, from `lead` points.
+    let alone = |glyphs: &[Glyph], lead: f32| {
+        let line: String = glyphs.iter().map(|glyph| glyph.chr).collect();
+        let mut single = job_for(&line, lead);
+        single.wrap = TextWrapping::no_max_width();
+        let alone = ctx.fonts_mut(|f| f.layout_job(single));
+        alone.rows.first().map(|first| first.row.clone())
+    };
     // Blink aligns in LayoutUnits (1/64 device px): the box as laid out, the
     // line ceiled, no negative slack, the centre's half rounded down.
     let offset = |w: f32| {
@@ -226,12 +215,8 @@ fn layout_at(
     if galley.rows.len() > 1 {
         let g = Arc::make_mut(&mut galley);
         for placed in g.rows.iter_mut().skip(1) {
-            let line: String = placed.row.glyphs.iter().map(|glyph| glyph.chr).collect();
-            let mut single = job_for(&line, 0.0);
-            single.wrap = TextWrapping::no_max_width();
-            let alone = ctx.fonts_mut(|f| f.layout_job(single));
-            if let Some(first) = alone.rows.first() {
-                placed.row = first.row.clone();
+            if let Some(row) = alone(&placed.row.glyphs, 0.0) {
+                placed.row = row;
             }
         }
     }
@@ -242,20 +227,7 @@ fn layout_at(
         .rows
         .iter()
         .enumerate()
-        .map(|(i, r)| {
-            let glyphs = &r.row.glyphs;
-            let kept = if i < last {
-                glyphs.len()
-                    - glyphs
-                        .iter()
-                        .rev()
-                        .take_while(|g| g.chr.is_whitespace())
-                        .count()
-            } else {
-                glyphs.len()
-            };
-            row_width(&glyphs[..kept], style.letter_spacing)
-        })
+        .map(|(i, r)| line_width(&r.row.glyphs, i < last, style.letter_spacing))
         .collect();
     // The fractional part of each line's device x goes into its layout
     // (leading space), so glyphs land on the same quarter pixels as Skia's:
@@ -290,12 +262,8 @@ fn layout_at(
             let xi = (x + 1e-3).floor();
             let frac = x - xi;
             if frac > 1e-3 {
-                let line: String = placed.row.glyphs.iter().map(|glyph| glyph.chr).collect();
-                let mut single = job_for(&line, lead_points(frac, ppp));
-                single.wrap = TextWrapping::no_max_width();
-                let alone = ctx.fonts_mut(|f| f.layout_job(single));
-                if let Some(first) = alone.rows.first() {
-                    placed.row = first.row.clone();
+                if let Some(row) = alone(&placed.row.glyphs, lead_points(frac, ppp)) {
+                    placed.row = row;
                     leads[i] = frac;
                 }
             }
@@ -320,34 +288,7 @@ fn layout_at(
         };
         let target = snap(baseline) / ppp - origin_y - placed.pos.y;
         let row = Arc::make_mut(&mut placed.row);
-        // The pen in device px: egui puts every CJK glyph on a whole pixel
-        // (no sub-pixel bins for them), Skia on a quarter pixel like the rest.
-        // With a glyph rasterizer the vendored epaint bins them already.
-        let bin_han = !glyph_rasterizer();
-        let mut pen = leads[i];
-        for (k, glyph) in row.glyphs.iter_mut().enumerate() {
-            if k > 0 {
-                pen += style.letter_spacing * ppp;
-            }
-            let exact = pen;
-            pen += glyph.advance_width * ppp;
-            let dx = if bin_han && is_han(glyph.chr) {
-                ((exact * 4.0).round() / 4.0 - glyph.pos.x * ppp) / ppp
-            } else {
-                0.0
-            };
-            let dy = target - glyph.pos.y;
-            glyph.pos.y = target;
-            if (dx == 0.0 && dy == 0.0) || glyph.uv_rect.is_nothing() {
-                continue;
-            }
-            let first = glyph.first_vertex as usize;
-            if let Some(quad) = row.visuals.mesh.vertices.get_mut(first..first + 4) {
-                for v in quad {
-                    v.pos += vec2(dx, dy);
-                }
-            }
-        }
+        place_glyphs(row, target, leads[i], style.letter_spacing, ppp);
         row.visuals.mesh_bounds = row.visuals.mesh.calc_bounds();
         bounds = bounds.union(row.visuals.mesh_bounds.translate(placed.pos.to_vec2()));
     }
@@ -487,8 +428,87 @@ fn glyph_rasterizer() -> bool {
     false
 }
 
+/// The fallback family of each kind `text` needs, by slot; `None` (and a
+/// repaint) while one is not bound to the fonts yet.
+fn bound_fallback_families(
+    ctx: &Context,
+    style: &TextStyle,
+    text: &str,
+) -> Option<[Option<FontFamily>; Fallback::SLOTS]> {
+    let mut families: [Option<FontFamily>; Fallback::SLOTS] = Default::default();
+    for kind in fallback_kinds(text) {
+        let Some(slot) = kind.slot() else {
+            continue;
+        };
+        if families[slot].is_some() {
+            continue;
+        }
+        let family = resolve_fallback(
+            ctx,
+            &style.family,
+            style.weight,
+            style.size * ctx.pixels_per_point(),
+            kind,
+        )?;
+        if !ctx.fonts(|f| f.definitions().families.contains_key(&family)) {
+            ctx.request_repaint();
+            return None;
+        }
+        families[slot] = Some(family);
+    }
+    Some(families)
+}
+
+/// A line's width for `text-align`: a line that ends at a wrap drops its
+/// trailing spaces.
+fn line_width(glyphs: &[Glyph], wraps: bool, spacing: f32) -> f32 {
+    let hanging = if wraps {
+        glyphs
+            .iter()
+            .rev()
+            .take_while(|g| g.chr.is_whitespace())
+            .count()
+    } else {
+        0
+    };
+    row_width(&glyphs[..glyphs.len() - hanging], spacing)
+}
+
+/// Puts a row's glyphs on the baseline `target` (points from the row's
+/// top), their quads with them. The pen runs in device px from `lead`:
+/// egui puts every CJK glyph on a whole pixel (no sub-pixel bins for
+/// them), Skia on a quarter pixel like the rest. With a glyph rasterizer
+/// the vendored epaint bins them already.
+fn place_glyphs(row: &mut Row, target: f32, lead: f32, spacing: f32, ppp: f32) {
+    let bin_han = !glyph_rasterizer();
+    let mut pen = lead;
+    for (k, glyph) in row.glyphs.iter_mut().enumerate() {
+        if k > 0 {
+            pen += spacing * ppp;
+        }
+        let exact = pen;
+        pen += glyph.advance_width * ppp;
+        let dx = if bin_han && is_han(glyph.chr) {
+            ((exact * 4.0).round() / 4.0 - glyph.pos.x * ppp) / ppp
+        } else {
+            0.0
+        };
+        let dy = target - glyph.pos.y;
+        glyph.pos.y = target;
+        if (dx == 0.0 && dy == 0.0) || glyph.uv_rect.is_nothing() {
+            continue;
+        }
+        let first = glyph.first_vertex as usize;
+        if let Some(quad) = row.visuals.mesh.vertices.get_mut(first..first + 4) {
+            for v in quad {
+                v.pos += vec2(dx, dy);
+            }
+        }
+    }
+}
+
 /// Advances of a row plus the letter spacing after each character.
-fn row_width(glyphs: &[egui::epaint::text::Glyph], spacing: f32) -> f32 {
+fn row_width(glyphs: &[Glyph], spacing: f32) -> f32 {
     glyphs.iter().map(|g| g.advance_width + spacing).sum()
 }
 
