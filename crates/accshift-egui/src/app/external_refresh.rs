@@ -110,42 +110,7 @@ impl AppModel {
         self.external_refresh.job = match job {
             RefreshJob::Manifest(mut pending) => match pending.poll() {
                 Poll::Waiting => Some(RefreshJob::Manifest(pending)),
-                Poll::Ready(Ok(manifest)) => {
-                    let b = self.booted.as_mut().unwrap();
-                    // A selected theme the list did not have (its file was
-                    // locked or not there yet) is looked for again on each
-                    // focus: its file may read now with the folder's
-                    // fingerprint unchanged.
-                    let theme_missing =
-                        b.registry.document(&b.stores.settings().theme_id).is_none();
-                    let plan = b.stores.begin_refresh(&manifest);
-                    let themes_changed = plan.as_ref().is_some_and(|plan| {
-                        plan.changed
-                            .iter()
-                            .any(|id| id == STORAGE_TARGET_CUSTOM_THEMES)
-                    });
-                    if plan.is_none() && !theme_missing {
-                        None
-                    } else {
-                        let snapshot_needed =
-                            plan.as_ref().is_some_and(RefreshPlan::needs_snapshot);
-                        let themes_needed = themes_changed || theme_missing;
-                        let pending = self.jobs.run(move |backend| {
-                            let snapshot = if snapshot_needed {
-                                Some(backend.load_client_storage_snapshot()?)
-                            } else {
-                                None
-                            };
-                            let themes = themes_needed.then(|| read_themes(backend));
-                            Ok(RefreshContents { snapshot, themes })
-                        });
-                        Some(RefreshJob::Snapshot {
-                            plan,
-                            themes_seen: themes_changed,
-                            pending,
-                        })
-                    }
-                }
+                Poll::Ready(Ok(manifest)) => self.read_refreshed_stores(&manifest),
                 Poll::Ready(Err(error)) => {
                     self.external_refresh_failed(error.message);
                     None
@@ -165,57 +130,99 @@ impl AppModel {
                     themes_seen,
                     pending,
                 }),
-                Poll::Ready(Ok(contents)) => {
-                    if let Some(read) = &contents.themes {
-                        if let Some(themes) = &read.themes {
-                            self.apply_theme_payloads(themes);
-                        }
-                        if !read.whole {
-                            self.unsee_themes();
-                        }
-                    }
-                    let Some(plan) = plan else {
-                        return;
-                    };
-                    let b = self.booted.as_mut().unwrap();
-                    let changed = match contents.snapshot {
-                        Some(snapshot) => b.stores.finish_refresh(plan, snapshot),
-                        None => plan.other_targets,
-                    };
-                    self.apply_external_refresh(ctx, &changed);
-                    self.booted
-                        .as_ref()
-                        .unwrap()
-                        .accounts
-                        .loading
-                        .loads_in_flight()
-                        .then_some(RefreshJob::Accounts)
-                }
-                // The themes were never read: the next focus reads them.
+                Poll::Ready(Ok(contents)) => self.take_refreshed_stores(ctx, plan, contents),
                 Poll::Ready(Err(error)) => {
-                    if themes_seen {
-                        self.unsee_themes();
-                    }
-                    self.external_refresh_failed(error.message);
+                    self.refresh_read_failed(themes_seen, error.message);
                     None
                 }
                 Poll::Gone => {
-                    if themes_seen {
-                        self.unsee_themes();
-                    }
-                    self.external_refresh_failed("snapshot job panicked".into());
+                    self.refresh_read_failed(themes_seen, "snapshot job panicked".into());
                     None
                 }
             },
-            RefreshJob::Accounts => self
-                .booted
-                .as_ref()
-                .unwrap()
-                .accounts
-                .loading
-                .loads_in_flight()
-                .then_some(RefreshJob::Accounts),
+            RefreshJob::Accounts => self.accounts_still_loading(),
         };
+    }
+
+    /// The manifest read: starts reading what changed since the stores were
+    /// loaded, or nothing when nothing did.
+    fn read_refreshed_stores(&mut self, manifest: &StorageManifest) -> Option<RefreshJob> {
+        let b = self.booted.as_mut().unwrap();
+        // A selected theme the list did not have (its file was locked or not
+        // there yet) is looked for again on each focus: its file may read
+        // now with the folder's fingerprint unchanged.
+        let theme_missing = b.registry.document(&b.stores.settings().theme_id).is_none();
+        let plan = b.stores.begin_refresh(manifest);
+        let themes_changed = plan.as_ref().is_some_and(|plan| {
+            plan.changed
+                .iter()
+                .any(|id| id == STORAGE_TARGET_CUSTOM_THEMES)
+        });
+        if plan.is_none() && !theme_missing {
+            return None;
+        }
+        let snapshot_needed = plan.as_ref().is_some_and(RefreshPlan::needs_snapshot);
+        let themes_needed = themes_changed || theme_missing;
+        let pending = self.jobs.run(move |backend| {
+            let snapshot = if snapshot_needed {
+                Some(backend.load_client_storage_snapshot()?)
+            } else {
+                None
+            };
+            let themes = themes_needed.then(|| read_themes(backend));
+            Ok(RefreshContents { snapshot, themes })
+        });
+        Some(RefreshJob::Snapshot {
+            plan,
+            themes_seen: themes_changed,
+            pending,
+        })
+    }
+
+    /// The changed stores and themes read: the app takes them, then waits
+    /// for the accounts they reload.
+    fn take_refreshed_stores(
+        &mut self,
+        ctx: &Context,
+        plan: Option<RefreshPlan>,
+        contents: RefreshContents,
+    ) -> Option<RefreshJob> {
+        if let Some(read) = &contents.themes {
+            if let Some(themes) = &read.themes {
+                self.apply_theme_payloads(themes);
+            }
+            if !read.whole {
+                self.unsee_themes();
+            }
+        }
+        let plan = plan?;
+        let b = self.booted.as_mut().unwrap();
+        let changed = match contents.snapshot {
+            Some(snapshot) => b.stores.finish_refresh(plan, snapshot),
+            None => plan.other_targets,
+        };
+        self.apply_external_refresh(ctx, &changed);
+        self.accounts_still_loading()
+    }
+
+    /// The read of the changed stores failed: the themes were never read,
+    /// so the next focus reads them.
+    fn refresh_read_failed(&mut self, themes_seen: bool, message: String) {
+        if themes_seen {
+            self.unsee_themes();
+        }
+        self.external_refresh_failed(message);
+    }
+
+    /// The refresh waits on while the accounts it reloads are loading.
+    fn accounts_still_loading(&self) -> Option<RefreshJob> {
+        self.booted
+            .as_ref()
+            .unwrap()
+            .accounts
+            .loading
+            .loads_in_flight()
+            .then_some(RefreshJob::Accounts)
     }
 
     /// Takes the custom themes read from disk, and the theme they draw.
