@@ -273,24 +273,17 @@ fn same_trigger(asked: &str, bound: &str) -> bool {
 fn combo_key(key: Key) -> Option<ComboKey> {
     use ComboKey as C;
     let name = key.name();
-    if let Some(letter) = name
-        .chars()
-        .next()
-        .filter(|c| c.is_ascii_uppercase() && name.len() == 1)
-    {
-        return Some(C::Letter(letter));
+    // A letter or a digit is the one key whose name is that character.
+    let mut chars = name.chars();
+    if let (Some(c), None) = (chars.next(), chars.next()) {
+        if c.is_ascii_uppercase() {
+            return Some(C::Letter(c));
+        }
+        if let Some(digit) = c.to_digit(10) {
+            return Some(C::Digit(digit as u8));
+        }
     }
     Some(match key {
-        Key::Num0 => C::Digit(0),
-        Key::Num1 => C::Digit(1),
-        Key::Num2 => C::Digit(2),
-        Key::Num3 => C::Digit(3),
-        Key::Num4 => C::Digit(4),
-        Key::Num5 => C::Digit(5),
-        Key::Num6 => C::Digit(6),
-        Key::Num7 => C::Digit(7),
-        Key::Num8 => C::Digit(8),
-        Key::Num9 => C::Digit(9),
         Key::ArrowUp => C::Up,
         Key::ArrowDown => C::Down,
         Key::ArrowLeft => C::Left,
@@ -942,5 +935,38 @@ fn os_of(os: RuntimeOs) -> shortcuts::Os {
         RuntimeOs::Windows => shortcuts::Os::Windows,
         RuntimeOs::Macos => shortcuts::Os::MacOs,
         _ => shortcuts::Os::Linux,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn letters_digits_and_function_keys_map_to_their_combination_key() {
+        use ComboKey as C;
+        let digits = [
+            Key::Num0,
+            Key::Num1,
+            Key::Num2,
+            Key::Num3,
+            Key::Num4,
+            Key::Num5,
+            Key::Num6,
+            Key::Num7,
+            Key::Num8,
+            Key::Num9,
+        ];
+        for (n, key) in digits.into_iter().enumerate() {
+            assert_eq!(combo_key(key), Some(C::Digit(n as u8)), "{key:?}");
+        }
+        assert_eq!(combo_key(Key::A), Some(C::Letter('A')));
+        assert_eq!(combo_key(Key::Z), Some(C::Letter('Z')));
+        assert_eq!(combo_key(Key::F1), Some(C::F(1)));
+        assert_eq!(combo_key(Key::F24), Some(C::F(24)));
+        assert_eq!(combo_key(Key::F25), None);
+        assert_eq!(combo_key(Key::Escape), None);
+        assert_eq!(combo_key(Key::Plus), Some(C::Equal));
+        assert_eq!(combo_key(Key::ArrowUp), Some(C::Up));
     }
 }
