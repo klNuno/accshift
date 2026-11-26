@@ -5,6 +5,7 @@ Every screen of the egui app was compared, pixel by pixel, with the same screen 
 - `scenes/*.json`, the scenes, played by the egui runner for regression shots;
 - `data/*.json`, the mock data the scenes run on, and `avatars/`, the mock avatars it points to;
 - `fragments/*.html`, the static CSS boxes of the `primitives-*` scenes;
+- `recordings/*.json`, scenes with `"record"` that film the README clips frame by frame, kept out of `scenes/` so the regression run and its diff skip them;
 - `diff.mjs`, the pixel diff of two shot folders (Node 22+ and ffmpeg on `PATH`);
 - the rules below, measured on WebView2, which the egui painter follows.
 

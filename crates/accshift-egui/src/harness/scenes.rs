@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use super::record::{Overlay, Recorder};
 use crate::app::{AppModel, MockSetup};
 use crate::screens::primitives::Primitives;
 use crate::screens::Screen;
@@ -61,6 +62,11 @@ pub enum Step {
     Shot(String),
     /// An `accshift://` URL delivered as a second launch would deliver it.
     DeepLink(String),
+    /// The pointer travels to a point over a time (seconds), eased, about
+    /// 60 moves a second.
+    Glide(Pos2, f64),
+    /// A recording shows or hides its drawn pointer; nothing otherwise.
+    Cursor(bool),
 }
 
 #[derive(Clone, Debug)]
@@ -94,6 +100,8 @@ pub struct Scene {
     pub update: Option<String>,
     /// The `html` fragment (resolved next to the scene file) and its text.
     pub html: Option<(PathBuf, String)>,
+    /// `record`: frames per second of a recording of the whole run.
+    pub record: Option<f64>,
     pub steps: Vec<Step>,
 }
 
@@ -161,6 +169,16 @@ fn parse_step(v: &serde_json::Value) -> Result<Step, String> {
     }
     if let Some(u) = o.get("deeplink") {
         return Ok(Step::DeepLink(u.as_str().ok_or_else(bad)?.to_owned()));
+    }
+    if let Some(p) = o.get("glide") {
+        let ms = o
+            .get("ms")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(500.0);
+        return Ok(Step::Glide(point(p).ok_or_else(bad)?, ms / 1000.0));
+    }
+    if let Some(on) = o.get("cursor") {
+        return Ok(Step::Cursor(on.as_bool().ok_or_else(bad)?));
     }
     // A step only the old reference side acted on: a no-op here.
     if o.contains_key("dom") {
@@ -242,6 +260,10 @@ pub fn load(path: &Path) -> Result<Scene, String> {
         clipboard: s("clipboard").unwrap_or_default(),
         update: s("update"),
         html,
+        record: v
+            .get("record")
+            .and_then(serde_json::Value::as_f64)
+            .filter(|fps| *fps > 0.0),
         steps,
     })
 }
@@ -364,6 +386,7 @@ enum Op {
     Event(Event),
     Shot(String),
     DeepLink(String),
+    Cursor(bool),
 }
 
 fn expand(steps: &[Step]) -> Result<VecDeque<Op>, String> {
@@ -446,6 +469,23 @@ fn expand(steps: &[Step]) -> Result<VecDeque<Op>, String> {
             }
             Step::Shot(name) => ops.push_back(Op::Shot(name.clone())),
             Step::DeepLink(url) => ops.push_back(Op::DeepLink(url.clone())),
+            Step::Glide(to, secs) => {
+                let from = pointer;
+                let n = (secs * 60.0).ceil().max(1.0) as usize;
+                for i in 1..=n {
+                    let t = i as f32 / n as f32;
+                    // Eased in and out, like a hand.
+                    let e = if t < 0.5 {
+                        2.0 * t * t
+                    } else {
+                        1.0 - (-2.0 * t + 2.0).powi(2) / 2.0
+                    };
+                    ops.push_back(Op::Event(Event::PointerMoved(from + (*to - from) * e)));
+                    ops.push_back(Op::Wait(secs / n as f64));
+                }
+                pointer = *to;
+            }
+            Step::Cursor(on) => ops.push_back(Op::Cursor(*on)),
         }
     }
     Ok(ops)
@@ -481,6 +521,14 @@ pub struct SceneRun {
     build: Option<Scene>,
     /// `deeplink` URLs for the app, taken by the shell.
     links: Vec<String>,
+    /// The recording of a `record` scene, once it runs.
+    record: Option<Recorder>,
+    /// The recorded frame whose screenshot is on its way: its index and
+    /// what to draw over it.
+    pending_frame: Option<(u64, Overlay)>,
+    /// The steps ran out on the frame in flight: the recording ends once
+    /// its screenshot is in.
+    record_ending: bool,
 }
 
 impl SceneRun {
@@ -497,6 +545,9 @@ impl SceneRun {
             shot: Arc::default(),
             build: None,
             links: Vec::new(),
+            record: None,
+            pending_frame: None,
+            record_ending: false,
         }
     }
 
@@ -525,9 +576,25 @@ impl SceneRun {
         if let Some(scene) = self.scenes.get(self.index) {
             fail(format!("{}: {why}", scene.id));
         }
+        self.end_recording();
         self.index += 1;
         self.phase = Phase::Next;
         self.ops.clear();
+    }
+
+    /// Wait for the recording's frames to be written, and report.
+    fn end_recording(&mut self) {
+        self.pending_frame = None;
+        let Some(rec) = self.record.take() else {
+            return;
+        };
+        let (frames, fps) = (rec.frame, rec.fps);
+        let errors = rec.finish();
+        let id = self.scenes.get(self.index).map_or("", |s| s.id.as_str());
+        for e in errors {
+            fail(format!("{id}: {e}"));
+        }
+        println!("{id}: recorded {frames} frames at {fps} fps");
     }
 
     /// Inject this frame's events. `ready` is the current screen's own
@@ -623,13 +690,106 @@ impl SceneRun {
                 }
                 self.phase = Phase::Running;
                 self.wake_at = now;
-                self.run_ops(ctx, raw, now);
+                if let Some(fps) = self.scenes.get(self.index).and_then(|s| s.record) {
+                    let base = raw.time.unwrap_or_else(|| ctx.input(|i| i.time));
+                    self.record = Some(Recorder::new(fps, now, base));
+                    self.wake_at = 0.0;
+                    self.record_frame(ctx, raw, now);
+                } else {
+                    self.run_ops(ctx, raw, now);
+                }
             }
+            Phase::Running if self.record.is_some() => self.record_frame(ctx, raw, now),
             Phase::Running => self.run_ops(ctx, raw, now),
         }
         if let Some(scene) = self.scenes.get(self.index) {
             crate::clipboard::stage(ctx, &scene.clipboard, &mut raw.events);
         }
+    }
+
+    /// One frame of a recording: the last frame queued for writing, then,
+    /// once the wall clock reaches the next one, its time handed to egui,
+    /// the steps due by then run, and its screenshot asked for.
+    fn record_frame(&mut self, ctx: &egui::Context, raw: &mut RawInput, wall: f64) {
+        self.collect_frame();
+        if self.record_ending && self.pending_frame.is_none() {
+            self.record_ending = false;
+            self.end_recording();
+            self.index += 1;
+            self.phase = Phase::Next;
+            return;
+        }
+        let Some(rec) = &mut self.record else { return };
+        let due = rec.start_wall + rec.frame_time();
+        if self.pending_frame.is_some() || wall < due {
+            raw.time = Some(rec.last_time);
+            if self.pending_frame.is_none() {
+                ctx.request_repaint_after(std::time::Duration::from_secs_f64(due - wall));
+            }
+            return;
+        }
+        let at = rec.frame_time();
+        rec.last_time = rec.base_time + at;
+        raw.time = Some(rec.last_time);
+        raw.predicted_dt = (1.0 / rec.fps) as f32;
+        let index = self.index;
+        self.run_ops(ctx, raw, at);
+        if self.index != index {
+            // The steps ran out, the last one on this frame: take it, then
+            // end the recording once its screenshot is in.
+            self.index = index;
+            self.phase = Phase::Running;
+            self.record_ending = true;
+        }
+        let Some(rec) = &mut self.record else { return };
+        self.pending_frame = Some((rec.frame, rec.overlay(at)));
+        rec.frame += 1;
+        let (slot, ctx2) = (Arc::clone(&self.shot), ctx.clone());
+        ctx.send_viewport_cmd(ViewportCommand::Screenshot(egui::ScreenshotCallback::new(
+            move |image| {
+                *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(image);
+                ctx2.request_repaint();
+            },
+        )));
+    }
+
+    /// Queue the recorded frame whose screenshot arrived, if any.
+    fn collect_frame(&mut self) {
+        if self.pending_frame.is_none() {
+            return;
+        }
+        let image = self.shot.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let Some(image) = image else { return };
+        let Some((frame, overlay)) = self.pending_frame.take() else {
+            return;
+        };
+        let (Some(scene), Some(rec)) = (self.scenes.get(self.index), &mut self.record) else {
+            return;
+        };
+        let want = scene.viewport.pixels();
+        if image.size != want {
+            fail(format!(
+                "{}/frame {frame}: {}x{}, expected {}x{}",
+                scene.id, image.size[0], image.size[1], want[0], want[1]
+            ));
+        }
+        let dir = self.out.join(&scene.id);
+        if frame == 0 {
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                fail(format!("{}: {e}", dir.display()));
+            }
+        }
+        let copies = std::mem::take(&mut rec.shots)
+            .into_iter()
+            .map(|name| dir.join(format!("{name}.png")))
+            .collect();
+        rec.write(
+            dir.join(format!("frame-{frame:05}.png")),
+            image,
+            overlay,
+            scene.viewport.scale,
+            copies,
+        );
     }
 
     fn run_ops(&mut self, ctx: &egui::Context, raw: &mut RawInput, now: f64) {
@@ -644,8 +804,18 @@ impl SceneRun {
             };
             match op {
                 Op::Wait(secs) => {
-                    self.wake_at = now + secs;
-                    return;
+                    // A recording keeps its waits on schedule: its frames
+                    // are whole steps of its clock, and a wait counted from
+                    // the frame would stretch every glide.
+                    if self.record.is_some() {
+                        self.wake_at += secs;
+                        if self.wake_at > now {
+                            return;
+                        }
+                    } else {
+                        self.wake_at = now + secs;
+                        return;
+                    }
                 }
                 Op::Event(e) => {
                     let is_press = matches!(e, Event::PointerButton { pressed: true, .. });
@@ -672,9 +842,31 @@ impl SceneRun {
                         },
                         e => e,
                     };
+                    if let Some(rec) = &mut self.record {
+                        match &e {
+                            Event::PointerMoved(p) => rec.pointer_to((p.to_vec2() / k).to_pos2()),
+                            Event::PointerButton {
+                                pos, pressed: true, ..
+                            } => rec.press((pos.to_vec2() / k).to_pos2(), now),
+                            _ => {}
+                        }
+                    }
                     raw.events.push(e);
                     if is_press {
                         return;
+                    }
+                }
+                Op::Shot(name) if self.record.is_some() => {
+                    // This frame is the shot: what follows waits for the
+                    // next one.
+                    if let Some(rec) = &mut self.record {
+                        rec.shots.push(name);
+                    }
+                    return;
+                }
+                Op::Cursor(on) => {
+                    if let Some(rec) = &mut self.record {
+                        rec.show_cursor(on, now);
                     }
                 }
                 Op::Shot(name) => {
@@ -796,5 +988,48 @@ mod tests {
         let ev = key_events("a").unwrap();
         assert!(matches!(&ev[1], Event::Text(t) if t == "a"));
         assert!(key_events("Hyper+K").is_err());
+    }
+
+    #[test]
+    fn a_glide_moves_in_eased_steps_and_lands_on_its_point() {
+        let steps = [
+            parse_step(&serde_json::json!({ "move": [0, 0] })).unwrap(),
+            parse_step(&serde_json::json!({ "glide": [100, 50], "ms": 100 })).unwrap(),
+            parse_step(&serde_json::json!({ "cursor": false })).unwrap(),
+        ];
+        assert_eq!(steps[1], Step::Glide(pos2(100.0, 50.0), 0.1));
+        let ops = expand(&steps).unwrap();
+        let moves: Vec<Pos2> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Op::Event(Event::PointerMoved(p)) => Some(*p),
+                _ => None,
+            })
+            .collect();
+        // The first move, then 6 for 100 ms at 60 a second.
+        assert_eq!(moves.len(), 7);
+        assert_eq!(*moves.last().unwrap(), pos2(100.0, 50.0));
+        // Slow, then fast, then slow.
+        let first = moves[1].x - moves[0].x;
+        let middle = moves[4].x - moves[3].x;
+        assert!(first < middle, "{moves:?}");
+        let waited: f64 = ops
+            .iter()
+            .map(|op| if let Op::Wait(s) = op { *s } else { 0.0 })
+            .sum();
+        assert!((waited - 0.1).abs() < 1e-9);
+        assert!(matches!(ops.back(), Some(Op::Cursor(false))));
+    }
+
+    #[test]
+    fn record_reads_its_rate() {
+        let dir = std::env::temp_dir().join(format!("accshift-record-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("r.json");
+        std::fs::write(&file, r#"{ "id": "r", "record": 30, "steps": [] }"#).unwrap();
+        assert_eq!(load(&file).unwrap().record, Some(30.0));
+        std::fs::write(&file, r#"{ "id": "r", "steps": [] }"#).unwrap();
+        assert_eq!(load(&file).unwrap().record, None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
